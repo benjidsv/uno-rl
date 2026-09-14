@@ -9,7 +9,7 @@ from hypothesis import HealthCheck, assume, given, settings
 
 from uno import Level, Ruleset
 from uno.agents import BySeat, Heuristic, PlayFirstRandom, UniformLegal
-from uno.compiled import CompiledAgent, best_response, compile_tree, evaluate, exact_mirrored, exploitability, outcome_distribution, tabulate, tabulate_table
+from uno.compiled import END_KINDS, CompiledAgent, best_response, compile_tree, evaluate, exact_mirrored, exploitability, outcome_distribution, tabulate, tabulate_table
 from uno.estimate import exact_mirrored as exact_mirrored_ref
 from uno.solve import best_response as best_response_ref
 from uno.solve import evaluate as evaluate_ref
@@ -38,7 +38,7 @@ def small(rs: Ruleset):
 @settings(deadline=None, max_examples=30, suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow])
 def test_counts_and_uniform_value_match_census(rs):
     c = small(rs)
-    tree = compile_tree(rs, (Level.L1, Level.L2))
+    tree = compile_tree(rs, (Level.L1, Level.L2), symmetric=False)
     assert tree.n == c.histories + 1  # the virtual root
     assert tree.n_terminals == c.terminals
     assert tree.n_decisions == c.decision_nodes
@@ -49,8 +49,12 @@ def test_counts_and_uniform_value_match_census(rs):
     assert math.isclose((evaluate(tree, u, u)[0] + 1) / 2, c.uniform_legal_p0_score, abs_tol=1e-9)
     d = outcome_distribution(tree, u, u)
     assert math.isclose(sum(d.values()), 1.0, abs_tol=1e-12)
+    ends, _ = tree.values(tree.profile_weights(u, u), tree.end_columns())
+    for i, kind in enumerate(END_KINDS[1:]):
+        want = sum(p for (e, _), p in c.end_mass.items() if e == kind)
+        assert math.isclose(ends[0, i], want, abs_tol=1e-9)
     # the world tree carries the same L1 sets and values
-    w = compile_tree(rs, (Level.L1, Level.L3))
+    w = compile_tree(rs, (Level.L1, Level.L3), symmetric=False)
     assert w.keyings[Level.L1].n_info == k.n_info
     assert w.keyings[Level.L3].n_info == w.n_decisions  # every L3 set is one history
     uw = (Level.L1, w.keyings[Level.L1].uniform())
@@ -61,8 +65,8 @@ def test_counts_and_uniform_value_match_census(rs):
 @settings(deadline=None, max_examples=15, suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow])
 def test_best_response_matches_reference_at_every_level(rs):
     small(rs)
-    lazy = compile_tree(rs, (Level.L1, Level.L2))
-    world = compile_tree(rs, (Level.L1, Level.L3))
+    lazy = compile_tree(rs, (Level.L1, Level.L2), symmetric=False)
+    world = compile_tree(rs, (Level.L1, Level.L3), symmetric=False)
     for opp in (UniformLegal(rs), PlayFirstRandom(rs), Heuristic(rs)):
         sig_lazy = (Level.L1, tabulate(lazy, Level.L1, opp))
         sig_world = (Level.L1, tabulate(world, Level.L1, opp))
@@ -94,7 +98,7 @@ def test_best_response_matches_reference_at_every_level(rs):
 def test_small_ruleset_values_and_moments_match_reference():
     rs = SMALL
     rnd, heu = PlayFirstRandom(rs), Heuristic(rs)
-    world = compile_tree(rs, (Level.L1, Level.L3))
+    world = compile_tree(rs, (Level.L1, Level.L3), symmetric=False)
     r, h = (Level.L1, tabulate(world, Level.L1, rnd)), (Level.L1, tabulate(world, Level.L1, heu))
     for a, b, aa, bb in ((r, r, rnd, rnd), (h, r, heu, rnd), (h, h, heu, heu)):
         assert math.isclose(evaluate(world, a, b)[0], evaluate_ref(rs, (aa, bb))[0], abs_tol=1e-9)
@@ -115,7 +119,7 @@ def test_small_ruleset_values_and_moments_match_reference():
 
 def test_exploitability_of_uniform_is_best_response_to_uniform_legal():
     rs = SMALL
-    tree = compile_tree(rs, (Level.L1,))
+    tree = compile_tree(rs, (Level.L1,), symmetric=False)
     k = tree.keyings[Level.L1]
     ex = exploitability(tree, Level.L1, k.uniform())
     for seat in (0, 1):
@@ -126,18 +130,26 @@ def test_exploitability_of_uniform_is_best_response_to_uniform_legal():
 
 
 def test_toy_reproduces_steps_5_6():
-    """The eight L1 / L2 best-response values of notes.md on TOY. Regression for a
-    reach bug that every small-ruleset check missed (see notes, step 8)."""
+    """The eight L1 / L2 best-response values on the full tree of TOY: Random from
+    notes.md steps 5-6, the Heuristic from step 8.6 (symmetric tie-breaks; the
+    values were pinned with the pure-Python reference solver). Regression for a
+    reach bug that every small-ruleset check missed (see notes, step 8). The
+    quotient tree has its own copy in test_symmetry."""
     from uno import TOY
 
     known = {
         ("random", 0, Level.L1): 0.7934, ("random", 0, Level.L2): 0.8188, ("random", 1, Level.L1): 0.5513, ("random", 1, Level.L2): 0.5937,
-        ("heuristic", 0, Level.L1): 0.7447, ("heuristic", 0, Level.L2): 0.7770, ("heuristic", 1, Level.L1): 0.4525, ("heuristic", 1, Level.L2): 0.4806,
+        ("heuristic", 0, Level.L1): HEURISTIC_TOY[(0, Level.L1)], ("heuristic", 0, Level.L2): HEURISTIC_TOY[(0, Level.L2)],
+        ("heuristic", 1, Level.L1): HEURISTIC_TOY[(1, Level.L1)], ("heuristic", 1, Level.L2): HEURISTIC_TOY[(1, Level.L2)],
     }  # fmt: skip
-    tree = compile_tree(TOY, (Level.L1, Level.L2))
-    assert tree.n == 1_252_041 and tree.keyings[Level.L1].n_info == 558_656
+    tree = compile_tree(TOY, (Level.L1, Level.L2), symmetric=False)
+    assert not tree.symmetric and tree.n == 1_252_041 and tree.keyings[Level.L1].n_info == 558_656
     for opp in (PlayFirstRandom(TOY), Heuristic(TOY)):
         sig = (Level.L1, tabulate(tree, Level.L1, opp))
         for (name, seat, level), want in known.items():
             if name == opp.name:
                 assert abs(best_response(tree, level, sig, seat).score - want) < 5e-5, (name, seat, level)
+
+
+# best responses to the step 8.6 Heuristic on TOY (scripts/symmetry.py, checked against uno.solve)
+HEURISTIC_TOY = {(0, Level.L1): 0.7378, (0, Level.L2): 0.7730, (0, Level.L3): 0.7798, (1, Level.L1): 0.4361, (1, Level.L2): 0.4774, (1, Level.L3): 0.4786}

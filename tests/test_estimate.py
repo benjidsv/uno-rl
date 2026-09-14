@@ -23,6 +23,18 @@ from .test_properties import rulesets, seeds
 from .test_solve import SMALL
 
 
+class Deterministic:
+    """The lowest action in the wrapped agent's support: a deterministic (and not
+    symmetric) agent for the exact-means checks, now that the Heuristic splits ties."""
+
+    def __init__(self, agent) -> None:
+        self.agent = agent
+        self.name = agent.name + "_det"
+
+    def policy(self, obs, legal):
+        return {min(self.agent.policy(obs, legal)): 1.0}
+
+
 def replays(rs, trace) -> None:
     s = trace.steps[0].state
     for st_ in trace.steps:
@@ -67,7 +79,7 @@ def test_self_play_pairs_are_degenerate():
     m = estimate_mirrored(play_pairs(rs, (PlayFirstRandom(rs), PlayFirstRandom(rs)), range(300)))
     assert m.mirrored.mean == 0.5 and m.mirrored.var == 0.0 and m.splits == 1.0
     assert m.corr == -1.0
-    assert m.seat[0].mean == 1.0 - m.seat[1].mean
+    assert math.isclose(m.seat[0].mean, 1.0 - m.seat[1].mean, abs_tol=1e-12)
 
 
 def test_games_needed():
@@ -135,14 +147,14 @@ def test_mirrored_matches_exact_stochastic_row():
 
 def test_mirrored_matches_exact_deterministic_row():
     rs = SMALL
-    heu = Heuristic(rs)
+    heu = Deterministic(Heuristic(rs))
     br = BySeat(*(TabularAgent(rs, best_response(rs, heu, seat, Level.L1)) for seat in (0, 1)))
     check_against_exact(rs, (br, heu), (Level.L1, Level.L1), play_pairs(rs, (br, heu), range(3000)), 0.1, exact_means=True)
 
 
 def test_compare_is_exact_for_deterministic_agents_and_pairs_help():
     rs = SMALL
-    heu = Heuristic(rs)
+    heu = Deterministic(Heuristic(rs))
     br = BySeat(*(TabularAgent(rs, best_response(rs, heu, seat, Level.L1)) for seat in (0, 1)))
     seeds_ = range(1500)
     a, b = play_pairs(rs, (br, heu), seeds_), play_pairs(rs, (heu, heu), seeds_)

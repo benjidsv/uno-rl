@@ -136,10 +136,13 @@ def cfr(
         arcs, nodes, ia = tree.arcs_of[i], arc_node[i], arc_ia[i]
         cf = r[nodes, 2] * r[nodes, 1 - i]
         sign = 1.0 if i == 0 else -1.0
-        regrets[ia_of[i]] += np.bincount(ia, weights=cf * (av[arcs] - v[nodes]) * sign, minlength=K)[ia_of[i]]
+        # on a symmetric tree the regret and the mass are averaged within every action orbit
+        # (RULES.md section 18): the strategies stay symmetric, and CFR runs on the game whose
+        # actions are the orbits
+        regrets[ia_of[i]] += k.orbit_mean(np.bincount(ia, weights=cf * (av[arcs] - v[nodes]) * sign, minlength=K))[ia_of[i]]
         if plus:
             regrets[ia_of[i]] = np.maximum(regrets[ia_of[i]], 0.0)
-        mass[ia_of[i]] += weight * np.bincount(ia, weights=r[nodes, i] * sigma[ia], minlength=K)[ia_of[i]]
+        mass[ia_of[i]] += weight * k.orbit_mean(np.bincount(ia, weights=r[nodes, i] * sigma[ia], minlength=K))[ia_of[i]]
         sigma[ia_of[i]] = k.normalize(np.maximum(regrets, 0.0))[ia_of[i]]
 
     log_at = set(log_at) | {iterations}

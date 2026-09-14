@@ -146,8 +146,10 @@ def _perms(ms: tuple[int, ...]) -> int:
     return n
 
 
-def initial_deals(rs: Ruleset) -> list[Outcome]:
-    """All distinct initial states with their probabilities (sum to 1).
+def initial_deals(rs: Ruleset, symmetric: bool = False) -> list[Outcome]:
+    """All distinct initial states with their probabilities (sum to 1), or with
+    `symmetric` one representative per color / rank orbit carrying the orbit's
+    probability (`uno.symmetry`, RULES.md section 18).
 
     Conditioned on the deal being valid (a number card exists for the first
     discard); on the named toy rulesets every deal is valid.
@@ -178,7 +180,12 @@ def initial_deals(rs: Ruleset) -> list[Outcome]:
                 s = initial_state(rs, (*hand0, *hand1, *prefix, *rest))
                 out.append((s, p0 * p1 * p2))
     mass = sum(p for _, p in out)
-    return [(s, p / mass) for s, p in out]
+    out = [(s, p / mass) for s, p in out]
+    if symmetric:
+        from uno.symmetry import canonical_roots
+
+        return canonical_roots(rs, out, lazy=True)
+    return out
 
 
 def _prefixes(counts: dict[int, int], types) -> list[tuple[tuple[int, ...], float]]:
@@ -239,14 +246,22 @@ class Census:
         }
 
 
-def census(rs: Ruleset, node_cap: int | None = None) -> Census:
+def census(rs: Ruleset, node_cap: int | None = None, symmetric: bool = False) -> Census:
     """Walk the whole lazy tree (depth first) and count.
 
     Reach probabilities use uniform-legal play at decision nodes, so `end_mass`
     is the exact terminal distribution of UniformLegal vs UniformLegal.
+    `symmetric` walks the quotient tree (one subtree per deal orbit) and counts
+    canonical L1 information sets; `deals` is then the number of orbits.
     """
     t0 = time.perf_counter()
-    deals = initial_deals(rs)
+    deals = initial_deals(rs, symmetric)
+    sym = None
+    if symmetric:
+        from uno.observe import Level
+        from uno.symmetry import Symmetry
+
+        sym = Symmetry(rs)
     stack: list[tuple[State, int, float]] = [(s, 0, p) for s, p in reversed(deals)]
     histories = decision = terminals = depth_max = 0
     infosets: tuple[set[int], set[int]] = (set(), set())
@@ -262,7 +277,8 @@ def census(rs: Ruleset, node_cap: int | None = None) -> Census:
             end_mass[key] = end_mass.get(key, 0.0) + reach
             continue
         decision += 1
-        infosets[s.player].add(hash(info_state(s, s.player)))
+        key = info_state(s, s.player)
+        infosets[s.player].add(hash(key if sym is None else sym.canonical(Level.L1, key)[0]))
         if node_cap is not None and histories >= node_cap:
             complete = False
             break

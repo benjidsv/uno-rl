@@ -674,6 +674,386 @@ action noise (it is a mixed strategy), 0.3-0.9 points, inside the CI.
    are the potential for reward shaping.
 
 
+## Step 8.5 results: transfer check, `TOY` against `FULL_UNO` (2026-09-14, `scripts/transfer.py`)
+
+Question: step 8 made exact computation 45-130x faster; should the toy grow
+because it "probably won't translate to real UNO"? Before choosing how, measure
+where `TOY` and `FULL_UNO` differ. Part 1 is sampled, the same code on both
+rulesets, 4000 held-out pairs. Part 2 is exact on `TOY`. For part 2,
+`CompiledTree` now records how each terminal ended (`end`, `end_columns`,
+RULES.md section 16), tested against the census end mass.
+
+### 1a. Matchup values (score of the first-named, 95 % CI)
+
+| ruleset  | matchup                | seat 0          | seat 1          | actions / game | exhaustion endings | ties  |
+|----------|------------------------|-----------------|-----------------|----------------|--------------------|-------|
+| TOY      | random vs random       | 0.6480 ± 0.0138 | 0.3520 ± 0.0138 | 6.5            | 0.185              | 0.122 |
+| TOY      | heuristic vs random    | 0.7346 ± 0.0130 | 0.4004 ± 0.0148 | 6.2            | 0.099              | 0.066 |
+| TOY      | heuristic vs heuristic | 0.6921 ± 0.0141 | 0.3079 ± 0.0141 | 5.9            | 0.026              | 0.023 |
+| FULL_UNO | random vs random       | 0.5020 ± 0.0155 | 0.4980 ± 0.0155 | 55.1           | 0                  | 0     |
+| FULL_UNO | heuristic vs random    | 0.6162 ± 0.0151 | 0.5905 ± 0.0152 | 44.5           | 0                  | 0     |
+| FULL_UNO | heuristic vs heuristic | 0.5078 ± 0.0155 | 0.4923 ± 0.0155 | 37.4           | 0                  | 0     |
+
+No `FULL_UNO` game hit the 1000-action cap.
+
+### 1b. Luck: mirroring Heuristic vs Random; games for a 3-point edge at 3 sigma
+
+| ruleset  | corr(seat 0, seat 1) | splits | var ratio | seat 0 alone | seat 1 alone | seat mean raw | mirrored |
+|----------|----------------------|--------|-----------|--------------|--------------|---------------|----------|
+| TOY      | -0.320               | 0.623  | 0.682     | 1747         | 2277         | 2012          | 1373     |
+| FULL_UNO | -0.092               | 0.523  | 0.908     | 2365         | 2419         | 2392          | 2173     |
+
+### 1c. Skill proxy: Heuristic minus Random, both against Random, same deals
+
+| ruleset  | seat | paired diff      | unpaired ± | corr   | var ratio | games for 3 pts, unpaired / paired |
+|----------|------|------------------|------------|--------|-----------|------------------------------------|
+| TOY      | 0    | +0.0866 ± 0.0128 | ± 0.0189   | +0.543 | 0.458     | 7444 / 3410                        |
+| TOY      | 1    | +0.0484 ± 0.0136 | ± 0.0202   | +0.548 | 0.453     | 8504 / 3855                        |
+| FULL_UNO | 0    | +0.1143 ± 0.0206 | ± 0.0216   | +0.095 | 0.905     | 9732 / 8806                        |
+| FULL_UNO | 1    | +0.0925 ± 0.0204 | ± 0.0217   | +0.119 | 0.881     | 9839 / 8671                        |
+
+### 1d. Decisions by kind (Heuristic vs Random games)
+
+A decision counts under every kind it matches. Counts are per game, both
+players together; shares are of all decisions.
+
+| decision kind                          | TOY / game | share | FULL_UNO / game | share |
+|----------------------------------------|------------|-------|-----------------|-------|
+| decisions                              | 6.18       | 1     | 44.46           | 1     |
+| any choice (2+ legal actions)          | 2.87       | 0.464 | 31.50           | 0.709 |
+| which color: plays in 2+ colors        | 1.36       | 0.220 | 4.93            | 0.111 |
+| wild: hold or spend                    | 0.75       | 0.122 | 3.58            | 0.081 |
+| wild: pick a color                     | 1.14       | 0.184 | 4.53            | 0.102 |
+| action card among other plays          | 0          | 0     | 9.03            | 0.203 |
+| draw with a play in hand               | 0          | 0     | 26.80           | 0.603 |
+| play or keep the drawn card            | 0.51       | 0.082 | 4.70            | 0.106 |
+
+### 2. `TOY`, exact: how games end and where the points come from
+
+The row agent sits at the given seat. "From X" is the score collected in games
+that end by X. "Within" is the score given that the game ended by exhaustion.
+
+| row vs column          | seat | score  | P(exhaustion) | from emptied hand | from exhaustion | within exhaustion |
+|------------------------|------|--------|---------------|-------------------|-----------------|-------------------|
+| random vs random       | 0    | 0.6493 | 0.188         | 0.5420            | 0.1073          | 0.570             |
+|                        | 1    | 0.3507 | 0.188         | 0.2696            | 0.0811          | 0.430             |
+| heuristic vs random    | 0    | 0.7390 | 0.108         | 0.6913            | 0.0477          | 0.442             |
+|                        | 1    | 0.4077 | 0.108         | 0.3739            | 0.0338          | 0.315             |
+| BR L1(random) vs random| 0    | 0.7934 | 0.190         | 0.6697            | 0.1237          | 0.653             |
+|                        | 1    | 0.5513 | 0.150         | 0.4866            | 0.0647          | 0.431             |
+| nash vs random         | 0    | 0.7871 | 0.210         | 0.6492            | 0.1379          | 0.656             |
+|                        | 1    | 0.5235 | 0.145         | 0.4696            | 0.0539          | 0.372             |
+| heuristic vs heuristic | 0    | 0.6891 | 0.033         | 0.6722            | 0.0169          | 0.518             |
+|                        | 1    | 0.3109 | 0.033         | 0.2952            | 0.0157          | 0.482             |
+| nash vs heuristic      | 0    | 0.7357 | 0.107         | 0.6540            | 0.0816          | 0.760             |
+|                        | 1    | 0.4314 | 0.070         | 0.3944            | 0.0370          | 0.533             |
+| nash vs nash           | 0    | 0.6196 | 0.147         | 0.5194            | 0.1002          | 0.682             |
+|                        | 1    | 0.3804 | 0.147         | 0.3337            | 0.0467          | 0.318             |
+
+Edge over Random at the same seat, both against Random, split by the ending
+the points come through (score points):
+
+| row           | seat | edge   | via emptied hand | via exhaustion |
+|---------------|------|--------|------------------|----------------|
+| heuristic     | 0    | +8.97  | +14.93           | -5.96          |
+| heuristic     | 1    | +5.70  | +10.43           | -4.73          |
+| BR L1(random) | 0    | +14.41 | +12.77           | +1.64          |
+| BR L1(random) | 1    | +20.06 | +21.70           | -1.64          |
+| nash          | 0    | +13.78 | +10.72           | +3.06          |
+| nash          | 1    | +17.28 | +20.00           | -2.72          |
+
+This is an accounting identity, not a causal split. An agent that avoids
+losing by exhaustion moves probability mass from "exhaustion" to "emptied
+hand". So "via exhaustion ≈ 0" does not prove the pile-parity tactic is
+worthless. The causal test would be a variant ruleset that scores exhaustion
+differently.
+
+### Reading
+
+1. **The seat effect is a toy artefact.** Seat 0 is worth 15 points on `TOY`
+   and nothing measurable on `FULL_UNO`: random self-play gives 0.502 ± 0.016,
+   Heuristic self-play 0.508. Reporting per seat stays harmless on full UNO but
+   buys nothing there.
+2. **Heuristic vs Random on full UNO is the old 60 % rulebot**: seat mean
+   0.603. It beats Random by +11.4 / +9.3 points, more than on `TOY`
+   (+8.7 / +4.8). So full UNO has at least as much skill against Random as the
+   rulebot shows. Its ceiling is still unknown.
+3. **The luck has a different structure.** On `TOY` the luck is in the deal:
+   mirroring removes 32 % of the variance and pairing two agents on the same
+   deals removes 55 %. On `FULL_UNO` the luck is in the draws during a
+   44-action game. The two games of a pair decouple almost immediately, so
+   mirroring removes 9 % and pairing about 10 %. The share of split pairs
+   (0.52) is near the 0.48 that two independent games at these per-seat
+   values would give; on `TOY` it is 0.62 against 0.55. **The step 7
+   conclusions about pairing do not transfer.** On full UNO a 3-point
+   comparison between two agents costs ~9000 games either way, and AIVAT,
+   which corrects at every draw, is the estimator that can help.
+4. **The two most frequent full-UNO decisions do not exist on `TOY`.** "Draw
+   with a play in hand" is 60 % of all decisions (26.8 per game) and
+   action-card timing is 20 %, both zero on `TOY`. Nobody knows yet whether
+   voluntary drawing is ever right. If it almost never is, it is a large but
+   nearly empty decision. Color choice and the wild's hold / spend / color
+   decisions exist on both, at comparable shares of decisions (8-11 % full,
+   12-22 % toy), with 3-5x more of them per game on full UNO.
+5. **Exhaustion is less of a distortion than feared.** Strong play does not
+   drift into exhaustion: 15 % of Nash-vs-Nash games, against 19 % under
+   Random, and RULES.md section 9 expected more. The best responder's and
+   Nash's edges over Random arrive mostly through emptied hands (exhaustion
+   contributes -2.7 to +3.1 points). The Heuristic *loses* exhaustion endings
+   (0.44 within them at seat 0, Random gets 0.57): it gives back 5-6 points
+   there (holding the wild is a guess, not checked) and wins them back by
+   emptying its hand.
+
+Consequence for "should the toy grow": the gap is not the size of `TOY` but
+**the decisions it lacks** (voluntary draw, action cards) and **the length of
+its games** (in-game draw luck, which mirroring cannot pair away). A `TOY2`
+should add the missing decisions, not just cards. Measuring the value of the
+voluntary draw first (`TOY_FULL` against `TOY`, both best responses to Random)
+would say whether 60 % of full UNO's decisions carry any skill. Long-game
+luck cannot be made exact; that part belongs to sampled estimators (AIVAT),
+validated on the toys.
+
+
+## Step 8.6 results: symmetry, compact keys, tree cache (2026-09-14, `uno/symmetry.py`, `scripts/symmetry.py`)
+
+### Why
+
+Two goals after step 8.5: a bigger toy (the one we have lacks the voluntary
+draw and action cards, and seat 0 is worth 15 points) and a faster exact
+stack, since every ladder cell of steps 10-11 is an exact computation per
+checkpoint. Before building, three things were measured on `TOY`:
+
+- where the memory goes: the compiled tree with an L1 keying is 76 MB of
+  numpy arrays and ~580 MB of Python key dictionaries (nested tuples); with
+  L1 + L2 it is 1.1 GB, 90 % keys. The numpy passes were never the problem
+  (reach 0.04 s, values 0.02 s, best response 0.11 s per 1.25M nodes, i.e.
+  30-60M nodes/s), so float32 would have saved ~30 MB of transient arrays
+  and nothing else; it was dropped;
+- the walk: 140k histories/s of pure-Python engine, 9-14 s per tree;
+- the **symmetry**: the rules never name a color or a rank, so renaming
+  colors (4! = 24 ways) and ranks (2! = 2 ways, ranks with equal copies) maps
+  the game onto itself. One subtree per *orbit* of deals instead of one per
+  deal, one information set per orbit of keys. Measured on `TOY`: 5,600 deals
+  -> 144 orbits, 1,252,040 -> 33,646 histories (37x), 558,656 -> 12,036 L1
+  sets (46x). The group grows factorially with the deck (144 for three
+  one-copy ranks, 240 for five colors, 576 for four ranks), so this is the
+  lever that makes a bigger toy affordable, while memory and walk speed only
+  make the same toy cheaper.
+
+Decisions: build the symmetric quotient (default for every compiled tree),
+store keys as bytes, cache compiled trees and CFR results in `.cache/`. numba
+(installs fine on this Python 3.14), a faster walker and discounted /
+predictive CFR wait until the gain from these three is measured. Seat parity
+is not addressed here: the candidate census below says it comes from game
+length and playability, not size, and the mirrored evaluator handles it.
+
+### What was built
+
+- `uno/symmetry.py` (RULES.md section 18): the group as lookup tables; its
+  action on hands, public histories, keys of every level, states and
+  policies; `canonical(level, key)` = lexicographic minimum over the group
+  with the element reaching it (search pruned on the observer's hand, the
+  candidates cached per hand); `stabilizer` and `action_orbits`;
+  `canonical_roots` for deals (unknown pile as a multiset) and worlds (pile
+  order kept).
+- `initial_deals(rs, symmetric)`, `worlds(rs, symmetric)`, `census(rs,
+  symmetric)` (counts canonical L1 sets).
+- `compile_tree(rs, levels, symmetric=True, cache=None)`: canonical roots
+  with orbit mass, canonical keys encoded as bytes (`encode_key` /
+  `decode_key` in `uno/solve.py`), each arc's set-action found through its
+  node's canonicalising element, per-set **action orbits** under the
+  stabilizer of the canonical key; `CompiledTree.save` / `load`, `nbytes`,
+  `cache_name`. `CompiledAgent` canonicalises the observation and maps the
+  action back with the inverse element; `tabulate` refuses an agent that is
+  not symmetric; `tabulate_table` spreads a pure choice over its orbit.
+- `best_response` chooses the best action *orbit* and plays it uniformly;
+  `cfr` averages regrets and average-strategy mass within orbits.
+- `Heuristic` made symmetric (RULES.md section 13): the old "ties: lowest
+  type id" is replaced by "keep the current color, then a number card, then
+  uniform". Random and UniformLegal were symmetric already.
+- `uno/play.py`: the action rng is keyed on (seed, **agent name**, information
+  state), see "a coupling found by the tests" below.
+- `tests/test_symmetry.py` (8 tests, 13 s): the group acts on the engine
+  (`g . step(s, a) == step(g . s, g . a)`, legal actions, returns, keys of
+  every level, inverses), key encoding round-trips, canonical forms are
+  invariant / reached / fixed by their stabilizer / minimal, the three
+  baseline agents commute with the group, quotient census == full census
+  (end mass, UniformLegal score), quotient tree == full tree (evaluate for
+  every pair of baselines, best response at L1 / L2 / L3 against each,
+  symmetric strategies replaying to their value through the engine, the
+  exploitability of the uniform profile), `tabulate` rejects an asymmetric
+  agent on `TOY`, save / load / cache round trip, and the twelve `TOY`
+  values plus the Nash value on the quotient. `test_compiled.py` keeps the
+  full-tree checks explicitly (`symmetric=False`) with the new Heuristic
+  values pinned. Suite: 82 tests, ~2.7 min.
+
+### A bug the small rulesets did not catch, again
+
+The first symmetric best response reproduced every L2 and L3 value of steps
+5-6 and was 1.3-1.9 points *above* the L1 ones (0.8065 vs 0.7934 for seat 0
+against Random). A best response above the true maximum is not a strategy.
+The cause: at a canonical set whose key has a non-trivial stabilizer (hand
+`{red 1, blue 1, W}` on a green top is fixed by swapping red and blue), a
+pure choice of "red 1" lifted through each node's own canonicalising element
+plays red 1 at some histories of the real information set and blue 1 at
+others, i.e. it conditions on which side of the symmetry the history came
+from, which correlates with the opponent's hidden hand. L2 and L3 sets are
+(nearly) singletons, where no stabilizer moves anything. The fix is the
+orbit structure above: a symmetric strategy must be uniform within every
+orbit of a set's actions under its stabilizer, and a symmetric best response
+(which always exists against a symmetric opponent) picks the best orbit. 284
+of the 12,036 canonical L1 sets of `TOY` have such an orbit. The same
+constraint applies to CFR (regret averaging within orbits), otherwise its
+"strategies" would not be strategies either.
+
+### A coupling found by the tests
+
+With the Heuristic now stochastic on ties (10.2 % of its decisions against
+Random on `TOY` are played uniformly over 2+ cards), the mirrored check of
+step 7 failed on the correlation between the two seats' scores: sampled
+-0.364 on 4000 pairs against the exact -0.300 (4.5 sigma). The action rng
+was keyed on (seed, information state), so in a mirrored pair the Heuristic
+in game 2 and Random in game 1 sit at the same seat, meet the same
+information states, and draw the *same* random numbers: when the Heuristic's
+tie set equals Random's play set the two games make the same move. That
+couples the two games beyond the shared deal, and `exact_mirrored` assumes
+independence given the world. Deterministic agents never triggered it. The
+key now includes the agent's name: different agents never share a stream,
+and the same agent in the same situation still makes the same choice across
+matchups (what `compare` needs). Sampled tables of steps 7-8.5 were drawn
+with the old streams; the exact numbers do not move.
+
+### Sizes and costs on `TOY` (M1 Pro, one core)
+
+| tree | roots | nodes | L1 sets | other keying | compile | bytes (arrays + keys) | load from cache |
+|------|-------|-------|---------|--------------|---------|-----------------------|-----------------|
+| full lazy L1+L2 | 5,600 | 1,252,041 | 558,656 | L2 876,848 | 14.0 s | 179 MB | 0.34 s |
+| quotient lazy L1+L2 | 144 | 33,647 | 12,036 | L2 18,620 | 1.4 s | 4.2 MB | 0.01 s |
+| full world L1+L3 | 10,080 | 1,384,297 | 558,656 | L3 986,496 | 13.3 s | 196 MB | 0.38 s |
+| quotient world L1+L3 | 242 | 33,998 | 12,036 | L3 20,882 | 1.4 s | 4.4 MB | 0.01 s |
+
+The full trees are 6x smaller than before from the bytes keys alone (1.1 GB
+-> 179 MB with L1 + L2); the quotient is another 40x. The 5-6 s tabulation
+loop is gone with it (46x fewer sets).
+
+| computation on `TOY` | full tree | quotient | speedup |
+|----------------------|-----------|----------|---------|
+| best response, any level and seat | 0.35-0.38 s | 0.01 s | ~35x |
+| one CFR+ iteration | 200 ms (step 8) | 5.2 ms | 38x |
+| CFR+ to NashConv 0.001 pts (1000 iterations) | 203 s | 5.2 s | 39x |
+| exploitability of a tabulated agent | ~0.2 s | ~0.02 s | |
+
+### The twelve values, both trees, and the new Heuristic
+
+Random column unchanged to 4 decimals on both trees. The Heuristic's values
+moved with its tie-break (pinned with the pure-Python reference solver of
+`uno/solve.py` on the full game, then reproduced on the full and the quotient
+compiled trees):
+
+| opponent | seat | BR L1 | BR L2 | BR L3 | L2-L1 | L3-L2 | old (step 6) L1 / L2 / L3 |
+|----------|------|-------|-------|-------|-------|-------|---------------------------|
+| random | 0 | 0.7934 | 0.8188 | 0.8280 | +2.5 | +0.9 | same |
+| random | 1 | 0.5513 | 0.5937 | 0.5989 | +4.2 | +0.5 | same |
+| heuristic | 0 | 0.7378 | 0.7730 | 0.7798 | +3.5 | +0.7 | 0.7447 / 0.7770 / 0.7837 |
+| heuristic | 1 | 0.4361 | 0.4774 | 0.4786 | +4.1 | +0.1 | 0.4525 / 0.4806 / 0.4825 |
+
+Row matchups: random vs random 0.6493 / 0.3507 (same), heuristic vs random
+0.7416 / 0.4147 (was 0.7390 / 0.4077), heuristic vs heuristic 0.6934 / 0.3066
+(was 0.6891 / 0.3109). Mixing on ties makes the Heuristic both a little
+stronger against Random and less exploitable: 5.6 / 11.8 points (was 7.2 /
+12.5). The best response to Random is now the *symmetric* one (uniform over
+tied orbits), which scores the same against Random and is less exploitable
+than the lowest-id pure one of step 8: 1.6 / 0.4 points (was 1.9 / 0.6), an
+instance of "symmetrising never raises exploitability".
+
+Nash L1 on the quotient: seat 0 scores **0.6196** (NashConv 0.001 pts after
+1000 CFR+ iterations, 5.2 s), the step 8 value. Nash row / column with the
+new Heuristic: nash vs heuristic 0.7328 / 0.4139, heuristic vs nash 0.5861 /
+0.2672; nash vs random 0.7871 / 0.5235 and random vs nash 0.4765 / 0.2129
+unchanged; br_l1(random) vs nash 0.6149 / 0.3792.
+
+### `TOY_FULL` solved exactly (the worth of the voluntary draw)
+
+`TOY_FULL` (`TOY` without forced play) was "> 2e7 histories, a name for
+later" in step 3. Its quotient: 774,008 nodes, 138,876 L1 sets, 303,492 L2
+sets, 86 MB, 17 s to compile (world tree 730,599 nodes, 305,754 L3 sets,
+13 s); best response 0.2 s, CFR+ 110 ms per iteration.
+
+| opponent | seat | BR L1 | BR L2 | BR L3 | L2-L1 | L3-L2 | minus `TOY`, L1 / L2 / L3 (pts) |
+|----------|------|-------|-------|-------|-------|-------|----------------------------------|
+| random | 0 | 0.8017 | 0.8443 | 0.8590 | +4.3 | +1.5 | +0.8 / +2.6 / +3.1 |
+| random | 1 | 0.5882 | 0.6419 | 0.6941 | +5.4 | +5.2 | +3.7 / +4.8 / +9.5 |
+| heuristic | 0 | 0.7446 | 0.8060 | 0.8187 | +6.1 | +1.3 | +0.7 / +3.3 / +3.9 |
+| heuristic | 1 | 0.4732 | 0.5131 | 0.5437 | +4.0 | +3.1 | +0.7 / +3.6 / +6.5 |
+
+Row matchups are identical to `TOY` (neither Random nor the Heuristic ever
+draws voluntarily). **Nash L1 of `TOY_FULL`: seat 0 scores 0.5866, seat 1
+0.4134** (NashConv < 0.001 pts, 1000 iterations, 110 s). Exploitability of
+the rows: random 17.5 / 21.5, heuristic 6.0 / 15.8, br_l1(random) 4.6 / 1.3.
+Nash vs random 0.7595 / 0.5123, nash vs heuristic 0.7065 / 0.4372.
+
+Voluntary draws with a play in hand, expected per game (seat 0 / seat 1 of
+the named profile): br_l1(random) vs random 0.029 / 0.184, br_l1(heuristic)
+vs heuristic 0.020 / 0.178, nash vs nash 0.228 / 0.372, nash vs random 0.244
+/ 0.433.
+
+Reading:
+
+1. **The voluntary draw is a real decision, mostly for seat 1.** At L1 it is
+   worth 0.7-0.8 points to seat 0 and 3.7 points to seat 1 against both
+   opponents; at equilibrium it moves 3.3 points from seat 0 to seat 1 (the
+   seat gap under optimal play shrinks from 12 to 8.7 points). Seat 1 draws
+   with a play in hand once every 5-6 games against a fixed opponent and
+   once every 2-3 games at equilibrium; seat 0 almost never against a fixed
+   opponent (0.02-0.03 per game) but 0.23 per game at equilibrium. So on
+   this toy "draw with a play in hand" is a tempo tool of the trailing seat
+   (the pile-parity tactic of RULES.md section 9), and its worth grows with
+   information: 3-5 points at L2, up to 9.5 at L3 for seat 1, since with the
+   pile known a draw fetches a chosen card.
+2. **Exploitability rises with the option.** Random and the Heuristic give
+   up 15.8-21.5 points at seat 1 on `TOY_FULL` against 11.8-17.4 on `TOY`;
+   a best response to Random is no longer near-Nash (4.6 points from seat 0,
+   against 1.6). More room for deception, as step 8 predicted.
+3. Step 8.5 asked whether 60 % of full UNO's decisions ("draw with a play in
+   hand") carry any skill. On the 9-card toy they carry ~1-4 points at L1 and
+   are used in a fifth to a third of games. That is not "nearly empty".
+
+### Sizing bigger candidates (scratch measurements, before this step)
+
+Quotient census with a 6M-history cap; "R vs R" is the random-vs-random
+seat-0 score on 2000 seeds (the seat-parity readout of step 3).
+
+| candidate | deck | pile | group | deals -> orbits | quotient histories | R vs R seat 0 | actions / game |
+|-----------|------|------|-------|-----------------|--------------------|---------------|----------------|
+| `TOY` 4c(1,1)+W h3 forced | 9 | 2 | 48 | 5,600 -> 144 | 33,646 | 0.651 | 6.5 |
+| `TOY_FULL` | 9 | 2 | 48 | 5,600 -> 144 | 774,007 | 0.651 | 6.5 |
+| 5c(1,1)+W h3 forced | 11 | 4 | 240 | 58,800 -> 366 | 2,063,824 | 0.634 | 7.5 |
+| 4c(1,1,1)+W h3 forced | 13 | 6 | 144 | 332,640 -> 2,544 | > 6M | 0.568 | 8.3 |
+| 4c(1,1,1)+W h4 forced | 13 | 4 | 144 | 554,400 -> 4,184 | > 6M | 0.593 | 9.9 |
+| 4c(1,1,1)+W h3 free | 13 | 6 | 144 | 332,640 -> 2,544 | > 6M | 0.568 | 8.3 |
+| 4c(1,1)+skip+W h3 forced | 13 | 6 | 48 | 2,667,840 -> 56,628 | > 6M | 0.556 | 8.2 |
+| 4c(1,1)+draw2+W h3 forced | 13 | 6 | 48 | 2,667,840 -> 56,628 | > 6M | 0.544 (37 % exhaustion) | 7.2 |
+| 4c(1,1,1)+2W h3 forced | 14 | 7 | 144 | 609,840 -> 4,714 | > 6M | 0.548 | 9.0 |
+
+Seat parity follows game length and per-card playability (a third rank,
+action cards), not deck size (five colors: 0.634); those candidates all pass
+6M quotient histories, true sizes unknown. With keys gone, 20-50M histories
+fit in memory (~110 bytes per history in the compiled arrays), so some are
+probably in reach; sizing them needs a faster census walk (numba, or a
+DFS with undo), which is the next measurement.
+
+### What is next
+
+- Measure what the quotient + cache buy on the step 10-11 loop (a best
+  response per checkpoint is now 0.01 s on `TOY`, 0.2 s on `TOY_FULL`),
+  then decide on numba kernels / a faster walker / discounted CFR.
+- Size the 13-card candidates past the 6M cap and pick `TOY2` (a third rank
+  or skips, the two that move seat parity and add the missing decisions).
+- The RL agent (step 11) is made symmetric by construction (canonical
+  observation in, action mapped back), so every exact cell stays on the
+  quotient; a raw asymmetric checkpoint would need `symmetric=False`.
+
+
 ## Build order
 1. RULES.md: parametrized ruleset, toy and full parameters
 2. core engine + property tests

@@ -74,6 +74,93 @@ def l3_key(state: State, seat: int) -> Key:
 KEYS: dict[Level, Callable[[State, int], Key]] = {Level.L1: l1_key, Level.L2: l2_key, Level.L3: l3_key}
 
 
+# -- keys as bytes: compact, hashable and storable (`uno.compiled` keeps one per set)
+
+_EVENT_TAGS = {"setup": 0, "play": 1, "draw": 2, "reshuffle": 3}
+
+
+def _put_public(out: bytearray, public: tuple) -> None:
+    out.append(len(public))
+    for ev in public:
+        out.append(_EVENT_TAGS[ev[0]])
+        match ev[0]:
+            case "setup":
+                out.append(ev[1]), out.append(len(ev[2])), out.extend(ev[2])
+            case "play":
+                out.extend((ev[1], ev[2], ev[3]))
+            case "draw":
+                out.extend((ev[1], ev[2]))
+
+
+def _get_public(b: bytes, i: int) -> tuple[tuple, int]:
+    n, i = b[i], i + 1
+    out = []
+    for _ in range(n):
+        tag, i = b[i], i + 1
+        if tag == 0:
+            top, m = b[i], b[i + 1]
+            out.append(("setup", top, tuple(b[i + 2 : i + 2 + m])))
+            i += 2 + m
+        elif tag == 1:
+            out.append(("play", b[i], b[i + 1], b[i + 2]))
+            i += 3
+        elif tag == 2:
+            out.append(("draw", b[i], b[i + 1]))
+            i += 2
+        else:
+            out.append(("reshuffle",))
+    return tuple(out), i
+
+
+def _put_cards(out: bytearray, cards: tuple[int, ...]) -> None:
+    out.append(len(cards)), out.extend(cards)
+
+
+def _get_cards(b: bytes, i: int) -> tuple[tuple[int, ...], int]:
+    n = b[i]
+    return tuple(b[i + 1 : i + 1 + n]), i + 1 + n
+
+
+def encode_key(level: Level, key: Key) -> bytes:
+    """A key of `KEYS[level]` as bytes (type ids, colors and counts all < 255)."""
+    out = bytearray()
+    if level is Level.L3:
+        hands, pile, player, phase, drawn, public, draws = key
+        _put_cards(out, hands[0]), _put_cards(out, hands[1]), _put_cards(out, pile)
+        out.extend((player, int(phase), 255 if drawn is None else drawn))
+        _put_public(out, public)
+        _put_cards(out, draws[0]), _put_cards(out, draws[1])
+        return bytes(out)
+    seat, hand, public, draws = key[:4]
+    out.append(seat), _put_cards(out, hand), _put_public(out, public), _put_cards(out, draws)
+    if level is Level.L2:
+        _put_cards(out, key[4]), _put_cards(out, key[5])
+    return bytes(out)
+
+
+def decode_key(level: Level, b: bytes) -> Key:
+    from uno.engine import Phase
+
+    if level is Level.L3:
+        h0, i = _get_cards(b, 0)
+        h1, i = _get_cards(b, i)
+        pile, i = _get_cards(b, i)
+        player, phase, drawn = b[i], Phase(b[i + 1]), (None if b[i + 2] == 255 else b[i + 2])
+        public, i = _get_public(b, i + 3)
+        d0, i = _get_cards(b, i)
+        d1, i = _get_cards(b, i)
+        return ((h0, h1), pile, player, phase, drawn, public, (d0, d1))
+    seat = b[0]
+    hand, i = _get_cards(b, 1)
+    public, i = _get_public(b, i)
+    draws, i = _get_cards(b, i)
+    if level is Level.L2:
+        oh, i = _get_cards(b, i)
+        od, i = _get_cards(b, i)
+        return (seat, hand, public, draws, oh, od)
+    return (seat, hand, public, draws)
+
+
 def obs_key(rs: Ruleset, obs: Observation) -> Key:
     """The same key as `KEYS[obs.level]`, computed from an observation."""
     match obs.level:
@@ -89,13 +176,19 @@ def obs_key(rs: Ruleset, obs: Observation) -> Key:
 # -- roots and expansion ------------------------------------------------------
 
 
-def worlds(rs: Ruleset) -> list[Outcome]:
-    """L3 roots: every deal x every order of the unknown part of the pile."""
+def worlds(rs: Ruleset, symmetric: bool = False) -> list[Outcome]:
+    """L3 roots: every deal x every order of the unknown part of the pile.
+    `symmetric`: one representative per orbit under `uno.symmetry`, carrying
+    the orbit's probability (RULES.md section 18)."""
     out: list[Outcome] = []
     for s, p in initial_deals(rs):
         unknown, tail = pile_split(s)
         for seq, q in ordered_picks(dict(unknown), sum(unknown.values())):
             out.append((replace(s, draw_pile=(*seq, *tail)), p * q))
+    if symmetric:
+        from uno.symmetry import canonical_roots
+
+        return canonical_roots(rs, out, lazy=False)
     return out
 
 

@@ -2,8 +2,15 @@
 
 `play_game` records a full trace (state, observation, policy, action) per
 decision, which is what the mirrored evaluator and AIVAT consume later. Action
-sampling uses an rng seeded from (game seed, information state), so the same
-agent makes the same choice in the same situation: common random numbers.
+sampling uses an rng seeded from (game seed, agent name, information state),
+so the same agent makes the same choice in the same situation: common random
+numbers. The agent name is in the key so that two *different* stochastic
+agents never share a stream: in a mirrored pair the row and the column agent
+sit at the same seat in the two games and would otherwise draw the same
+random numbers in the same information states, coupling the two games beyond
+the shared deal (the exact mirrored moments assume they are independent given
+the world). Same agent, same situation, same choice still holds across
+matchups, which is what `uno.estimate.compare` needs.
 """
 
 from __future__ import annotations
@@ -70,7 +77,7 @@ def play_from(s: State, seed: int, agents: tuple[Agent, Agent], levels: tuple[Le
         obs = observe(s, p, levels[p])
         legal = legal_actions(s)
         probs = agents[p].policy(obs, legal)
-        rng = random.Random(stable_hash((seed, obs.info_state)))
+        rng = random.Random(stable_hash((seed, getattr(agents[p], "name", "?"), obs.info_state)))
         a = sample(probs, rng)
         steps.append(Step(s, obs, probs, a))
         s = step(s, a)

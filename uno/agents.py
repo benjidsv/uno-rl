@@ -71,12 +71,15 @@ class PlayFirstRandom:
 
 
 class Heuristic:
-    """Deterministic rulebot.
+    """Rulebot, symmetric under color and rank renaming (RULES.md section 18).
 
     Play over draw. Among playable non-wild cards prefer action cards when the
-    opponent is low, then the color held most, then the lowest type id. Hold
-    wilds unless nothing else plays; a wild takes the color held most. After a
-    draw, always play the drawn card.
+    opponent is low, then the color held most, then a card of the current color
+    (so the color stays), then a number card (action cards are kept for when
+    the opponent is low); what still ties is played uniformly at random, which
+    is what keeps the policy symmetric. Hold wilds unless nothing else plays; a
+    wild takes the color held most (the current color on ties, then uniform).
+    After a draw, always play the drawn card.
     """
 
     name = "heuristic"
@@ -101,17 +104,20 @@ class Heuristic:
         if colored:
             def key(ap):
                 ct = types[ap[1].card]
-                return (opp_low and ct.kind is not Kind.NUMBER, colors[ct.color], -ap[1].card)
+                return (opp_low and ct.kind is not Kind.NUMBER, colors[ct.color], ct.color == obs.current_color, ct.kind is Kind.NUMBER)
 
-            return {max(colored, key=key)[0]: 1.0}
-        # only wilds play: pick the color held most (lowest color on ties)
-        best_color = max(range(rs.colors), key=lambda c: (colors[c], -c))
+            best = max(key(ap) for ap in colored)
+            return uniform(a for a, p in colored if key((a, p)) == best)
+        # only wilds play: the color held most, the current color on ties
+        color_key = lambda c: (colors[c], c == obs.current_color)  # noqa: E731
+        best_color = max(color_key(c) for c in range(rs.colors))
 
         def wild_key(ap):
             ct = types[ap[1].card]
-            return (ap[1].color == best_color, opp_low == (ct.kind is Kind.WILD_DRAW_FOUR), -ap[1].card)
+            return (color_key(ap[1].color) == best_color, opp_low == (ct.kind is Kind.WILD_DRAW_FOUR))
 
-        return {max(plays, key=wild_key)[0]: 1.0}
+        best = max(wild_key(ap) for ap in plays)
+        return uniform(a for a, p in plays if wild_key((a, p)) == best)
 
 
 class BySeat:

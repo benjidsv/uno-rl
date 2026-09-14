@@ -16,8 +16,10 @@ Prints, on the ruleset:
 5. the Nash column: Random, Heuristic and BR L1(random) against it;
 6. the BR L1 / L2 / L3 ceilings against the Nash agent (information gaps).
 
-The CFR+ result is saved to `.cache/cfr_<ruleset>.npz` (loaded if present and
-computed with at least the requested iterations).
+Trees are compiled on the color / rank quotient (RULES.md section 18) and
+cached in `.cache/tree_*.npz`; the CFR+ result is saved to
+`.cache/cfr_<ruleset>_L1_sym.npz` (loaded if present and computed with at
+least the requested iterations).
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ import numpy as np
 from uno import rules
 from uno.agents import BySeat, Heuristic, PlayFirstRandom
 from uno.cfr import CFRResult, cfr, exploitability_of
-from uno.compiled import CompiledAgent, best_response, compile_tree, evaluate, exact_mirrored, tabulate
+from uno.compiled import CompiledAgent, best_response, cache_name, compile_tree, evaluate, exact_mirrored, tabulate
 from uno.estimate import estimate_mirrored, play_pairs
 from uno.observe import Level
 from uno.play import EVAL_SEEDS, match
@@ -57,9 +59,10 @@ def main() -> None:
     rnd, heu = PlayFirstRandom(rs), Heuristic(rs)
 
     print(f"== compiled trees on {name}")
-    lazy = compile_tree(rs, (Level.L1, Level.L2))
+    CACHE.mkdir(exist_ok=True)
+    lazy = compile_tree(rs, (Level.L1, Level.L2), cache=CACHE)
     print("  ", lazy)
-    world = compile_tree(rs, (Level.L1, Level.L3))
+    world = compile_tree(rs, (Level.L1, Level.L3), cache=CACHE)
     print("  ", world)
     t0 = time.perf_counter()
     sig = {a.name: (Level.L1, tabulate(lazy, Level.L1, a)) for a in (rnd, heu)}
@@ -88,8 +91,7 @@ def main() -> None:
     sys.stdout.flush()
 
     print(f"\n== CFR+ ({iterations} iterations; NashConv in score points; bracket = Nash seat-0 score)")
-    CACHE.mkdir(exist_ok=True)
-    path = CACHE / f"cfr_{name}.npz"
+    path = CACHE / f"cfr_{cache_name(rs, (Level.L1,), lazy.symmetric)}.npz"
     res = None
     if path.exists():
         res = CFRResult.load(path)

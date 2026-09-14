@@ -51,6 +51,7 @@ from __future__ import annotations
 import time
 from array import array
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Hashable
 
 import numpy as np
@@ -59,11 +60,13 @@ from uno.agents import Agent, Policy
 from uno.engine import Phase, State, returns
 from uno.observe import Level, Observation, observation_from_key
 from uno.rules import Ruleset
-from uno.solve import KEYS, engine_children, obs_key, worlds
+from uno.solve import KEYS, decode_key, encode_key, engine_children, obs_key, worlds
+from uno.symmetry import Symmetry
 from uno.tree import children, initial_deals
 
 Key = Hashable
 CHANCE, TERMINAL = -2, -1
+END_KINDS = (None, "win", "exhaustion", "cap")  # index = `CompiledTree.end` code
 
 
 def node_level(s: State) -> int:
@@ -85,7 +88,15 @@ class Keying:
     info_player: np.ndarray  # (k,) int8
     info_level: np.ndarray  # (k,) int32
     info_start: np.ndarray  # (k + 1,) int32, ia range of each set
-    keys: dict[Key, int]  # information-set key -> id
+    keys: dict[bytes, int]  # encoded (canonical, on a symmetric tree) information-set key -> id
+    # orbits of a set's actions under the stabilizer of its canonical key (singletons on a
+    # non-symmetric tree). A strategy over ia is a symmetric strategy iff it is uniform within
+    # every orbit, see RULES.md section 18. Orbits are numbered in set order, so a set's orbits
+    # are a contiguous range.
+    ia_orbit: np.ndarray  # (K,) int32
+    orbit_info: np.ndarray  # (O,) int32
+    orbit_size: np.ndarray  # (O,) int32
+    info_orbit_start: np.ndarray  # (k + 1,) int32
 
     @property
     def n_info(self) -> int:
@@ -113,11 +124,41 @@ class Keying:
     def uniform(self) -> np.ndarray:
         return 1.0 / self.info_n[self.ia_info].astype(np.float64)
 
+    @property
+    def n_orbits(self) -> int:
+        return len(self.orbit_info)
+
+    @property
+    def has_orbits(self) -> bool:
+        """Whether any orbit holds more than one action (only on a symmetric tree)."""
+        return bool(np.any(self.orbit_size > 1))
+
+    def orbit_mean(self, x: np.ndarray) -> np.ndarray:
+        """An ia vector averaged within every orbit (the identity on singleton orbits)."""
+        if not self.has_orbits:
+            return x
+        return (np.bincount(self.ia_orbit, weights=x, minlength=self.n_orbits) / self.orbit_size)[self.ia_orbit]
+
+    def is_symmetric(self, sigma: np.ndarray, tol: float = 1e-12) -> bool:
+        return bool(np.all(np.abs(sigma - self.orbit_mean(sigma)) <= tol))
+
+    def first_orbit_uniform(self) -> np.ndarray:
+        """Uniform over the first orbit of every set (the lowest action id and its images)."""
+        first = self.ia_orbit[self.info_start[:-1]][self.ia_info]
+        return np.where(self.ia_orbit == first, 1.0 / self.orbit_size[self.ia_orbit], 0.0)
+
     def ia_of(self, player: int) -> np.ndarray:
         return np.nonzero(self.info_player[self.ia_info] == player)[0]
 
     def actions(self, info: int) -> tuple[int, ...]:
         return tuple(int(a) for a in self.ia_action[self.info_start[info] : self.info_start[info + 1]])
+
+    def key(self, info: int) -> Key:
+        """The (canonical) key of a set, decoded. Builds the reverse index on first use."""
+        rev = getattr(self, "_rev", None)
+        if rev is None:
+            rev = self._rev = {i: b for b, i in self.keys.items()}
+        return decode_key(self.level, rev[info])
 
 
 # -- the tree -----------------------------------------------------------------
@@ -142,6 +183,7 @@ class CompiledTree:
     player: np.ndarray  # (n,) int8: 0 / 1, TERMINAL, CHANCE (node 0)
     level: np.ndarray  # (n,) int32
     util: np.ndarray  # (n,) float64, seat-0 return at terminals
+    end: np.ndarray  # (n,) int8, index into END_KINDS (0 = not terminal)
     arc_node: np.ndarray  # (m,) int32
     arc_action: np.ndarray  # (m,) int32, -1 for the root's arc
     arc_player: np.ndarray  # (m,) int8
@@ -153,6 +195,7 @@ class CompiledTree:
     levels: list[LevelSlice]
     keyings: dict[Level, Keying]
     seconds: float
+    symmetry: Symmetry | None = None  # set when the roots are orbit representatives and the keys canonical
     arcs_of: tuple[np.ndarray, np.ndarray] = field(init=False)
     terminals: np.ndarray = field(init=False)
     roots: np.ndarray = field(init=False)  # node ids of the deals / worlds, in edge order
@@ -185,11 +228,68 @@ class CompiledTree:
     def n_decisions(self) -> int:
         return self.n - self.n_terminals - 1
 
+    @property
+    def symmetric(self) -> bool:
+        return self.symmetry is not None
+
     def __str__(self) -> str:
         ks = ", ".join(f"{k.name}: {v.n_info} sets / {v.n_ia} ia" for k, v in self.keyings.items())
+        sym = f" symmetric |G|={self.symmetry.order}" if self.symmetric else ""
         return (
-            f"CompiledTree({self.roots_level.name} roots={len(self.roots)} nodes={self.n} decisions={self.n_decisions} "
+            f"CompiledTree({self.roots_level.name} roots={len(self.roots)}{sym} nodes={self.n} decisions={self.n_decisions} "
             f"terminals={self.n_terminals} arcs={self.m} edges={self.e} levels={len(self.levels)} {ks}; {self.seconds:.1f}s)"
+        )
+
+    @property
+    def nbytes(self) -> int:
+        """Bytes held in numpy arrays plus the encoded keys."""
+        n = sum(getattr(self, f).nbytes for f in ("player", "level", "util", "end", "arc_node", "arc_action", "arc_player", "node_arc_start", "edge_arc", "edge_child", "edge_prob", "arc_edge_start"))
+        for k in self.keyings.values():
+            n += sum(getattr(k, f).nbytes for f in ("node_info", "arc_ia", "ia_info", "ia_action", "info_player", "info_level", "info_start", "ia_orbit", "orbit_info", "orbit_size", "info_orbit_start"))
+            n += sum(len(b) for b in k.keys)
+        return n
+
+    # -- persistence
+
+    def save(self, path: str | Path) -> None:
+        """Everything except the Symmetry (rebuilt on load). `np.savez` (uncompressed) for load speed."""
+        arrays = {f: getattr(self, f) for f in ("player", "level", "util", "end", "arc_node", "arc_action", "arc_player", "node_arc_start", "edge_arc", "edge_child", "edge_prob", "arc_edge_start")}
+        arrays["levels"] = np.array([(L.level, L.n0, L.nd, L.n1, L.a0, L.a1, L.e0, L.e1) for L in self.levels], dtype=np.int64)
+        arrays["meta"] = np.array([repr(self.rs), self.roots_level.name, str(self.symmetric), repr(self.seconds)])
+        arrays["keying_levels"] = np.array([lv.value for lv in self.keyings], dtype=np.int64)
+        for lv, k in self.keyings.items():
+            for f in ("node_info", "arc_ia", "ia_info", "ia_action", "info_player", "info_level", "info_start", "ia_orbit", "orbit_info", "orbit_size", "info_orbit_start"):
+                arrays[f"{lv.name}_{f}"] = getattr(k, f)
+            ids = np.fromiter(k.keys.values(), dtype=np.int32, count=len(k.keys))
+            lens = np.fromiter((len(b) for b in k.keys), dtype=np.int32, count=len(k.keys))
+            arrays[f"{lv.name}_key_ids"] = ids
+            arrays[f"{lv.name}_key_lens"] = lens
+            arrays[f"{lv.name}_key_bytes"] = np.frombuffer(b"".join(k.keys), dtype=np.uint8)
+        np.savez(path, **arrays)
+
+    @classmethod
+    def load(cls, path: str | Path, rs: Ruleset) -> CompiledTree:
+        z = np.load(path)
+        rs_repr, roots_level, symmetric, seconds = z["meta"].tolist()
+        if rs_repr != repr(rs):
+            raise ValueError(f"{path} was compiled for another ruleset: {rs_repr}")
+        keyings = {}
+        for v in z["keying_levels"].tolist():
+            lv = Level(v)
+            ids, lens, buf = z[f"{lv.name}_key_ids"], z[f"{lv.name}_key_lens"], z[f"{lv.name}_key_bytes"].tobytes()
+            keys, pos = {}, 0
+            for i, n in zip(ids.tolist(), lens.tolist()):
+                keys[buf[pos : pos + n]] = i
+                pos += n
+            keyings[lv] = Keying(level=lv, keys=keys, **{f: z[f"{lv.name}_{f}"] for f in ("node_info", "arc_ia", "ia_info", "ia_action", "info_player", "info_level", "info_start", "ia_orbit", "orbit_info", "orbit_size", "info_orbit_start")})
+        return cls(
+            rs=rs,
+            roots_level=Level[roots_level],
+            **{f: z[f] for f in ("player", "level", "util", "end", "arc_node", "arc_action", "arc_player", "node_arc_start", "edge_arc", "edge_child", "edge_prob", "arc_edge_start")},
+            levels=[LevelSlice(*(int(x) for x in row)) for row in z["levels"]],
+            keyings=keyings,
+            seconds=float(seconds),
+            symmetry=Symmetry(rs) if symmetric == "True" else None,
         )
 
     # -- strategies to per-arc weights
@@ -248,6 +348,11 @@ class CompiledTree:
         u = self.util[self.terminals]
         return np.stack((u > 0, u == 0, u < 0), axis=1).astype(np.float64)
 
+    def end_columns(self) -> np.ndarray:
+        """(n_terminals, len(END_KINDS) - 1) indicators of how the game ended: win, exhaustion, cap."""
+        e = self.end[self.terminals]
+        return np.stack([e == i for i in range(1, len(END_KINDS))], axis=1).astype(np.float64)
+
     def seat_util(self, seat: int) -> np.ndarray:
         return self.util[self.terminals] * (1.0 if seat == 0 else -1.0)
 
@@ -255,29 +360,45 @@ class CompiledTree:
 # -- build --------------------------------------------------------------------
 
 
-def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,)) -> CompiledTree:
+def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,), symmetric: bool = True, cache: str | Path | None = None) -> CompiledTree:
     """Walk the tree once and compile it, with one keying per requested level.
     Roots are the worlds when L3 is requested (its sets are the histories, which
-    the lazy tree merges), the deals otherwise."""
+    the lazy tree merges), the deals otherwise. `symmetric`: one root per color /
+    rank orbit and canonical keys (RULES.md section 18); exact for symmetric
+    policies only. `cache`: a directory; the tree is loaded from it if a file for
+    this (ruleset, levels, symmetric) exists there, saved to it otherwise."""
+    if cache is not None:
+        cache = Path(cache)
+        path = cache / f"tree_{cache_name(rs, levels, symmetric)}.npz"
+        if path.exists():
+            return CompiledTree.load(path, rs)
+        tree = compile_tree(rs, levels, symmetric)
+        cache.mkdir(parents=True, exist_ok=True)
+        tree.save(path)
+        return tree
     t0 = time.perf_counter()
+    sym = Symmetry(rs) if symmetric else None
     if Level.L3 in levels:
-        roots, expand, roots_level = worlds(rs), engine_children, Level.L3
+        roots, expand, roots_level = worlds(rs, symmetric), engine_children, Level.L3
     else:
-        roots, expand, roots_level = initial_deals(rs), children, Level.L1
+        roots, expand, roots_level = initial_deals(rs, symmetric), children, Level.L1
     keyfns = {lv: KEYS[lv] for lv in levels}
 
-    n_player, n_level, n_util = array("b"), array("i"), array("d")
+    n_player, n_level, n_util, n_end = array("b"), array("i"), array("d"), array("b")
     a_node, a_action = array("i"), array("i")
     e_arc, e_child, e_prob = array("i"), array("i"), array("d")
     n_info = {lv: array("i") for lv in levels}
-    infos: dict[Level, dict[Key, tuple[int, tuple[int, ...], int]]] = {lv: {} for lv in levels}  # key -> (id, actions, level)
+    a_cpos = {lv: array("b") for lv in levels}  # position of each arc's action in its set's (canonical) action list
+    infos: dict[Level, dict[bytes, tuple[int, tuple[int, ...], int, tuple[int, ...]]]] = {lv: {} for lv in levels}  # key -> (id, actions, level, action orbits)
     info_player = {lv: array("b") for lv in levels}
 
     # the virtual root and its one arc
-    n_player.append(CHANCE), n_level.append(0), n_util.append(0.0)
+    n_player.append(CHANCE), n_level.append(0), n_util.append(0.0), n_end.append(0)
     for lv in levels:
         n_info[lv].append(-1)
     a_node.append(0), a_action.append(-1)
+    for lv in levels:
+        a_cpos[lv].append(0)
     stack: list[tuple[State, int]] = []
     for s, p in roots:
         e_arc.append(0), e_child.append(-1), e_prob.append(p)
@@ -291,6 +412,7 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,)) -> Compil
             n_player.append(TERMINAL)
             n_level.append(n_level[a_node[e_arc[e]]] + 1)
             n_util.append(returns(s)[0])
+            n_end.append(END_KINDS.index(s.end))
             for lv in levels:
                 n_info[lv].append(-1)
             continue
@@ -298,19 +420,31 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,)) -> Compil
         lvl = node_level(s)
         ch = expand(s)
         acts = tuple(ch)
-        n_player.append(p), n_level.append(lvl), n_util.append(0.0)
+        n_player.append(p), n_level.append(lvl), n_util.append(0.0), n_end.append(0)
         for lv in levels:
             key = keyfns[lv](s, p)
-            rec = infos[lv].get(key)
+            if sym is None:
+                cacts = acts
+            else:
+                key, g = sym.canonical(lv, key)
+                am = sym.actions[g]
+                cacts = tuple(sorted(int(am[a]) for a in acts))  # legal actions of the canonical representative
+            kb = encode_key(lv, key)
+            rec = infos[lv].get(kb)
             if rec is None:
-                rec = (len(infos[lv]), acts, lvl)
-                infos[lv][key] = rec
+                orbits = tuple(range(len(cacts))) if sym is None else sym.action_orbits(sym.stabilizer(lv, key), cacts)
+                rec = (len(infos[lv]), cacts, lvl, orbits)
+                infos[lv][kb] = rec
                 info_player[lv].append(p)
-            elif rec[1] != acts:
+            elif rec[1] != cacts:
                 raise RuntimeError(f"{lv.name} information set with differing legal actions: {key!r}")
             elif rec[2] != lvl:
                 raise RuntimeError(f"{lv.name} information set spanning two levels: {key!r}")
             n_info[lv].append(rec[0])
+            if sym is None:
+                a_cpos[lv].extend(range(len(acts)))
+            else:
+                a_cpos[lv].extend(cacts.index(int(am[a])) for a in acts)
         for a in acts:
             aid = len(a_node)
             a_node.append(nid), a_action.append(a)
@@ -322,6 +456,7 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,)) -> Compil
     player = np.frombuffer(n_player, dtype=np.int8).copy()
     level = np.frombuffer(n_level, dtype=np.int32).copy()
     util = np.frombuffer(n_util, dtype=np.float64).copy()
+    end = np.frombuffer(n_end, dtype=np.int8).copy()
     arc_node = np.frombuffer(a_node, dtype=np.int32).copy()
     arc_action = np.frombuffer(a_action, dtype=np.int32).copy()
     edge_arc = np.frombuffer(e_arc, dtype=np.int32).copy()
@@ -337,7 +472,7 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,)) -> Compil
     new_arc[arc_order] = np.arange(m, dtype=np.int32)
     edge_order = np.lexsort((np.arange(e), new_arc[edge_arc]))
 
-    player, level, util = player[node_order], level[node_order], util[node_order]
+    player, level, util, end = player[node_order], level[node_order], util[node_order], end[node_order]
     arc_node, arc_action = new_node[arc_node][arc_order], arc_action[arc_order]
     arc_player = player[arc_node]
     edge_arc, edge_child, edge_prob = new_arc[edge_arc][edge_order], new_node[edge_child][edge_order], edge_prob[edge_order]
@@ -365,18 +500,28 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,)) -> Compil
         new_info[info_order] = np.arange(k, dtype=np.int32)
         node_info = np.where(valid, new_info[np.maximum(old, 0)], -1).astype(np.int32)
         n_actions = np.zeros(k, dtype=np.int32)
-        keys: dict[Key, int] = {}
-        for key, (oid, acts, _) in infos[lv].items():
+        n_orbits = np.zeros(k, dtype=np.int32)
+        keys: dict[bytes, int] = {}
+        ia_action_list: list[tuple[int, ...]] = [()] * k
+        orbit_list: list[tuple[int, ...]] = [()] * k
+        for key, (oid, acts, _, orbits) in infos[lv].items():
             i = int(new_info[oid])
             n_actions[i] = len(acts)
+            n_orbits[i] = max(orbits) + 1
+            ia_action_list[i] = acts
+            orbit_list[i] = orbits
             keys[key] = i
         info_start = np.zeros(k + 1, dtype=np.int32)
         np.cumsum(n_actions, out=info_start[1:])
-        pos = np.arange(m, dtype=np.int32) - node_arc_start[arc_node]
+        info_orbit_start = np.zeros(k + 1, dtype=np.int32)
+        np.cumsum(n_orbits, out=info_orbit_start[1:])
+        ia_orbit = np.fromiter((o for orbits in orbit_list for o in orbits), dtype=np.int32, count=int(info_start[-1])) + np.repeat(info_orbit_start[:-1], n_actions)
+        orbit_info = np.repeat(np.arange(k, dtype=np.int32), n_orbits)
+        orbit_size = np.bincount(ia_orbit, minlength=int(info_orbit_start[-1])).astype(np.int32)
+        pos = np.frombuffer(a_cpos[lv], dtype=np.int8)[arc_order].astype(np.int32)
         arc_ia = np.where(arc_player >= 0, info_start[np.maximum(node_info[arc_node], 0)] + pos, -1).astype(np.int32)
         ia_info = np.repeat(np.arange(k, dtype=np.int32), n_actions)
-        ia_action = np.empty(len(ia_info), dtype=np.int32)
-        ia_action[arc_ia[arc_ia >= 0]] = arc_action[arc_ia >= 0]
+        ia_action = np.fromiter((a for acts in ia_action_list for a in acts), dtype=np.int32, count=len(ia_info))
         keyings[lv] = Keying(
             level=lv,
             node_info=node_info,
@@ -387,6 +532,10 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,)) -> Compil
             info_level=level[first[info_order]],
             info_start=info_start,
             keys=keys,
+            ia_orbit=ia_orbit,
+            orbit_info=orbit_info,
+            orbit_size=orbit_size,
+            info_orbit_start=info_orbit_start,
         )
 
     return CompiledTree(
@@ -395,6 +544,7 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,)) -> Compil
         player=player,
         level=level,
         util=util,
+        end=end,
         arc_node=arc_node,
         arc_action=arc_action,
         arc_player=arc_player,
@@ -406,7 +556,20 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,)) -> Compil
         levels=slices,
         keyings=keyings,
         seconds=time.perf_counter() - t0,
+        symmetry=sym,
     )
+
+
+def cache_name(rs: Ruleset, levels: tuple[Level, ...], symmetric: bool) -> str:
+    """Short stable name for a compiled tree: named rulesets by name, others by a hash of their repr."""
+    import hashlib
+
+    from uno import rules
+
+    name = next((n for n in ("TOY", "TOY_FULL", "TOY_CANDIDATE", "FULL_UNO") if getattr(rules, n) == rs), None)
+    if name is None:
+        name = hashlib.blake2b(repr(rs).encode(), digest_size=6).hexdigest()
+    return f"{name}_{''.join(lv.name for lv in levels)}_{'sym' if symmetric else 'full'}"
 
 
 # -- strategies from agents ---------------------------------------------------
@@ -419,25 +582,29 @@ def tabulate(tree: CompiledTree, level: Level, agent: Agent) -> np.ndarray:
     from the observation rebuilt out of each set's key."""
     k = tree.keyings[level]
     sigma = np.zeros(k.n_ia)
-    for key, i in k.keys.items():
+    for kb, i in k.keys.items():
         start = k.info_start[i]
         legal = k.actions(i)
-        probs = agent.policy(observation_from_key(tree.rs, level, key), legal)
+        probs = agent.policy(observation_from_key(tree.rs, level, decode_key(level, kb)), legal)
         for a, p in probs.items():
             sigma[start + legal.index(a)] = p
+    if tree.symmetric and not k.is_symmetric(sigma, 1e-9):
+        raise ValueError(f"{agent.name} is not symmetric: it is not uniform within some orbit of a canonical set (RULES.md section 18)")
     return sigma
 
 
 def tabulate_table(tree: CompiledTree, level: Level, table: dict[Key, int]) -> np.ndarray:
-    """A pure strategy from a key -> action table (a `uno.solve.BestResponse.table`);
-    sets missing from the table take their first action."""
+    """A pure strategy from a key -> action table (a `uno.solve.BestResponse.table`,
+    keyed by raw keys; on a symmetric tree the canonical key of each set is looked
+    up, which is a raw key of the full game); sets missing from the table take
+    their first action."""
     k = tree.keyings[level]
     sigma = np.zeros(k.n_ia)
-    for key, i in k.keys.items():
-        a = table.get(key)
+    for kb, i in k.keys.items():
+        a = table.get(decode_key(level, kb))
         legal = k.actions(i)
         sigma[k.info_start[i] + (legal.index(a) if a in legal else 0)] = 1.0
-    return sigma
+    return k.orbit_mean(sigma)  # on a symmetric tree: the choice spread over its orbit, same value against a symmetric opponent
 
 
 class CompiledAgent:
@@ -448,6 +615,7 @@ class CompiledAgent:
     def __init__(self, tree: CompiledTree, level: Level, sigma: np.ndarray, name: str = "compiled") -> None:
         self.rs = tree.rs
         self.keying = tree.keyings[level]
+        self.symmetry = tree.symmetry
         self.level = level
         self.sigma = sigma
         self.name = name
@@ -457,12 +625,18 @@ class CompiledAgent:
         if obs.level is not self.level:
             raise ValueError(f"{self.name} needs {self.level.name} observations, got {obs.level.name}")
         k = self.keying
-        i = k.keys.get(obs_key(self.rs, obs))
+        key = obs_key(self.rs, obs)
+        g = 0
+        if self.symmetry is not None:
+            key, g = self.symmetry.canonical(self.level, key)
+        i = k.keys.get(encode_key(self.level, key))
         if i is None:
             self.misses += 1
             return {legal[0]: 1.0}
         s, t = k.info_start[i], k.info_start[i + 1]
         out = {int(a): float(p) for a, p in zip(k.ia_action[s:t], self.sigma[s:t]) if p > 0}
+        if g:
+            out = self.symmetry.map_policy(int(self.symmetry.inverse[g]), out)  # back from canonical to the real labels
         assert all(a in legal for a in out), "keying and game disagree on legal actions"
         return out
 
@@ -484,9 +658,10 @@ def evaluate(tree: CompiledTree, seat0: Strategy, seat1: Strategy) -> tuple[floa
 
 @dataclass
 class BestResponse:
-    """A best response computed on the compiled tree. `sigma` is the pure strategy
-    over the responder's keying (both seats' sets; the opponent's rows and the
-    responder's unreached sets hold their first action)."""
+    """A best response computed on the compiled tree. `sigma` is the strategy over
+    the responder's keying (both seats' sets; the opponent's rows and the
+    responder's unreached sets hold their first action): pure on a full tree,
+    uniform within the chosen action orbit on a symmetric one."""
 
     seat: int
     level: Level
@@ -504,7 +679,11 @@ def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: in
     to a fixed opponent strategy. One forward pass for the counterfactual reach
     (chance x opponent), one backward pass choosing per information set, from
     the deepest level up, the action maximising the reach-weighted sum of its
-    histories' continuation values. Ties: the lowest action id, as `uno.solve`."""
+    histories' continuation values. Ties: the lowest action id, as `uno.solve`.
+    On a symmetric tree the choice is an *orbit* of actions under the set's
+    stabilizer, played uniformly (RULES.md section 18): the value equals the
+    full game's best-response value against a symmetric opponent, and the
+    strategy is symmetric."""
     t0 = time.perf_counter()
     k = tree.keyings[level]
     opp = seat ^ 1
@@ -528,20 +707,25 @@ def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: in
             k0, k1 = ia[mine].min(), ia[mine].max() + 1
             i0, i1 = k.ia_info[k0], k.ia_info[k1 - 1] + 1
             k0, k1 = k.info_start[i0], k.info_start[i1]  # whole sets of the level's responder arcs
+            o0, o1 = k.info_orbit_start[i0], k.info_orbit_start[i1]  # and their orbits
             q = np.bincount(ia[mine] - k0, weights=cf[tree.arc_node[L.a0 : L.a1]][mine] * av[L.a0 : L.a1][mine], minlength=k1 - k0)
-            local_info = k.ia_info[k0:k1] - i0
-            mx = np.maximum.reduceat(q, k.info_start[i0:i1] - k0)
-            is_max = q == mx[local_info]
-            first = np.full(i1 - i0, k1 - k0, dtype=np.int64)
+            orb = k.ia_orbit[k0:k1] - o0
+            size = k.orbit_size[o0:o1]
+            qo = np.bincount(orb, weights=q, minlength=o1 - o0) / size  # value of playing an orbit uniformly
+            local_info = k.orbit_info[o0:o1] - i0
+            mx = np.maximum.reduceat(qo, k.info_orbit_start[i0:i1] - o0)
+            is_max = qo == mx[local_info]
+            first = np.full(i1 - i0, o1 - o0, dtype=np.int64)
             np.minimum.at(first, local_info[is_max], np.nonzero(is_max)[0])
-            c = np.zeros(k1 - k0)
-            c[first] = 1.0
+            chosen = np.zeros(o1 - o0)
+            chosen[first] = 1.0
+            c = chosen[orb] / size[orb]
             choice[k0:k1] = c
             w[mine] = c[ia[mine] - k0]
         v[L.n0 : L.nd] = np.add.reduceat(w * av[L.a0 : L.a1], tree.node_arc_start[L.n0 : L.nd] - L.a0)
-    # sets never touched above (no responder arc at their level, i.e. the opponent's) take their first action
-    untouched = k.info_sum(choice) == 0
-    choice[k.info_start[:-1][untouched]] = 1.0
+    # sets never touched above (no responder arc at their level, i.e. the opponent's) take their first orbit
+    untouched = (k.info_sum(choice) == 0)[k.ia_info]
+    choice[untouched] = k.first_orbit_uniform()[untouched]
     return BestResponse(seat=seat, level=level, value=float(v[0]), sigma=choice, seconds=time.perf_counter() - t0)
 
 

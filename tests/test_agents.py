@@ -39,9 +39,9 @@ def test_policies_are_distributions_over_legal(rs, seed, policy_seed):
             assert set(pf) == set(plays)
             assert rs.draw_action not in pf and rs.pass_action not in pf
         h = agents[2].policy(obs, legal)
-        assert len(h) == 1
+        assert len(set(h.values())) == 1, "the Heuristic is uniform over its ties"
         if plays:
-            assert next(iter(h)) in plays
+            assert set(h) <= set(plays)
         assert agents[2].policy(obs, legal) == h, "deterministic"
         s = step(s, rng.choice(legal))
 
@@ -89,7 +89,7 @@ def test_heuristic_action_card_when_opponent_low():
     rs = replace(TOY_CANDIDATE, skip_per_color=1, hand_size=3)
     kinds = {rs.card_types[a.card].kind for a in rs.actions if isinstance(a, Play)}
     assert Kind.SKIP in kinds
-    # opponent holds 3 (> threshold 2): number card preferred; then with a 2-card opponent the skip
+    # opponent holds 3 (> threshold 2): the number card is preferred (same color count); with a 2-card opponent the skip
     s = position(rs, ["c1S", "c1r0", "c0r0"], ["c0r1", "c0r1", "c1r1"], ["c1r2"])
     assert Heuristic(rs).policy(observe(s, 0), legal_actions(s)) == {act(rs, "c1r0"): 1.0}
     rs2 = replace(rs, hand_size=2)

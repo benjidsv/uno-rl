@@ -271,20 +271,29 @@ An agent is a function `policy(observation, legal_actions) -> {action: prob}`
 whose support is inside the legal actions and whose probabilities sum to 1.
 Agents return distributions, never sampled actions, because best response
 tabulates the policy and AIVAT needs the action probabilities. Sampling is done
-by the runner (`uno/play.py`) with an rng seeded from `(match seed, information
-state)`, so the same agent makes the same choice in the same situation across
-games and opponents (common random numbers).
+by the runner (`uno/play.py`) with an rng seeded from `(match seed, agent name,
+information state)`, so the same agent makes the same choice in the same
+situation across games and opponents (common random numbers). The agent name
+is part of the key so that two different stochastic agents never share a
+stream: in a mirrored pair (section 15) they sit at the same seat in the two
+games and would otherwise make the same random choices in the same
+information states, coupling the games beyond the shared deal.
 
 - `UniformLegal`: uniform over every legal action, including `Draw` with a play
   in hand and `Pass` after a playable draw. Sanity opponent only.
 - `PlayFirstRandom`: uniform over the legal plays; `Draw` only when nothing
   plays; after a draw always plays the drawn card, uniform over the colors for a
   wild. **This is the ladder's "Random" row.**
-- `Heuristic`: deterministic. Play over draw. Among playable non-wild cards,
-  prefer the color the player holds most (ties: lowest type id); action cards
-  first when the opponent holds at most 2 cards. Wilds are held unless no other
-  card plays; a wild is played on the color held most. After a draw, always
-  play the drawn card.
+- `Heuristic`: a rulebot, **symmetric** under color and rank renaming
+  (section 18) since step 8.6. Play over draw. Among playable non-wild cards:
+  action cards first when the opponent holds at most 2 cards, then the color
+  the player holds most, then a card of the current color (the color stays),
+  then a number card; what still ties is played uniformly at random. Wilds are
+  held unless no other card plays; a wild takes the color held most (the
+  current color on ties, then uniform). After a draw, always play the drawn
+  card. Up to step 8.5 ties were broken on the lowest type id, which is not
+  symmetric; the old values are in notes.md steps 4-8.5, the new ones from
+  step 8.6 on.
 
 ## 14. Exact solvers (`uno/solve.py`)
 
@@ -359,7 +368,9 @@ of a game is the first-named agent's `(return + 1) / 2`.
   and split share over the worlds of `uno.solve.worlds` (deal x pile order),
   from `outcome_distribution` on each world. Exact for deterministic agents;
   for stochastic ones it takes the two games of a pair as independent given
-  the world (their rng streams differ by seat).
+  the world, which holds because the rng streams are keyed on the agent name
+  and the information state (section 13): no two agents, and no agent at two
+  seats, share a stream.
 - `games_needed(edge, var_per_game, z)` = `z² var / edge²`, with the per-game
   variance of the design (a pair is two games).
 - `uno.solve.outcome_distribution`: exact distribution of seat 0's return
@@ -390,11 +401,20 @@ and CFR (section 17) becomes affordable. The walkers of `uno/solve.py` and
 `uno/estimate.py` stay as the reference implementation the compiled versions
 are tested against.
 
+By default (`symmetric=True`, step 8.6) the tree is the **quotient** under
+the color / rank symmetry of section 18: one root per orbit of deals (or of
+worlds) carrying the orbit's probability, and one information set per orbit
+of keys. `symmetric=False` builds the full tree. `cache=<directory>` loads
+the tree from `tree_<ruleset>_<levels>_<sym|full>.npz` if present and saves
+it there otherwise (`CompiledTree.save` / `load`; the file holds every array
+and the encoded keys, the `Symmetry` is rebuilt).
+
 Layout:
 
 - **nodes** = histories plus a virtual chance root (node 0) whose edges lead
   to the deals (or the worlds). Per node: player (0 / 1, terminal, chance),
-  level, seat-0 return at terminals.
+  level, seat-0 return at terminals, end kind at terminals (`end`: win,
+  exhaustion, cap; `end_columns` gives the indicators for `values`).
 - **arcs** = (decision node, legal action), one per legal action, in action
   order. **edges** = (arc, chance outcome): one per child with its
   probability (a draw has one edge per distinct card type left in the pile).
@@ -411,10 +431,18 @@ Layout:
   same-level and same-legal-actions properties of every set.
 - A **keying** is one information-set partition (L1, L2 or L3 key of section
   14) over the tree: set id per node, set-action ("ia") id per arc, and the
-  key -> id dictionary for playback and tabulation. Sets are numbered in
-  order of first appearance, hence contiguous per level; a set's ia are
-  contiguous. A strategy is a vector over ia; a tree can hold several
-  keyings (L1 + L2 on the lazy tree, L1 + L3 on the world tree).
+  key -> id dictionary for playback and tabulation. Keys are stored
+  **encoded as bytes** (`uno.solve.encode_key` / `decode_key`, lossless, a
+  few dozen bytes each) instead of nested tuples: on the full `TOY` tree the
+  key dictionaries were ~90 % of 1.1 GB. Sets are numbered in order of first
+  appearance, hence contiguous per level; a set's ia are contiguous. A
+  strategy is a vector over ia; a tree can hold several keyings (L1 + L2 on
+  the lazy tree, L1 + L3 on the world tree). On a symmetric tree the key of a
+  set is the canonical key, its actions are the legal actions of the
+  canonical representative, and each arc's ia is found through the element
+  `g` that canonicalises its node's key (`g . action`); the keying also holds
+  the **action orbits** of every set under the stabilizer of its canonical
+  key (`ia_orbit`, `orbit_size`, section 18).
 
 Kernels:
 
@@ -430,7 +458,8 @@ and the seat-0 return, or the three outcome indicators); `best_response(tree,
 level, opponent, seat)` (counterfactual reach = chance x opponent from
 `reach`, then backward from the deepest level choosing per set the action
 maximising the reach-weighted sum of its histories' arc values; ties to the
-lowest action id, as section 14); `exploitability(tree, level, sigma)` = both
+lowest action id, as section 14; on a symmetric tree the choice is an action
+*orbit*, played uniformly, section 18); `exploitability(tree, level, sigma)` = both
 best responses to a profile, NashConv in return units and in score points
 (`score(BR seat 0) + score(BR seat 1) - 1`), the per-seat gains and the
 bracket `[1 - score(BR seat 1), score(BR seat 0)]` that contains the Nash
@@ -440,14 +469,20 @@ distributions of the two seat-swapped profiles on a world tree.
 Strategies from agents: `tabulate(tree, level, agent)` asks the agent at
 every set of the keying, both seats, with the observation rebuilt from the
 set's key by `uno.observe.observation_from_key` (the key is by definition
-everything the observer knows, section 10; the L3 key is the state).
-`tabulate_table` maps a `BestResponse.table` onto a keying. `CompiledAgent`
-plays any strategy over any keying through `uno.play`.
+everything the observer knows, section 10; the L3 key is the state). On a
+symmetric tree it raises if the agent is not symmetric (its policy is not
+uniform within some action orbit). `tabulate_table` maps a
+`BestResponse.table` onto a keying (on a symmetric tree the chosen action is
+spread over its orbit). `CompiledAgent` plays any strategy over any keying
+through `uno.play`; on a symmetric tree it canonicalises the observation's
+key, looks the canonical set up and maps the actions back with the inverse
+element.
 
 Checks (`tests/test_compiled.py`, `tests/test_observe_keys.py`): the
 observation rebuilt from an L1 / L2 / L3 key equals `observe` at every
 decision of random games over random rulesets; node, terminal, decision and
-set counts equal the census; levels increase along edges; the uniform
+set counts equal the census; the end-kind mass under the uniform profile equals
+the census end mass; levels increase along edges; the uniform
 profile's value equals the census UniformLegal score; on small rulesets the
 compiled best response at every level equals the reference value to 1e-9 for
 UniformLegal, Random and Heuristic opponents, its pure strategy replays to
@@ -455,7 +490,8 @@ that value both on the compiled tree and through the engine, the reference
 table mapped onto the keying has the reference value, and L1 on the world
 tree equals L1 on the lazy tree; evaluate, outcome distributions and exact
 mirrored moments match the reference on a 7-card ruleset. On `TOY` the
-twelve step 5-6 values are reproduced (`scripts/cfr.py`).
+twelve step 5-6 values are reproduced (`scripts/cfr.py`). The symmetric
+tree's checks are in section 18.
 
 ## 17. CFR (`uno/cfr.py`)
 
@@ -471,6 +507,11 @@ tree, both seats at once. Iteration `t`, for player `i`:
    zero after each update;
 4. average strategy: accumulate own reach x current strategy, weighted by `t`
    (linear averaging, CFR+) or 1 (vanilla).
+
+On a symmetric tree (section 18) the regret and the average-strategy mass
+are averaged within every action orbit at each update, so every strategy
+stays symmetric: this is CFR on the game whose actions are the orbits, and
+its equilibrium is a symmetric Nash equilibrium of the full game.
 
 `alternating` (CFR+) updates player 0, recomputes the passes, then updates
 player 1; vanilla updates both from one pass. The result is the normalised
@@ -489,3 +530,78 @@ one; every row agent's best-response ceiling sits above the bracket (its
 exploitability is non-negative); the simulation of the Nash agent on seeds
 matches the exact value on those seeds; save / load round-trips; vanilla CFR
 converges more slowly and brackets the same value.
+
+## 18. Symmetry (`uno/symmetry.py`)
+
+The rules never name a particular color or rank. Renaming the colors (any
+permutation) and the ranks (any permutation among ranks with the same
+number of copies) maps deals to equally likely deals, legal actions to legal
+actions and returns to themselves; wilds are fixed. The game is invariant
+under the group G = S_colors x (rank permutations within copy classes):
+|G| = 48 on `TOY`, 144 with three one-copy ranks, 240 with five colors.
+
+`Symmetry(rs)` holds the group as lookup tables (`types[g, t]`, `colors[g,
+c]`, `actions[g, a]`, `inverse[g]`; element 0 is the identity) and its
+action on hands, public histories, keys of every level, states and policies.
+`canonical(level, key)` returns the lexicographic minimum of the key over G
+and an element `g` reaching it (`g . key == canonical`); the search is
+pruned on the observer's initial hand(s), the first key component after the
+seat, with the candidate elements cached per hand. `stabilizer(level,
+canonical_key)` lists the elements fixing a canonical key and
+`action_orbits` partitions a set's actions under it.
+
+**Quotient.** `initial_deals(rs, symmetric=True)` / `worlds(rs,
+symmetric=True)` keep one representative per orbit (the canonical state
+itself) with the orbit's total probability; for deals the unknown part of
+the pile is a multiset and is ignored by the orbit (sorted), for worlds the
+pile order counts. `census(rs, symmetric=True)` walks that quotient tree and
+counts canonical L1 sets. The compiled tree (section 16) does the same and
+keys its sets on canonical keys. On `TOY`: 5,600 deals -> 144 orbits,
+1,252,040 -> 33,646 histories (37x), 558,656 -> 12,036 L1 sets (46x).
+
+**Exactness.** A policy is symmetric when it commutes with the group,
+`policy(g . obs)(g . a) = policy(obs)(a)`. Values computed on the quotient
+equal the full game's values whenever every policy involved is symmetric:
+the subtree below a deal and below its image are isomorphic, so one
+representative weighted by the orbit's mass gives the same expectation, and
+a quotient node weighted by its root's orbit mass stands for exactly the
+full-game histories in its orbit. `UniformLegal`, `PlayFirstRandom` and the
+`Heuristic` (section 13) are symmetric. An RL agent is made symmetric by
+canonicalising its observation and mapping its action back with the inverse
+element (`canonical`, `map_policy`), which is also a |G|-fold gain in data
+efficiency; a raw, asymmetric agent needs the full tree (`symmetric=False`),
+and symmetrising a policy (averaging its images under G) never raises its
+exploitability, because the best-response value is convex in the opponent's
+strategy and every image has the same exploitability.
+
+**Orbits.** A symmetric strategy is, at a canonical set whose key has a
+non-trivial stabilizer, uniform within every orbit of the set's actions
+under that stabilizer (a hand `{red 1, blue 1, W}` on a green top is fixed by
+swapping red and blue, so "play red 1" and "play blue 1" must get equal
+probability). This matters for anything that *chooses* on the quotient: a
+pure best response picking one action of an orbit would, once lifted through
+each node's own `g`, play different real actions at histories of the same
+real information set and score above the true best response (0.8065 against
+0.7934 for BR L1 seat 0 vs Random on `TOY`, found while building this). So
+`best_response` chooses the best orbit (mean of its actions' reach-weighted
+values) and plays it uniformly, which attains the full game's best-response
+value against a symmetric opponent (a symmetric best response always exists:
+average the images of any best response), and CFR averages regrets and
+average-strategy mass within orbits (section 17). `tabulate` refuses an
+agent whose tabulated policy is not orbit-uniform.
+
+Checks (`tests/test_symmetry.py`): on random games over random rulesets,
+`g . step(s, a) == step(g . s, g . a)`, legal actions, returns and every
+level's keys commute with the action, inverses invert, keys round-trip
+through `encode_key` / `decode_key`, canonical forms are invariant
+(`canonical(g . k) == canonical(k)`), reached by their element, fixed by
+their stabilizer and minimal; the three baseline agents commute with the
+group; on small rulesets the quotient census has the full census's end mass
+and UniformLegal score; the quotient tree gives the full tree's `evaluate`
+for every pair of baseline agents, the full tree's best-response values at
+L1 / L2 / L3 against each of them (with symmetric strategies that replay to
+their value on the quotient and through the engine in the real game, no
+misses) and the same exploitability of the uniform profile; `tabulate`
+rejects an asymmetric agent on `TOY`; a tree survives save / load and the
+cache; on the quotient of `TOY` the twelve step 5-6 / 8.6 best-response
+values and the Nash value 0.6196 are reproduced.
