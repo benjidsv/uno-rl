@@ -360,25 +360,34 @@ class CompiledTree:
 # -- build --------------------------------------------------------------------
 
 
-def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,), symmetric: bool = True, cache: str | Path | None = None) -> CompiledTree:
+def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,), symmetric: bool = True, cache: str | Path | None = None, world: bool | None = None) -> CompiledTree:
     """Walk the tree once and compile it, with one keying per requested level.
     Roots are the worlds when L3 is requested (its sets are the histories, which
-    the lazy tree merges), the deals otherwise. `symmetric`: one root per color /
-    rank orbit and canonical keys (RULES.md section 18); exact for symmetric
-    policies only. `cache`: a directory; the tree is loaded from it if a file for
-    this (ruleset, levels, symmetric) exists there, saved to it otherwise."""
+    the lazy tree merges), the deals otherwise; `world=True` forces world roots
+    without an L3 keying (for `best_response_perfect` on trees too big for one).
+    `symmetric`: one root per color / rank orbit and canonical keys (RULES.md
+    section 18); exact for symmetric policies only. `cache`: a directory; the
+    tree is loaded from it if a file for this (ruleset, levels, symmetric,
+    world) exists there, saved to it otherwise.
+
+    Two compiles of the same (ruleset, symmetric, world) walk the same nodes in
+    the same order whatever the keyings, so a keying from one can be attached
+    to the other (`tree.keyings[lv] = other.keyings[lv]`); `tests/test_compiled.py`
+    checks the node order."""
+    if world is None:
+        world = Level.L3 in levels
     if cache is not None:
         cache = Path(cache)
-        path = cache / f"tree_{cache_name(rs, levels, symmetric)}.npz"
+        path = cache / f"tree_{cache_name(rs, levels, symmetric, world)}.npz"
         if path.exists():
             return CompiledTree.load(path, rs)
-        tree = compile_tree(rs, levels, symmetric)
+        tree = compile_tree(rs, levels, symmetric, world=world)
         cache.mkdir(parents=True, exist_ok=True)
         tree.save(path)
         return tree
     t0 = time.perf_counter()
     sym = Symmetry(rs) if symmetric else None
-    if Level.L3 in levels:
+    if world:
         roots, expand, roots_level = worlds(rs, symmetric), engine_children, Level.L3
     else:
         roots, expand, roots_level = initial_deals(rs, symmetric), children, Level.L1
@@ -560,8 +569,9 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,), symmetric
     )
 
 
-def cache_name(rs: Ruleset, levels: tuple[Level, ...], symmetric: bool) -> str:
-    """Short stable name for a compiled tree: named rulesets by name, others by a hash of their repr."""
+def cache_name(rs: Ruleset, levels: tuple[Level, ...], symmetric: bool, world: bool | None = None) -> str:
+    """Short stable name for a compiled tree: named rulesets by name, others by a
+    hash of their repr; `W` marks world roots without an L3 keying."""
     import hashlib
 
     from uno import rules
@@ -569,7 +579,8 @@ def cache_name(rs: Ruleset, levels: tuple[Level, ...], symmetric: bool) -> str:
     name = next((n for n in ("TOY", "TOY_FULL", "TOY2", "TOY2_FULL", "TOY2_SKIP", "TOY_CANDIDATE", "FULL_UNO") if getattr(rules, n) == rs), None)
     if name is None:
         name = hashlib.blake2b(repr(rs).encode(), digest_size=6).hexdigest()
-    return f"{name}_{''.join(lv.name for lv in levels)}_{'sym' if symmetric else 'full'}"
+    w = "W" if world and Level.L3 not in levels else ""
+    return f"{name}_{''.join(lv.name for lv in levels)}{w}_{'sym' if symmetric else 'full'}"
 
 
 # -- strategies from agents ---------------------------------------------------
@@ -727,6 +738,48 @@ def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: in
     untouched = (k.info_sum(choice) == 0)[k.ia_info]
     choice[untouched] = k.first_orbit_uniform()[untouched]
     return BestResponse(seat=seat, level=level, value=float(v[0]), sigma=choice, seconds=time.perf_counter() - t0)
+
+
+def best_response_perfect(tree: CompiledTree, opponent: Strategy, seat: int) -> BestResponse:
+    """Best response with perfect information on a *world* tree: every history is
+    its own information set, so no keying is needed and the responder simply
+    takes, at each of its nodes, the arc of maximal value (ties: lowest action
+    id). Equals `best_response(tree, Level.L3, ...)`: on a symmetric tree the L3
+    sets are singletons up to a stabilizer that fixes the whole state, and
+    actions in one orbit of such a stabilizer have isomorphic subtrees, hence
+    equal values, so a single best action and the uniform orbit score the same.
+    The result's `sigma` is the whole profile per *arc*: 1 on the chosen
+    responder arcs, 0 on its other arcs, the opponent's weights on the
+    opponent's arcs and 1 on chance; `tree.values(sigma, util)` replays it."""
+    if tree.roots_level is not Level.L3:
+        raise ValueError("best_response_perfect needs a world tree (compile_tree(..., world=True))")
+    t0 = time.perf_counter()
+    opp = seat ^ 1
+    w = tree.weights(opponent[0], opponent[1], opp)
+    v = np.zeros(tree.n)
+    av = np.zeros(tree.m)
+    v[tree.terminals] = tree.seat_util(seat)
+    for L in reversed(tree.levels):
+        if L.a1 == L.a0:
+            continue
+        x = tree.edge_prob[L.e0 : L.e1] * v[tree.edge_child[L.e0 : L.e1]]
+        av[L.a0 : L.a1] = np.add.reduceat(x, tree.arc_edge_start[L.a0 : L.a1] - L.e0)
+        mine = tree.arc_player[L.a0 : L.a1] == seat
+        if mine.any():
+            nodes = tree.arc_node[L.a0 : L.a1]
+            starts = tree.node_arc_start[L.n0 : L.nd] - L.a0
+            a = av[L.a0 : L.a1].copy()
+            a[~mine] = -np.inf
+            mx = np.maximum.reduceat(a, starts)
+            local = nodes - L.n0
+            is_max = mine & (a == mx[local])
+            first = np.full(L.nd - L.n0, L.a1 - L.a0, dtype=np.int64)
+            np.minimum.at(first, local[is_max], np.nonzero(is_max)[0])
+            chosen = np.zeros(L.a1 - L.a0)
+            chosen[first[first < L.a1 - L.a0]] = 1.0
+            w[L.a0 : L.a1][mine] = chosen[mine]
+        v[L.n0 : L.nd] = np.add.reduceat(w[L.a0 : L.a1] * av[L.a0 : L.a1], tree.node_arc_start[L.n0 : L.nd] - L.a0)
+    return BestResponse(seat=seat, level=Level.L3, value=float(v[0]), sigma=w, seconds=time.perf_counter() - t0)
 
 
 @dataclass

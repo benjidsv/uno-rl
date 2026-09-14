@@ -409,6 +409,20 @@ the tree from `tree_<ruleset>_<levels>_<sym|full>.npz` if present and saves
 it there otherwise (`CompiledTree.save` / `load`; the file holds every array
 and the encoded keys, the `Symmetry` is rebuilt).
 
+**One keying at a time** (step 8.7, for trees whose keys do not all fit in
+memory, `TOY2_FULL` at 28M nodes): two compiles of the same (ruleset,
+symmetric, world roots) walk the same nodes in the same order whatever the
+keyings, so a keying loaded from one file can be attached to a tree loaded
+from another (`tree.keyings[lv] = other.keyings[lv]`) and every solver then
+works as if both had been compiled together. `world=True` compiles the world
+tree without an L3 keying (cache suffix `W`), and `best_response_perfect`
+computes the L3 best response on it with no keying at all: on a world tree
+every history is its own information set, so the responder takes the
+maximal arc at each of its nodes; on a symmetric tree the actions of an
+orbit under a state's stabilizer have isomorphic subtrees and equal values,
+so the single best action scores the same as the uniform orbit and the value
+equals `best_response(tree, Level.L3, ...)`. Its strategy is per arc.
+
 Layout:
 
 - **nodes** = histories plus a virtual chance root (node 0) whose edges lead
@@ -489,9 +503,12 @@ UniformLegal, Random and Heuristic opponents, its pure strategy replays to
 that value both on the compiled tree and through the engine, the reference
 table mapped onto the keying has the reference value, and L1 on the world
 tree equals L1 on the lazy tree; evaluate, outcome distributions and exact
-mirrored moments match the reference on a 7-card ruleset. On `TOY` the
-twelve step 5-6 values are reproduced (`scripts/cfr.py`). The symmetric
-tree's checks are in section 18.
+mirrored moments match the reference on a 7-card ruleset; the node order of
+a compile does not depend on its keyings (lazy and world trees), a keying
+attached from another compile gives the same L2 best response, and
+`best_response_perfect` equals the keyed L3 best response and replays to its
+value. On `TOY` the twelve step 5-6 values are reproduced (`scripts/cfr.py`).
+The symmetric tree's checks are in section 18.
 
 ## 17. CFR (`uno/cfr.py`)
 

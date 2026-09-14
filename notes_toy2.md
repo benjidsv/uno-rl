@@ -342,9 +342,8 @@ flags reproduce the preset.
 
 ## 6. TOY2_FULL solved (`scripts/toy2.py TOY2_FULL 150 light dcfr`)
 
-L1 keying only (the L2 / L3 columns need a second keying on 28M nodes, which
-does not fit next to the first in 16 GB; they stay open). Cached tree loads
-in 1.7 s. Best response 2.5-2.8 s per seat. DCFR 150 iterations in 671 s
+L1 keying only in this run (the L2 / L3 columns follow in section 8, one
+keying per tree). Cached tree loads in 1.7 s. Best response 2.5-2.8 s per seat. DCFR 150 iterations in 671 s
 (4.5 s per iteration, exploitability logs excluded), **NashConv 0.005 pts**;
 the whole run is 15 minutes against the two hours CFR+ would have needed.
 
@@ -411,14 +410,128 @@ Reading:
 
 ### What is next
 
-- L2 / L3 columns for `TOY2_FULL`: either a second compile with only the L2
-  keying (another 1.8 GB file, then two trees loaded for the comparison) or a
-  keying computed on the loaded tree without keeping the keys. Open.
-- `scripts/ladder.py` / `scripts/mirror.py` still report on `TOY`; the
-  sampled estimators (mirrored, and AIVAT in step 9) should be validated on
-  `TOY2` next, where the exact numbers above are the reference.
 - `TOY2_SKIP` carries the action-card decision at 923k histories; its free
   version (77M) is out of reach, so it is the forced-play ruleset for
   skip-timing questions only.
 - Discounted CFR is the default for anything above ~1M nodes; PCFR+ is a
   tie and stays as a preset.
+- L2 / L3 columns of `TOY2_FULL` and the validation of the sampled
+  estimators on the TOY2 family: sections 7 and 8.
+
+
+## 7. Validation on the TOY2 family (`scripts/validate.py`)
+
+`scripts/ladder.py` and `scripts/mirror.py` run the pure-Python reference
+solvers, which do not fit `TOY2` (its full game is ~10M histories, ~10 GB in
+the reference walkers; the reference-vs-compiled equivalence stays tested on
+small rulesets and pinned on `TOY`). `validate.py` does the same checks from
+the cached quotient trees: the best-response columns simulated on the 4000
+held-out seeds against the exact value on those seeds (with no misses of the
+keying, and L1 <= L2 <= L3), the Nash value inside its bracket and every
+row's exploitability non-negative, the Nash row and the step 7 matchups
+through the mirrored evaluator (per-seat means against on-seeds exact
+values, correlation / splits / variance ratio against the exact moments on
+the world tree), and the paired comparisons. 26 checks per ruleset.
+
+| ruleset   | failed checks | note |
+|-----------|---------------|------|
+| TOY       | 0 / 26        | reproduces every step 5-8.6 number (0.7934, 0.6196, corr -0.300 ...) |
+| TOY2      | 1 / 26        | BR L2 seat 0 vs Random: sim 0.7794 ± 0.0125 vs on-seeds 0.7929, 2.1 sigma; passes on two other ranges of 12,000 seeds (0.7953 vs 0.7957, 0.7925 vs 0.7983) |
+| TOY2_SKIP | 0 / 26        |      |
+
+One miss in 78 checks is the 1-in-20 rate of a plain CI test; the on-seeds
+comparison is the check, and every deterministic row matches to the digit.
+
+Mirrored evaluator on `TOY2`, 4000 held-out pairs (exact / sampled):
+
+| matchup                       | corr(seat 0, seat 1) | splits        | var ratio     |
+|-------------------------------|----------------------|---------------|---------------|
+| heuristic vs random           | -0.309 / -0.341      | 0.632 / 0.648 | 0.692 / 0.660 |
+| br_l1(random) vs random       | -0.337 / -0.353      | 0.578 / 0.585 | 0.665 / 0.648 |
+| br_l1(heuristic) vs heuristic | -0.510 / -0.494      | 0.717 / 0.709 | 0.492 / 0.507 |
+| br_l1(random) vs heuristic    | -0.521 / -0.495      | 0.726 / 0.713 | 0.481 / 0.507 |
+| nash vs random                | -0.367 / -0.371      | 0.611 / 0.611 | 0.635 / 0.631 |
+| nash vs heuristic             | -0.526 / -0.514      | 0.736 / 0.730 | 0.475 / 0.487 |
+
+Same on `TOY2_SKIP`: heuristic vs random -0.391 / -0.362, 0.663 / 0.648,
+0.610 / 0.639; br_l1(random) vs random -0.396 / -0.382; br_l1(heuristic) vs
+heuristic -0.548 / -0.548, 0.713 / 0.716, 0.454 / 0.454; nash vs heuristic
+-0.599 / -0.591, 0.754 / 0.750, 0.402 / 0.410.
+
+Paired comparisons on `TOY2` (first minus second, same column, same deals,
+seat 0 / seat 1): heuristic - random vs random +0.082 ± 0.014 / +0.027 ±
+0.014 (var ratio 0.42 / 0.45); br_l1(random) - heuristic vs random +0.061 ±
+0.011 / +0.133 ± 0.014 (0.30 / 0.41); br_l1(heuristic) - heuristic vs
+heuristic +0.064 ± 0.010 / +0.136 ± 0.013 (0.26 / 0.35); the two best
+responses against the Heuristic +0.007 ± 0.006 / +0.019 ± 0.006 (0.10 /
+0.08).
+
+Reading: the step 7 picture holds on `TOY2` with the same magnitudes.
+Mirroring removes 30-50 % of the variance on the seat mean, pairing two
+agents 55-90 %, and the correlation between the two seats' scores of a
+pair is -0.3 to -0.5, slightly weaker than on `TOY` (-0.3 to -0.65) because
+a 3-card pile decides less of the game than a 2-card one. The Heuristic's
+seat-1 edge over Random is small on `TOY2` (+2.7 points, +4.8 on `TOY`).
+
+
+## 8. TOY2_FULL: the L2 and L3 columns, one keying per tree (`scripts/toy2_columns.py`)
+
+Why a second file: steps 10-11 need BR L2 / L3 against every RL checkpoint,
+so the responder trees are reused, and a recompile costs 4-9 minutes and
+5-10 GB each time. Two more cached trees, then:
+
+| tree                | nodes      | keying              | compile | file   |
+|---------------------|------------|---------------------|---------|--------|
+| lazy, L2 only       | 28,057,517 | L2 13,246,884 sets  | 516 s   | 3.0 GB |
+| world, L1 only      | 27,202,083 | L1 3,753,530 sets   | 256 s   | 1.9 GB |
+
+Two compiles of the same tree walk the nodes in the same order whatever the
+keyings (checked on `TOY2`, and on small rulesets in `tests/test_compiled.py`),
+so the cached L1 keying is attached to the L2 tree and BR L2 runs on it
+unchanged. The L3 responder needs no keying at all: on a world tree every
+history is its own set, so `best_response_perfect` takes the maximal arc at
+each responder node (equal to the keyed L3 best response on `TOY` and `TOY2`
+to 1e-9; RULES.md section 16). Loading the three trees takes 11 s; each
+best response 3-4 s.
+
+### Best-response columns of `TOY2_FULL` (score of the responder)
+
+| opponent  | seat | BR L1  | BR L2  | BR L3  | L2-L1 | L3-L2 | TOY2 (forced): L2-L1 / L3-L2 | TOY_FULL |
+|-----------|------|--------|--------|--------|-------|-------|------------------------------|----------|
+| random    | 0    | 0.7479 | 0.8443 | 0.8875 | +9.6  | +4.3  | +6.7 / +2.2                  | +4.3 / +1.5 |
+| random    | 1    | 0.6164 | 0.7508 | 0.8208 | +13.4 | +7.0  | +8.9 / +2.2                  | +5.4 / +5.2 |
+| heuristic | 0    | 0.7118 | 0.8248 | 0.8620 | +11.3 | +3.7  | +7.7 / +1.8                  | +6.1 / +1.3 |
+| heuristic | 1    | 0.5371 | 0.6080 | 0.6600 | +7.1  | +5.2  | +4.8 / +1.7                  | +4.0 / +3.1 |
+| nash      | 0    | 0.5565 | 0.6952 | 0.7640 | +13.9 | +6.9  |                              |          |
+| nash      | 1    | 0.4436 | 0.5528 | 0.6271 | +10.9 | +7.4  |                              |          |
+
+Reading:
+
+1. **Hidden information is worth 7-14 points on `TOY2_FULL`**, the most of
+   any toy (2.5-4.4 on `TOY`, 4-6 on `TOY_FULL`, 5-9 on `TOY2`), and the
+   pile order another 4-7. Both effects compound: three ranks make the
+   opponent's hand harder to infer, and the voluntary draw gives a
+   responder who knows the hand (or the pile) something to do with the
+   knowledge (draw for the card that beats it).
+2. **Against the Nash agent the gaps are largest** (13.9 / 10.9 and 6.9 /
+   7.4): the equilibrium strategy hides its hand better than the fixed
+   policies, so the L2 - L1 gap is a measure of how much a policy gives
+   away, and the BR L1 minus own-value column (exploitability) of how much
+   it can be punished without seeing anything. The ladder's L2 / L3
+   columns against RL rows will read the same way.
+3. Reminder from step 5-6: these are values of information to a best
+   responder, not variance components. The headroom for opponent modelling
+   in an L1 agent is BR L1 minus the agent's own value, never L2 - L1.
+
+### Validation of `TOY2_FULL` (`scripts/validate.py TOY2_FULL 4000 light`)
+
+0 failed checks of 22 (BR L1 columns on seeds, Nash bracket, every row's
+exploitability non-negative, six mirrored matchups per seat on seeds, no
+misses). The exact mirrored moments are not computed in light mode (they
+need the world tree's L1 keying and the row strategies on it; possible with
+the cached world tree, not done). Sampled: heuristic vs random corr -0.34,
+splits 0.65, var ratio 0.66; br_l1(random) - heuristic vs random +0.084 ±
+0.011 / +0.167 ± 0.015 (seat 0 / seat 1).
+
+Cache after this step: `TOY2_FULL` L1 1.9 GB, L2 3.0 GB, world L1 1.9 GB,
+DCFR result 28 MB; `.cache/` is git-ignored.

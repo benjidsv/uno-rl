@@ -153,3 +153,38 @@ def test_toy_reproduces_steps_5_6():
 
 # best responses to the step 8.6 Heuristic on TOY (scripts/symmetry.py, checked against uno.solve)
 HEURISTIC_TOY = {(0, Level.L1): 0.7378, (0, Level.L2): 0.7730, (0, Level.L3): 0.7798, (1, Level.L1): 0.4361, (1, Level.L2): 0.4774, (1, Level.L3): 0.4786}
+
+
+@given(rs=small_lazy_rulesets())
+@settings(deadline=None, max_examples=10, suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow])
+def test_keyings_attach_and_perfect_best_response(rs):
+    """Compiles of the same tree with different keyings walk the nodes in the same
+    order (so a keying can be attached to another compile), and the per-node
+    perfect-information best response equals the keyed L3 one."""
+    from uno.compiled import best_response_perfect
+
+    assume(rs.deck_size <= 7)  # the world tree enumerates every pile order
+    c = census(rs, node_cap=2_000, symmetric=True)
+    assume(c.complete)
+    fields = ("player", "level", "util", "end", "arc_node", "arc_action", "edge_arc", "edge_child", "edge_prob")
+    l1 = compile_tree(rs, (Level.L1,), symmetric=True)
+    l2 = compile_tree(rs, (Level.L2,), symmetric=True)
+    assert all(np.array_equal(getattr(l1, f), getattr(l2, f)) for f in fields)
+    l2.keyings[Level.L1] = l1.keyings[Level.L1]
+    both = compile_tree(rs, (Level.L1, Level.L2), symmetric=True)
+    w13 = compile_tree(rs, (Level.L1, Level.L3), symmetric=True)
+    w1 = compile_tree(rs, (Level.L1,), symmetric=True, world=True)
+    assert w1.roots_level is Level.L3
+    assert all(np.array_equal(getattr(w13, f), getattr(w1, f)) for f in fields)
+    for opp in (PlayFirstRandom(rs), Heuristic(rs)):
+        s_attached = (Level.L1, tabulate(l2, Level.L1, opp))
+        s_both = (Level.L1, tabulate(both, Level.L1, opp))
+        s_w13 = (Level.L1, tabulate(w13, Level.L1, opp))
+        s_w1 = (Level.L1, tabulate(w1, Level.L1, opp))
+        for seat in (0, 1):
+            assert math.isclose(best_response(l2, Level.L2, s_attached, seat).value, best_response(both, Level.L2, s_both, seat).value, abs_tol=1e-9)
+            a, b = best_response_perfect(w1, s_w1, seat), best_response(w13, Level.L3, s_w13, seat)
+            assert math.isclose(a.value, b.value, abs_tol=1e-9)
+            # the per-arc profile (responder's choice, opponent's weights) replays to its value
+            v, _ = w1.values(a.sigma, w1.seat_util(seat))
+            assert math.isclose(float(v[0, 0]), a.value, abs_tol=1e-9)
