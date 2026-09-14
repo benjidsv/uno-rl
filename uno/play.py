@@ -20,6 +20,16 @@ from uno.observe import Level, Observation, observe
 from uno.rules import Ruleset
 
 
+# Seed ranges. Everything is built, tested and (later) tuned on DEV_SEEDS; the
+# ladder's reported numbers come from EVAL_SEEDS, which nothing is ever chosen
+# on. A fixed seed range carries its own deal luck (seeds 0-4000 on TOY favour
+# seat 0 by ~1.5 points): harmless while every number is compared on the same
+# seeds, a bias as soon as an agent, a value function or a hyperparameter is
+# picked because it scored well on them.
+DEV_SEEDS = range(4000)
+EVAL_SEEDS = range(1_000_000, 1_004_000)
+
+
 def stable_hash(obj: object) -> int:
     """Process-independent hash (str hashes are randomised per process)."""
     return int.from_bytes(hashlib.blake2b(repr(obj).encode(), digest_size=8).digest(), "little")

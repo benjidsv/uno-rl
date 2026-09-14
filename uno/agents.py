@@ -112,3 +112,19 @@ class Heuristic:
             return (ap[1].color == best_color, opp_low == (ct.kind is Kind.WILD_DRAW_FOUR), -ap[1].card)
 
         return {max(plays, key=wild_key)[0]: 1.0}
+
+
+class BySeat:
+    """One agent per seat, dispatched on the observer's seat.
+
+    Best responses are solved per seat, so a tabular best-response row agent of
+    the ladder is `BySeat(TabularAgent(rs, br_seat0), TabularAgent(rs, br_seat1))`;
+    the mirrored evaluator plays it from both seats of every deal.
+    """
+
+    def __init__(self, seat0: Agent, seat1: Agent, name: str | None = None) -> None:
+        self.seats = (seat0, seat1)
+        self.name = name or f"{seat0.name}|{seat1.name}"
+
+    def policy(self, obs: Observation, legal: tuple[int, ...]) -> Policy:
+        return self.seats[obs.seat].policy(obs, legal)

@@ -52,7 +52,7 @@ def multiset(s) -> Counter:
 
 
 @given(rs=lazy_rulesets(), seed=seeds, policy_seed=seeds)
-@settings(deadline=None, max_examples=60)
+@settings(deadline=None, max_examples=60, suppress_health_check=[HealthCheck.filter_too_much])
 def test_chance_outcomes_on_real_play(rs, seed, policy_seed):
     """On states from real play (non-canonical piles): probabilities sum to 1, every
     child is a legal step result, conservation holds, the drawn cards are the top of

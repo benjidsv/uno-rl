@@ -329,3 +329,54 @@ replayed through `evaluate` gives the solver's value, values are monotone in
 information (L1 <= L2 <= L3), dominate Random / Heuristic / UniformLegal as
 responder, coincide across levels on a ruleset with no draw pile, and the
 simulated score matches the exact value on the same deals.
+
+## 15. Estimators (`uno/estimate.py`)
+
+Play once, estimate many ways. `play_pairs(rs, agents, seeds, levels)` plays
+every seed from both seats (the first-named agent at seat 0, then at seat 1,
+same deal and pile order) and keeps the traces. Every estimator is a pure
+function of those records, so AIVAT (step 9) reads the same games. The score
+of a game is the first-named agent's `(return + 1) / 2`.
+
+- `estimate_mirrored(pairs)`: the seat-0 and seat-1 means (n games each,
+  normal 95 % CI); the seat mean with the **raw** CI (the 2n games treated as
+  independent, variance `(var0 + var1) / 4` per pair) and with the
+  **mirrored** CI (variance of the n pair scores `(s0 + s1) / 2`, i.e.
+  `(var0 + var1 + 2 cov) / 4`); the correlation between the two seats' scores
+  on the same deal, the share of split pairs and the variance ratio
+  mirrored / raw. The whole gain is the negative covariance: a deal that
+  favours seat 0 does so whoever sits there. Per-seat estimates gain nothing
+  from pairing and are always reported: the pair score alone pools seats
+  (step 3 rule 1).
+- `compare(a, b)`: paired difference per seat, over deals, of two row agents
+  that played the same seeds against the same column, with the unpaired CI
+  alongside. **Common random numbers**: the runner keys the action rng on
+  (seed, information state), so the column agent makes the same choices in
+  both matchups until the public histories diverge.
+- Self-play pairs are degenerate: under common random numbers the two games
+  of an A-vs-A pair are the same game, so every pair scores exactly 1/2.
+- `exact_mirrored(rs, agents, levels)`: exact means, variances, covariance
+  and split share over the worlds of `uno.solve.worlds` (deal x pile order),
+  from `outcome_distribution` on each world. Exact for deterministic agents;
+  for stochastic ones it takes the two games of a pair as independent given
+  the world (their rng streams differ by seat).
+- `games_needed(edge, var_per_game, z)` = `z² var / edge²`, with the per-game
+  variance of the design (a pair is two games).
+- `uno.solve.outcome_distribution`: exact distribution of seat 0's return
+  under two fixed agents, `{+1, 0, -1} -> probability`; `evaluate` is its mean.
+- Seed ranges (`uno.play`): `DEV_SEEDS` = 0..3999 for building, testing and
+  tuning; `EVAL_SEEDS` = 1,000,000..1,003,999 held out for the ladder's
+  reported numbers, nothing is ever chosen on it.
+
+Checks (`tests/test_estimate.py`): pair traces replay; naming the agents the
+other way round plays the same two games scored from the other side; self-play
+pairs are identical games; `outcome_distribution` sums to 1 with the
+`evaluate` mean; `exact_mirrored` means equal `evaluate` (worlds + bare engine
+against the lazy tree); on `TOY` (Heuristic vs Random, 4000 seeds) and on the
+7-card test ruleset (BR L1 vs Heuristic, deterministic) the sampled per-seat
+means match the exact on-seeds values (to the last digit for deterministic
+pairs, within the CI otherwise) and the sampled variances, correlation and
+split share match the exact ones (10 %, 0.06, 0.03); exact and sampled
+variance ratios are below 1; paired differences of deterministic agents equal
+the difference of the on-seeds exact values and never exceed the unpaired
+variance.

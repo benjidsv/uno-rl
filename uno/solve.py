@@ -114,33 +114,33 @@ def roots_and_expand(rs: Ruleset, levels) -> tuple[list[Outcome], Expand]:
 # -- policy evaluation --------------------------------------------------------
 
 
-def evaluate(
+def outcome_distribution(
     rs: Ruleset,
     agents: tuple[Agent, Agent],
     levels=(Level.L1, Level.L1),
     roots: list[Outcome] | None = None,
     expand: Expand | None = None,
-) -> tuple[float, float]:
-    """Exact expected returns of two fixed agents (seat 0, seat 1).
+) -> dict[float, float]:
+    """Exact distribution of seat 0's return under two fixed agents: {+1: p, 0: p, -1: p}
+    (seat 1's return is the negative). The moments of the score follow from it,
+    which is what the exact variance of an estimator needs (`uno.estimate`).
 
     `roots` defaults to the whole game (all deals) and `expand` to the tree
     those roots need (lazy chance tree, or the bare engine when someone plays
-    at L3). Pass `roots=[(state, 1.0)]` and `expand=engine_children` for the
-    value of one real position: the pile order is then fixed and the result is
-    the expectation over the agents' randomness only.
+    at L3). Pass `roots=[(state, 1.0)]` and `expand=engine_children` for one
+    real position: the pile order is then fixed and the distribution is over
+    the agents' randomness only.
     """
     if expand is None:
         expand = engine_children if Level.L3 in levels else children
     if roots is None:  # only built when needed: the L3 worlds are expensive
         roots = worlds(rs) if expand is engine_children else initial_deals(rs)
-    total = [0.0, 0.0]
+    dist: dict[float, float] = defaultdict(float)
     stack = list(roots)
     while stack:
         s, reach = stack.pop()
         if s.terminal:
-            r = returns(s)
-            total[0] += reach * r[0]
-            total[1] += reach * r[1]
+            dist[returns(s)[0]] += reach
             continue
         p = s.player
         ch = expand(s)
@@ -148,7 +148,20 @@ def evaluate(
         for a, q in probs.items():
             for c, pc in ch[a]:
                 stack.append((c, reach * q * pc))
-    return (total[0], total[1])
+    return dict(dist)
+
+
+def evaluate(
+    rs: Ruleset,
+    agents: tuple[Agent, Agent],
+    levels=(Level.L1, Level.L1),
+    roots: list[Outcome] | None = None,
+    expand: Expand | None = None,
+) -> tuple[float, float]:
+    """Exact expected returns of two fixed agents (seat 0, seat 1). Same
+    arguments as `outcome_distribution`."""
+    v0 = sum(r * p for r, p in outcome_distribution(rs, agents, levels, roots, expand).items())
+    return (v0, -v0)
 
 
 def evaluate_on_seeds(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels=(Level.L1, Level.L1)) -> tuple[float, float]:

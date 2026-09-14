@@ -22,15 +22,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from uno import rules
 from uno.agents import Heuristic, PlayFirstRandom
 from uno.observe import Level
-from uno.play import match
+from uno.play import EVAL_SEEDS, match
 from uno.solve import TabularAgent, best_response, evaluate, evaluate_on_seeds
 
 
 def main() -> None:
     rs = getattr(rules, sys.argv[1] if len(sys.argv) > 1 else "TOY")
-    games = int(sys.argv[2]) if len(sys.argv) > 2 else 4000
+    games = int(sys.argv[2]) if len(sys.argv) > 2 else len(EVAL_SEEDS)
     rnd, heu = PlayFirstRandom(rs), Heuristic(rs)
-    seeds = range(games)
+    seeds = range(EVAL_SEEDS.start, EVAL_SEEDS.start + games)  # held out, see uno.play
 
     print("== exact values of the row agents (score of the first-named, seat 0 / seat 1)")
     for name, a, b in (("random vs random", rnd, rnd), ("heuristic vs random", heu, rnd), ("heuristic vs heuristic", heu, heu)):
