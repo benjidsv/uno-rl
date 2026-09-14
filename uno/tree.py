@@ -53,7 +53,7 @@ def pile_split(state: State) -> tuple[Counter, tuple[int, ...]]:
     return Counter(pile[:cut]), tail
 
 
-def _ordered_picks(counts: dict[int, int], n: int) -> list[tuple[tuple[int, ...], float]]:
+def ordered_picks(counts: dict[int, int], n: int) -> list[tuple[tuple[int, ...], float]]:
     """All ordered draws of n cards from a multiset, with their probabilities."""
     if n == 0:
         return [((), 1.0)]
@@ -64,7 +64,7 @@ def _ordered_picks(counts: dict[int, int], n: int) -> list[tuple[tuple[int, ...]
         if c == 0:
             continue
         counts[t] -= 1
-        for rest, p in _ordered_picks(counts, n - 1):
+        for rest, p in ordered_picks(counts, n - 1):
             out.append(((t, *rest), p * c / total))
         counts[t] += 1
     return out
@@ -96,16 +96,16 @@ def chance_outcomes(state: State, action: int) -> list[Outcome]:
     _check(state.ruleset)
     k = draw_count(state, action)
     if k == 0:
-        return [(step(state, action), 1.0)]
+        return [(step(state, action, check=False), 1.0)]
     unknown, tail = pile_split(state)
     n_u = min(k, sum(unknown.values()))
     n_t = min(k - n_u, len(tail))
     from_tail, tail_rest = tail[:n_t], tail[n_t:]
     out: list[Outcome] = []
-    for seq, p in _ordered_picks(dict(unknown), n_u):
+    for seq, p in ordered_picks(dict(unknown), n_u):
         rest = sorted((unknown - Counter(seq)).elements())
         pile = (*seq, *from_tail, *rest, *tail_rest)
-        out.append((step(replace(state, draw_pile=pile), action), p))
+        out.append((step(replace(state, draw_pile=pile), action, check=False), p))
     return out
 
 

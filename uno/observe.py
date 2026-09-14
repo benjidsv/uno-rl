@@ -15,7 +15,7 @@ from uno.rules import Ruleset
 
 class Level(IntEnum):
     L1 = 1  # own hand + public info
-    L2 = 2  # + opponent hand
+    L2 = 2  # + opponent hand (initial hand and draws, so the level has perfect recall)
     L3 = 3  # + draw pile order and seed (perfect information)
 
 
@@ -39,13 +39,15 @@ class Observation:
     hand: Hand
     own_draws: tuple[int, ...]
     drawn: int | None  # pending drawn card, only meaningful when it is the observer's AFTER_DRAW
-    # L2
+    # L2: the opponent's hand as seen at every one of the observer's decisions.
+    # Kept as (initial hand, draws in order) so that the L2 information state has
+    # perfect recall; `opp_hand` is derived from them and the public history.
     opp_hand: Hand | None = None
+    opp_initial_hand: Hand | None = None
+    opp_draws: tuple[int, ...] | None = None
     # L3
     draw_pile: tuple[int, ...] | None = None
     seed: int | None = None
-    opp_initial_hand: Hand | None = None
-    opp_draws: tuple[int, ...] | None = None
     n_reshuffles: int | None = None
 
     @property
@@ -81,11 +83,11 @@ def observe(state: State, player: int, level: Level = Level.L1) -> Observation:
     )
     if level >= Level.L2:
         obs["opp_hand"] = state.hands[opp]
+        obs["opp_initial_hand"] = state.initial_hands[opp]
+        obs["opp_draws"] = state.own_draws[opp]
     if level >= Level.L3:
         obs["draw_pile"] = state.draw_pile
         obs["seed"] = state.seed
-        obs["opp_initial_hand"] = state.initial_hands[opp]
-        obs["opp_draws"] = state.own_draws[opp]
         obs["n_reshuffles"] = state.n_reshuffles
     return Observation(**obs)
 

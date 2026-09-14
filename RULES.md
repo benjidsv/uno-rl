@@ -195,10 +195,22 @@ strong play and read the L3 / L2 / L1 gaps with that in mind.
   order, not as a multiset, so the game has **perfect recall** (a player can
   reconstruct every past information state from the current one). CFR needs
   that.
-- **L2** (medium): L1 plus the opponent's hand (sorted).
-- **L3** (oracle): L2 plus the draw pile in order, the seed, and the
-  opponent's initial hand and draw order. This determines the state exactly
-  (`reconstruct(ruleset, obs) == state`).
+- **L2** (medium): L1 plus the opponent's hand, carried as the opponent's
+  initial hand and draws in order (the current hand is derived from them and
+  the public history). This is "the opponent's hand at every one of my
+  decisions" for an observer with memory, and it keeps perfect recall: keying
+  on the current hand alone would not, since the observer could no longer tell
+  which card the opponent drew.
+- **L3** (oracle): L2 plus the draw pile in order and the seed. This
+  determines the state exactly (`reconstruct(ruleset, obs) == state`).
+
+An L1 or L2 observation is only meaningful at the observer's **own decision
+nodes**. Observing a state where the opponent is to move mid-turn reveals that
+their drawn card was playable (otherwise the turn would already have passed),
+and no field masking can hide that: it is the timing of the observation that
+leaks, not a field. Agents observe at their own decisions, solvers key on
+`info_state`, and the evaluator's value functions may use the full state, so
+nothing needs the other case.
 
 Public events, in the order they happen:
 `("setup", top, skipped)`, `("play", player, type, color)`,
@@ -240,7 +252,8 @@ Checked at every step of random games over random small rulesets:
   hand 3, `draw_then_may_play`, **forced play**, no reshuffle, no cap. 9 cards,
   draw pile of 2 after the deal. Chosen for low per-card playability: with 2
   colors x 2 ranks x 2 copies nobody ever got stuck and seat 0 won 72 % of
-  random games on pure tempo; here seat 0 wins 59 %. Sizes in notes.md (step 3).
+  random games on pure tempo; here seat 0 wins 59 % of random games outright
+  (score 0.65 with ties worth 1/2). Sizes in notes.md (step 3).
 - `TOY_FULL`: same as `TOY` without forced play, so "draw with a play in hand"
   is a decision. More than 2e7 histories (census stopped at the cap), so it is
   a name for later, not a working size. The value gap between `TOY_FULL` and
@@ -272,3 +285,47 @@ games and opponents (common random numbers).
   first when the opponent holds at most 2 cards. Wilds are held unless no other
   card plays; a wild is played on the color held most. After a draw, always
   play the drawn card.
+
+## 14. Exact solvers (`uno/solve.py`)
+
+Only for `reshuffle == "none"` rulesets (they walk the lazy-chance tree of
+`uno/tree.py`). Values are the responder's expected return in `[-1, 1]`;
+`score = (value + 1) / 2` is P(win) with draws worth 1/2, the same quantity
+`uno.play.match` estimates.
+
+- `evaluate(rs, agents, levels)`: exact expected returns of two fixed agents
+  over the whole game. `evaluate_on_seeds(rs, agents, seeds, levels)`: the
+  same on the real deal and real pile order of every seed, i.e. exactly what a
+  simulation on those seeds estimates up to action sampling. **A fixed seed
+  range carries its own deal luck**: seeds 0-4000 on `TOY` favour seat 0 by
+  about 1.5 points, so a simulation is checked against the exact value on the
+  same games, not against the global value.
+- `best_response(rs, opponent, seat, level)`: the responder's best pure
+  strategy against a fixed opponent (seen at L1), at information level:
+  - **L1**: information set = `info_state`.
+  - **L2**: `info_state` plus the opponent's initial hand and draws in order
+    (section 10). Perfect recall, like L1.
+  - **L3**: the full state, pile order included; every set is one history.
+    L3 roots are *worlds* (every deal x every order of the unknown pile) and the
+    tree below a world is the bare engine, with no chance node.
+
+  Two passes: forward, collecting the counterfactual reach of every history
+  (deal x chance x opponent, never the responder) and grouping the responder's
+  histories by information set; backward, memoised values where each
+  information set picks the action maximising the reach-weighted sum of its
+  histories' continuation values (ties: lowest action id). This is a best
+  response because every level has perfect recall (section 10); the recursion
+  is well founded because the public history grows between two decisions of
+  the same player. The forward pass asserts that all histories of a set have
+  the same legal actions. Only sets reachable under the opponent's support are
+  solved and tabulated.
+- `TabularAgent(rs, br)`: plays the table through `uno.play` at `br.level`.
+  Unreachable sets fall back to the first legal action and are counted.
+
+Checks (`tests/test_solve.py`): on tiny rulesets the value equals the maximum
+over every pure strategy of the responder, and the L3 worlds equal the set of
+distinct deck permutations with their frequencies; on small rulesets the table
+replayed through `evaluate` gives the solver's value, values are monotone in
+information (L1 <= L2 <= L3), dominate Random / Heuristic / UniformLegal as
+responder, coincide across levels on a ruleset with no draw pile, and the
+simulated score matches the exact value on the same deals.

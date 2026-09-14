@@ -34,8 +34,11 @@ def test_trace_is_deterministic_and_replays(rs, seed):
     assert s == t1.final and s.terminal
 
 
+STABLE_HASH_PIN = 0x6289483E54D14D59  # blake2b of repr((1, ('play', 0, 3, 1))); must never change
+
+
 def test_stable_hash_is_stable():
-    assert stable_hash((1, ("play", 0, 3, 1))) == 0xC8B0B4D8F0A1FCB4 or isinstance(stable_hash("x"), int)
+    assert stable_hash((1, ("play", 0, 3, 1))) == STABLE_HASH_PIN
     assert stable_hash(("a", 1)) != stable_hash(("a", 2))
 
 

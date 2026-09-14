@@ -49,7 +49,11 @@ def play_game(
     agents: tuple[Agent, Agent],
     levels: tuple[Level, Level] = (Level.L1, Level.L1),
 ) -> Trace:
-    s = new_game(rs, seed)
+    return play_from(new_game(rs, seed), seed, agents, levels)
+
+
+def play_from(s: State, seed: int, agents: tuple[Agent, Agent], levels: tuple[Level, Level] = (Level.L1, Level.L1)) -> Trace:
+    """Play `s` to the end. `seed` only seeds the action rng (common random numbers)."""
     steps: list[Step] = []
     while not s.terminal:
         p = s.player
@@ -142,10 +146,11 @@ def match(
     scores, lengths, ends, invalid = [], [], Counter(), 0
     for seed in seeds:
         try:
-            t = play_game(rs, seed, pair, lv)
+            s0 = new_game(rs, seed)
         except ValueError:
             invalid += 1
             continue
+        t = play_from(s0, seed, pair, lv)
         scores.append((returns(t.final)[seat] + 1.0) / 2.0)
         lengths.append(t.final.turn)
         ends[t.final.end] += 1

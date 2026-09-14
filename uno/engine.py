@@ -280,8 +280,10 @@ class _Work:
             self.next_player()
 
 
-def step(state: State, action: int) -> State:
-    if action not in legal_actions(state):
+def step(state: State, action: int, check: bool = True) -> State:
+    """Apply an action. `check=False` skips the legality check for callers that
+    just computed `legal_actions` themselves (tree walks, solvers)."""
+    if check and action not in legal_actions(state):
         raise IllegalAction(f"action {action} is not legal in {state!r}")
     a = state.ruleset.actions[action]
     w = _Work(state)

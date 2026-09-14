@@ -225,6 +225,10 @@ def test_9_information_levels(rs, seed, policy_seed):
             assert reconstruct(rs, l3) == s
             # nesting and privacy
             assert l1.opp_hand is None and l2.opp_hand == s.hands[o] and l3.draw_pile == s.draw_pile
+            # L2 carries the opponent's memory (perfect recall), L1 does not, L2 has no pile
+            assert l1.opp_initial_hand is None and l1.opp_draws is None
+            assert l2.opp_initial_hand == s.initial_hands[o] and l2.opp_draws == s.own_draws[o]
+            assert l2.draw_pile is None and l2.seed is None
             assert l1.hand == s.hands[p] and l1.opp_hand_size == len(s.hands[o])
             if s.player != p:
                 assert l1.drawn is None
