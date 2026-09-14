@@ -380,3 +380,112 @@ split share match the exact ones (10 %, 0.06, 0.03); exact and sampled
 variance ratios are below 1; paired differences of deterministic agents equal
 the difference of the on-seeds exact values and never exceed the unpaired
 variance.
+
+## 16. Compiled tree (`uno/compiled.py`)
+
+The lazy-chance tree of section 14 (or, with L3, the world tree: one root per
+deal x unknown-pile order, bare engine below) walked **once** into flat numpy
+arrays. Every exact computation of sections 14-15 is then a vectorized pass,
+and CFR (section 17) becomes affordable. The walkers of `uno/solve.py` and
+`uno/estimate.py` stay as the reference implementation the compiled versions
+are tested against.
+
+Layout:
+
+- **nodes** = histories plus a virtual chance root (node 0) whose edges lead
+  to the deals (or the worlds). Per node: player (0 / 1, terminal, chance),
+  level, seat-0 return at terminals.
+- **arcs** = (decision node, legal action), one per legal action, in action
+  order. **edges** = (arc, chance outcome): one per child with its
+  probability (a draw has one edge per distinct card type left in the pile).
+- Nodes are sorted by level (terminals last within a level), arcs by node,
+  edges by arc, so each level is a contiguous slice of the three tables.
+- **level** of a decision node = `2 * len(public) + [phase == TURN_START]`.
+  It increases strictly along every edge (play and draw append a public
+  event; a pass moves from `AFTER_DRAW` to `TURN_START`) and all histories of
+  an information set share it, at every information level, because the
+  phase at a player's own decision is a function of what they know. Depth by
+  action count would not do: the opponent's "drew a playable card and passed"
+  is one action longer than "drew an unplayable card" and looks the same.
+  Terminals get their parent's level plus one. The build asserts the
+  same-level and same-legal-actions properties of every set.
+- A **keying** is one information-set partition (L1, L2 or L3 key of section
+  14) over the tree: set id per node, set-action ("ia") id per arc, and the
+  key -> id dictionary for playback and tabulation. Sets are numbered in
+  order of first appearance, hence contiguous per level; a set's ia are
+  contiguous. A strategy is a vector over ia; a tree can hold several
+  keyings (L1 + L2 on the lazy tree, L1 + L3 on the world tree).
+
+Kernels:
+
+- `reach(w0, w1)`: forward by level; per node the product along the path of
+  player 0's weights, player 1's weights and chance, `(n, 3)`.
+- `values(w, util)`: backward by level; per node the expectation of `util`
+  (any number of terminal columns) under per-arc weights `w`, plus the
+  per-arc values. Both are a loop over the levels of a few `reduceat` /
+  fancy-indexing operations.
+
+On top of them: `evaluate` and `outcome_distribution` (the profile's weights
+and the seat-0 return, or the three outcome indicators); `best_response(tree,
+level, opponent, seat)` (counterfactual reach = chance x opponent from
+`reach`, then backward from the deepest level choosing per set the action
+maximising the reach-weighted sum of its histories' arc values; ties to the
+lowest action id, as section 14); `exploitability(tree, level, sigma)` = both
+best responses to a profile, NashConv in return units and in score points
+(`score(BR seat 0) + score(BR seat 1) - 1`), the per-seat gains and the
+bracket `[1 - score(BR seat 1), score(BR seat 0)]` that contains the Nash
+seat-0 score; `exact_mirrored` (section 15) from the per-world outcome
+distributions of the two seat-swapped profiles on a world tree.
+
+Strategies from agents: `tabulate(tree, level, agent)` asks the agent at
+every set of the keying, both seats, with the observation rebuilt from the
+set's key by `uno.observe.observation_from_key` (the key is by definition
+everything the observer knows, section 10; the L3 key is the state).
+`tabulate_table` maps a `BestResponse.table` onto a keying. `CompiledAgent`
+plays any strategy over any keying through `uno.play`.
+
+Checks (`tests/test_compiled.py`, `tests/test_observe_keys.py`): the
+observation rebuilt from an L1 / L2 / L3 key equals `observe` at every
+decision of random games over random rulesets; node, terminal, decision and
+set counts equal the census; levels increase along edges; the uniform
+profile's value equals the census UniformLegal score; on small rulesets the
+compiled best response at every level equals the reference value to 1e-9 for
+UniformLegal, Random and Heuristic opponents, its pure strategy replays to
+that value both on the compiled tree and through the engine, the reference
+table mapped onto the keying has the reference value, and L1 on the world
+tree equals L1 on the lazy tree; evaluate, outcome distributions and exact
+mirrored moments match the reference on a 7-card ruleset. On `TOY` the
+twelve step 5-6 values are reproduced (`scripts/cfr.py`).
+
+## 17. CFR (`uno/cfr.py`)
+
+Nash L1: counterfactual regret minimisation on the L1 keying of the compiled
+tree, both seats at once. Iteration `t`, for player `i`:
+
+1. `reach` and `values` under the current profile;
+2. counterfactual regret per set-action: sum over the set's histories of
+   (chance x opponent reach) x (arc value - history value), signed for the
+   player;
+3. regret matching: current strategy proportional to positive accumulated
+   regrets, uniform where none. **CFR+** clips the accumulated regrets at
+   zero after each update;
+4. average strategy: accumulate own reach x current strategy, weighted by `t`
+   (linear averaging, CFR+) or 1 (vanilla).
+
+`alternating` (CFR+) updates player 0, recomputes the passes, then updates
+player 1; vanilla updates both from one pass. The result is the normalised
+average strategy (sets never reached by their owner are uniform), the
+regrets, and a log of exploitability (section 16) at chosen iterations, whose
+last entry (iteration count and NashConv) goes next to every ladder cell that
+uses the strategy. `CFRResult.save` / `load` persist it (`.cache/`, not
+committed).
+
+Checks (`tests/test_cfr.py`): on the 7-card ruleset CFR+ reaches NashConv
+under 0.2 score points in 60 iterations and the log decreases; the profile's
+value sits inside its bracket at every logged iteration; the reference best
+response to the average strategy played as an agent equals the compiled
+exploitability; the profile's value through the engine equals the compiled
+one; every row agent's best-response ceiling sits above the bracket (its
+exploitability is non-negative); the simulation of the Nash agent on seeds
+matches the exact value on those seeds; save / load round-trips; vanilla CFR
+converges more slowly and brackets the same value.
