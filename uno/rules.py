@@ -203,4 +203,40 @@ TOY_CANDIDATE = Ruleset(
     max_turns=None,
 )
 
+# Step 3 census (scripts/census.py, notes.md). Two lessons: the pile drives
+# tree size (forced play removes the "draw with a play in hand" branch and cuts
+# the tree ~65x), and per-card playability drives the first-player edge (with 2
+# colors x 2 ranks nobody gets stuck, so seat 0 wins 72% of pure races; with 4
+# colors x 2 ranks x 1 copy seat 0 is 59%). TOY_FULL keeps the voluntary draw
+# for the one-pass solvers (best response).
+TOY = Ruleset(
+    colors=4,
+    rank_copies=(1, 1),
+    skip_per_color=0,
+    reverse_per_color=0,
+    draw_two_per_color=0,
+    wild_count=1,
+    wild_draw_four_count=0,
+    hand_size=3,
+    draw_then_may_play=True,
+    forced_play=True,
+    reshuffle="none",
+    max_turns=None,
+)
+
+TOY_FULL = Ruleset(
+    colors=4,
+    rank_copies=(1, 1),
+    skip_per_color=0,
+    reverse_per_color=0,
+    draw_two_per_color=0,
+    wild_count=1,
+    wild_draw_four_count=0,
+    hand_size=3,
+    draw_then_may_play=True,
+    forced_play=False,
+    reshuffle="none",
+    max_turns=None,
+)
+
 FULL_UNO = Ruleset()

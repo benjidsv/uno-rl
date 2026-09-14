@@ -1,0 +1,114 @@
+"""Baseline agents. See RULES.md section 13.
+
+An agent maps (observation, legal actions) to a probability distribution over
+actions. It never samples: best response tabulates the policy and AIVAT needs
+the probabilities. Sampling lives in `uno.play`.
+"""
+
+from __future__ import annotations
+
+import random
+from collections import Counter
+from typing import Protocol
+
+from uno.observe import Observation
+from uno.rules import Kind, Play, Ruleset
+
+Policy = dict[int, float]
+
+
+class Agent(Protocol):
+    name: str
+
+    def policy(self, obs: Observation, legal: tuple[int, ...]) -> Policy: ...
+
+
+def uniform(actions) -> Policy:
+    actions = tuple(actions)
+    p = 1.0 / len(actions)
+    return {a: p for a in actions}
+
+
+def sample(probs: Policy, rng: random.Random) -> int:
+    r = rng.random()
+    acc = 0.0
+    last = None
+    for a, p in probs.items():
+        acc += p
+        last = a
+        if r < acc:
+            return a
+    return last  # rounding
+
+
+class UniformLegal:
+    """Uniform over every legal action, Draw and Pass included. Sanity opponent."""
+
+    name = "uniform_legal"
+
+    def __init__(self, rs: Ruleset) -> None:
+        self.rs = rs
+
+    def policy(self, obs: Observation, legal: tuple[int, ...]) -> Policy:
+        return uniform(legal)
+
+
+class PlayFirstRandom:
+    """Uniform over legal plays; draws only when nothing plays; always plays a drawn card.
+
+    The ladder's "Random" row.
+    """
+
+    name = "random"
+
+    def __init__(self, rs: Ruleset) -> None:
+        self.rs = rs
+        self._is_play = tuple(isinstance(a, Play) for a in rs.actions)
+
+    def policy(self, obs: Observation, legal: tuple[int, ...]) -> Policy:
+        plays = [a for a in legal if self._is_play[a]]
+        return uniform(plays if plays else legal)
+
+
+class Heuristic:
+    """Deterministic rulebot.
+
+    Play over draw. Among playable non-wild cards prefer action cards when the
+    opponent is low, then the color held most, then the lowest type id. Hold
+    wilds unless nothing else plays; a wild takes the color held most. After a
+    draw, always play the drawn card.
+    """
+
+    name = "heuristic"
+
+    def __init__(self, rs: Ruleset, low_threshold: int = 2) -> None:
+        self.rs = rs
+        self.low_threshold = low_threshold
+
+    def _color_counts(self, hand: tuple[int, ...]) -> Counter:
+        types = self.rs.card_types
+        return Counter(types[c].color for c in hand if not types[c].is_wild)
+
+    def policy(self, obs: Observation, legal: tuple[int, ...]) -> Policy:
+        rs = self.rs
+        types = rs.card_types
+        plays = [(a, rs.actions[a]) for a in legal if isinstance(rs.actions[a], Play)]
+        if not plays:
+            return {rs.draw_action: 1.0}
+        colors = self._color_counts(obs.hand)
+        opp_low = obs.opp_hand_size <= self.low_threshold
+        colored = [(a, p) for a, p in plays if not types[p.card].is_wild]
+        if colored:
+            def key(ap):
+                ct = types[ap[1].card]
+                return (opp_low and ct.kind is not Kind.NUMBER, colors[ct.color], -ap[1].card)
+
+            return {max(colored, key=key)[0]: 1.0}
+        # only wilds play: pick the color held most (lowest color on ties)
+        best_color = max(range(rs.colors), key=lambda c: (colors[c], -c))
+
+        def wild_key(ap):
+            ct = types[ap[1].card]
+            return (ap[1].color == best_color, opp_low == (ct.kind is Kind.WILD_DRAW_FOUR), -ap[1].card)
+
+        return {max(plays, key=wild_key)[0]: 1.0}

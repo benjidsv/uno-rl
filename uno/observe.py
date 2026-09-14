@@ -54,6 +54,11 @@ class Observation:
         return (self.seat, self.initial_hand, self.public, self.own_draws)
 
 
+def info_state(state: State, player: int) -> tuple:
+    """`observe(state, player).info_state` without building the Observation."""
+    return (player, state.initial_hands[player], state.public, state.own_draws[player])
+
+
 def observe(state: State, player: int, level: Level = Level.L1) -> Observation:
     opp = player ^ 1
     obs = dict(

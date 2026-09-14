@@ -7,22 +7,22 @@ this file wins and the code is wrong.
 
 ## 1. Parameters
 
-| field                  | meaning                                                                 | toy (`TOY_CANDIDATE`) | full (`FULL_UNO`)          |
-|------------------------|-------------------------------------------------------------------------|-----------------------|----------------------------|
-| `colors`               | number of colors, identified by ints `0..colors-1`                      | 2                     | 4                          |
-| `rank_copies`          | copies of each number rank per color; rank `r` has `rank_copies[r]`     | `(2, 2, 2)`           | `(1, 2, 2, 2, 2, 2, 2, 2, 2, 2)` |
-| `skip_per_color`       | skip cards per color                                                    | 0                     | 2                          |
-| `reverse_per_color`    | reverse cards per color                                                 | 0                     | 2                          |
-| `draw_two_per_color`   | +2 cards per color                                                      | 0                     | 2                          |
-| `wild_count`           | plain wilds in the deck                                                 | 1                     | 4                          |
-| `wild_draw_four_count` | wild +4 in the deck                                                     | 0                     | 4                          |
-| `hand_size`            | cards dealt to each player                                              | 2                     | 7                          |
-| `draw_then_may_play`   | after a voluntary draw, the drawn card may be played at once            | True                  | True                       |
-| `forced_play`          | if a playable card is in hand, drawing is illegal                       | False                 | False                      |
-| `reshuffle`            | `"none"` or `"seeded"`, what happens when the draw pile is empty        | `"none"`              | `"seeded"`                 |
-| `max_turns`            | cap on play + draw actions; reaching it ends the game as a draw. `None` = no cap | `None`                | 1000                       |
+| field                  | meaning                                                                 | toy (`TOY`) | full (`FULL_UNO`)          |
+|------------------------|-------------------------------------------------------------------------|-------------|----------------------------|
+| `colors`               | number of colors, identified by ints `0..colors-1`                      | 4           | 4                          |
+| `rank_copies`          | copies of each number rank per color; rank `r` has `rank_copies[r]`     | `(1, 1)`    | `(1, 2, 2, 2, 2, 2, 2, 2, 2, 2)` |
+| `skip_per_color`       | skip cards per color                                                    | 0           | 2                          |
+| `reverse_per_color`    | reverse cards per color                                                 | 0           | 2                          |
+| `draw_two_per_color`   | +2 cards per color                                                      | 0           | 2                          |
+| `wild_count`           | plain wilds in the deck                                                 | 1           | 4                          |
+| `wild_draw_four_count` | wild +4 in the deck                                                     | 0           | 4                          |
+| `hand_size`            | cards dealt to each player                                              | 3           | 7                          |
+| `draw_then_may_play`   | after a voluntary draw, the drawn card may be played at once            | True        | True                       |
+| `forced_play`          | if a playable card is in hand, drawing is illegal                       | True        | False                      |
+| `reshuffle`            | `"none"` or `"seeded"`, what happens when the draw pile is empty        | `"none"`    | `"seeded"`                 |
+| `max_turns`            | cap on play + draw actions; reaching it ends the game as a draw. `None` = no cap | `None`      | 1000                       |
 
-Deck size: toy `2 * (2+2+2) + 1 = 13`, full `108`.
+Deck size: toy `4 * (1+1) + 1 = 9`, full `108`.
 
 A ruleset is valid only if the deck has at least `2 * hand_size + 1` cards.
 
@@ -161,6 +161,27 @@ The game is terminal when one of:
 `returns(state)` is zero-sum: winner gets `+1`, loser `-1`, draw `(0, 0)`.
 Win probability for a player is `(r + 1) / 2`.
 
+**Why exhaustion is decided on hand size (toy, `reshuffle == "none"`).**
+`Draw` stays legal on an empty pile: it draws nothing and ends the game, so the
+player to move can *claim* the game whenever they hold fewer cards, and force a
+draw on equal counts. Under `forced_play` (the `TOY`) the claim only exists
+when the mover has nothing playable, so the pile running out just means
+"first player stuck loses on cards". This is deliberate. Official UNO scores the winner by the
+cards left in the loser's hand, so "keep the hand low, do not get stuck" is
+already the objective the full game rewards; the rule turns that objective into
+the terminal condition once the pile runs out, without reshuffles or infinite
+pass loops. It exercises the same skills as full UNO: play over draw, color
+management so as not to get stuck, holding the wild as insurance.
+
+Known distortion: the claim only exists on an *empty* pile, so whoever draws
+the last card hands the claim to the opponent. Near the end, a player who
+cannot play with one card left in the pile loses on the spot if they were tied
+or behind. This pile-parity tactic is real, computable from public information
+and therefore counts as skill on the toy, but it is toy-specific: full UNO
+reshuffles, so it does not transfer. The toy exists for measurement, not for
+transfer, so we accept it. Expect a large share of exhaustion endings under
+strong play and read the L3 / L2 / L1 gaps with that in mind.
+
 ## 10. Information levels
 
 `observe(state, player, level)` returns a hashable observation.
@@ -215,9 +236,39 @@ Checked at every step of random games over random small rulesets:
 
 ## 12. Named rulesets
 
-- `TOY_CANDIDATE`: 2 colors, ranks `(2, 2, 2)`, no action cards, 1 wild,
-  hand 2, `draw_then_may_play`, no forced play, no reshuffle, no cap. 13 cards.
-  A candidate only; step 3 (census) decides the final toy.
+- `TOY`: 4 colors, ranks `(1, 1)` (one copy each), no action cards, 1 wild,
+  hand 3, `draw_then_may_play`, **forced play**, no reshuffle, no cap. 9 cards,
+  draw pile of 2 after the deal. Chosen for low per-card playability: with 2
+  colors x 2 ranks x 2 copies nobody ever got stuck and seat 0 won 72 % of
+  random games on pure tempo; here seat 0 wins 59 %. Sizes in notes.md (step 3).
+- `TOY_FULL`: same as `TOY` without forced play, so "draw with a play in hand"
+  is a decision. More than 2e7 histories (census stopped at the cap), so it is
+  a name for later, not a working size. The value gap between `TOY_FULL` and
+  `TOY` best responses would be the worth of that decision.
+- `TOY_CANDIDATE`: the original 13-card candidate (2 colors, ranks `(2, 2, 2)`,
+  1 wild, hand 2, no forced play). Rejected by the census: more than 4e7
+  histories. Kept as a name only.
 - `FULL_UNO`: 4 colors, ranks `(1, 2, 2, 2, 2, 2, 2, 2, 2, 2)`, 2 skip / 2
   reverse / 2 draw-two per color, 4 wild, 4 wild draw four, hand 7,
   `draw_then_may_play`, no forced play, seeded reshuffle, cap 1000. 108 cards.
+
+## 13. Baseline agents (`uno/agents.py`)
+
+An agent is a function `policy(observation, legal_actions) -> {action: prob}`
+whose support is inside the legal actions and whose probabilities sum to 1.
+Agents return distributions, never sampled actions, because best response
+tabulates the policy and AIVAT needs the action probabilities. Sampling is done
+by the runner (`uno/play.py`) with an rng seeded from `(match seed, information
+state)`, so the same agent makes the same choice in the same situation across
+games and opponents (common random numbers).
+
+- `UniformLegal`: uniform over every legal action, including `Draw` with a play
+  in hand and `Pass` after a playable draw. Sanity opponent only.
+- `PlayFirstRandom`: uniform over the legal plays; `Draw` only when nothing
+  plays; after a draw always plays the drawn card, uniform over the colors for a
+  wild. **This is the ladder's "Random" row.**
+- `Heuristic`: deterministic. Play over draw. Among playable non-wild cards,
+  prefer the color the player holds most (ties: lowest type id); action cards
+  first when the opponent holds at most 2 cards. Wilds are held unless no other
+  card plays; a wild is played on the color held most. After a draw, always
+  play the drawn card.

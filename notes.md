@@ -42,6 +42,8 @@ Which decisions carry skill in UNO (the toy must keep them, otherwise there is n
 Not yet defined. The size decides whether exact solving is feasible: exact L1 solving enumerates deck permutations consistent with what the player saw, and permutations explode fast.
 
 Candidate: 2 colors x 3 ranks x 2 copies + 1 wild, hand size 2, no reshuffle. (to be checked)
+**Resolved by the step 3 census below: the candidate is > 4e7 histories; the toy is
+4 colors x 2 ranks x 1 copy + 1 wild, hand 3, forced play (`TOY`, 1.25M histories).**
 
 Sizing procedure:
 1. implement the parametrized engine
@@ -143,6 +145,97 @@ The most useful cell for an RL agent: **BR L1 to it**. Tabulate the network's po
 - If BR L1 vs random on the toy is close to the old rulebot numbers, PPO had nothing left to learn and the fix is the game, not the algorithm.
 - Sparse reward fix: potential-based reward shaping with the exact L2/L3 value on the toy (unbiased: does not change the optimal policy). On full UNO use the PIMC value or a critic.
 - Self-play evaluation: exploitability via best response on the toy, not just winrate vs random.
+
+
+## Step 3 results: census (2026-09-14, `scripts/census.py`)
+
+Method: the **lazy-chance tree** (`uno/tree.py`), not permutations. A draw is a
+chance node over the distinct types left in the unknown part of the pile; the
+deal is a chance node over (hand multisets, setup prefix). Cross-checked
+against brute-force permutation enumeration on tiny decks (`tests/test_tree.py`).
+Pure Python walks ~145k histories/s.
+
+### Round 1: size
+
+| candidate (colors, ranks x copies, extras, hand)   | deck | histories   | L1 info sets | complete | notes                                   |
+|-----------------------------------------------------|------|-------------|--------------|----------|-----------------------------------------|
+| A `TOY_CANDIDATE` 2c (2,2,2) +W h2                  | 13   | > 4e7       | > 1.2e6      | no       | original candidate, rejected            |
+| B 2c (2,2) +W h2                                    | 9    | > 4e7       | > 6e6        | no       | pile 4                                  |
+| C 2c (2,2) +W h3                                    | 9    | 3,653,688   | 858,428      | yes      | pile 2, 24 s per pass                   |
+| D 2c (1,1,1) +W h2                                  | 7    | 365,664     | 88,800       | yes      | pile 2, 60 % exhaustion under uniform   |
+| R 3c (1,1) +W h2                                    | 7    | 413,232     | 100,836      | yes      | like D with 3 colors                    |
+| O = C + forced play                                 | 9    | 56,288      | 26,668       | yes      | 0.3 s per pass                          |
+| H = B + forced play                                 | 9    | 59,020      | 29,580       | yes      |                                         |
+| N 2c (2,2) +W +S h2 forced                          | 11   | 7,185,024   | 3,438,712    | yes      | one skip per color                      |
+| E / F / L / M / Q (skips, +2, no after-draw, ...)   | 9-11 | > 2e7       |              | no       |                                         |
+| K, P (hand 3-4 on 7-9 cards)                        | 7-9  | tiny        |              | yes      | degenerate: > 95 % exhaustion           |
+
+What drives size: the pile. Every voluntary draw branches over ~5 types and
+uniform-legal play can draw at any decision, so histories grow like
+(types x branching)^pile. Forced play removes the "draw with a play in hand"
+branch and shrinks C by 65x (3.65e6 -> 5.6e4) without touching anything else;
+under play-first random and the heuristic the match numbers on C and O are
+identical to the last game (neither agent ever draws voluntarily).
+
+### Round 2: tempo
+
+Round 1 picked O, but seat 0 won 72 % of random-vs-random games on every
+candidate. Diagnosis: on O, **59 % of games contain no draw at all and seat 0
+wins 100 % of those**; in games with a draw seat 0 wins 33 %. With 2 colors x
+2 ranks nearly every card plays on every top, nobody gets stuck, and the game
+is a race the first mover wins by construction (one card ahead all game). Not
+the exhaustion rule (5 % of games). **Per-card playability** is the lever.
+
+Forced play, hand 3, 3000 random-vs-random games (win rate, draws excluded):
+
+| candidate               | deck | histories | P0 win | no-draw games | decisions with a choice |
+|-------------------------|------|-----------|--------|---------------|-------------------------|
+| O 2c (2,2)+W            | 9    | 56k       | 0.72   | 0.59          | 0.41                    |
+| **S 4c (1,1)+W**        | 9    | 1.25M     | 0.59   | 0.31          | 0.35                    |
+| T 3c (1,1,1)+W          | 10   | > 5M      | 0.56   | 0.25          | 0.29                    |
+| 3c (1,1,1,1)+W, 4c (1,1,1)+W | 13 | > 5M   | 0.56   | 0.17          | 0.24                    |
+| 4c (1,1)+W hand 4       | 9    | 135k      | 0.50   | 0.29          | 0.53 (pile 0: 71 % exhaustion, 11 % invalid deals) |
+
+Decision: **`TOY` = S** (4 colors, ranks (1,1) one copy each, 1 wild, hand 3,
+forced play, 9 cards, pile 2). Exact: 1,252,040 histories, 558,656 L1
+information sets, 7 s per pass in pure Python. Best response is cheap; CFR
+needs an array-compiled tree or MCCFR (1000 passes x 7 s is 2 h).
+**`TOY_FULL`** = S without forced play: > 2e7 histories (stopped at the cap),
+so it is a name for later, not a working size. Its best-response gap to `TOY`
+would be the worth of the voluntary draw.
+
+Exact-vs-sampled check: the census gives the exact UniformLegal vs UniformLegal
+seat-0 score; `match` on 4000 seeds lands inside the 95 % CI (`TOY`: exact
+0.651, sampled 0.660 [0.647, 0.674]; same on C, D, O).
+
+Rules for the ladder that fell out of this:
+
+1. Seat 0 is still worth 0.66 on `TOY` (score, draws = 1/2). Every matchup
+   value must be reported per seat or seat-paired (mirrored evaluator, step 7),
+   never pooled.
+2. Skill checks compare against the random baseline **at the same seat**, not
+   against 0.5.
+
+## Step 4 results: agents and runner
+
+`uno/agents.py`: `UniformLegal` (sanity), `PlayFirstRandom` (the ladder's
+Random row), `Heuristic` (deterministic). Agents return distributions.
+`uno/play.py`: `play_game` records (state, obs, probs, action) per decision;
+action rng seeded from (seed, L1 info state) = common random numbers;
+`match` gives score with normal CI, win rate with Wilson CI, end kinds.
+
+`TOY`, 4000 seeds, score for the first-named agent (draws = 1/2):
+
+| matchup                     | seat 0 | seat 1 |
+|-----------------------------|--------|--------|
+| random vs random            | 0.656  | 0.344  |
+| heuristic vs random         | 0.738  | 0.399  |
+| heuristic vs heuristic      | 0.698  | 0.302  |
+
+Heuristic edge over random: +8 points from seat 0, +5.5 from seat 1. (On the
+rejected 2-color toy it was +10 / -3: the heuristic lost to random when moving
+second, another symptom of the pure race.) Exhaustion endings: 19 % of games
+under play-first random, 12 % of them ties.
 
 
 ## Build order
