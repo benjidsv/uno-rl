@@ -514,7 +514,24 @@ stays symmetric: this is CFR on the game whose actions are the orbits, and
 its equilibrium is a symmetric Nash equilibrium of the full game.
 
 `alternating` (CFR+) updates player 0, recomputes the passes, then updates
-player 1; vanilla updates both from one pass. The result is the normalised
+player 1; vanilla updates both from one pass.
+
+**Variants** (step 8.7, notes_toy2.md), same passes, `cfr(variant=...)`:
+
+- discounting (DCFR, Brown & Sandholm 2019): after iteration `t` the
+  accumulated positive regrets are multiplied by `t^a / (t^a + 1)`, the
+  negative ones by `t^b / (t^b + 1)`, and the contribution of iteration `t`
+  to the average strategy carries weight `t^g`. CFR+ is `a = inf` (no
+  discount), negatives clipped, `g = 1`; DCFR is `(1.5, 0, 2)`;
+- prediction (PCFR+, Farina, Kroer & Sandholm 2021): the current strategy is
+  regret matching on the accumulated regrets *plus the last instantaneous
+  regret* (the optimistic step), with regret matching+ and `g = 2`.
+
+Presets in `uno.cfr.VARIANTS`: `vanilla`, `cfr+`, `dcfr`, `pcfr+`, and
+`dpcfr+` (prediction with DCFR's positive-regret discount). The orbit
+averaging applies to every variant, so all of them stay symmetric.
+
+The result is the normalised
 average strategy (sets never reached by their owner are uniform), the
 regrets, and a log of exploitability (section 16) at chosen iterations, whose
 last entry (iteration count and NashConv) goes next to every ladder cell that
@@ -529,7 +546,11 @@ exploitability; the profile's value through the engine equals the compiled
 one; every row agent's best-response ceiling sits above the bracket (its
 exploitability is non-negative); the simulation of the Nash agent on seeds
 matches the exact value on those seeds; save / load round-trips; vanilla CFR
-converges more slowly and brackets the same value.
+converges more slowly and brackets the same value; on the quotient of `TOY`
+every variant's NashConv falls, every average strategy is symmetric, all
+brackets intersect at the Nash value 0.6196, vanilla > CFR+ > DCFR and CFR+
+> PCFR+ in NashConv after 60 iterations, and the explicit flags reproduce
+the preset.
 
 ## 18. Symmetry (`uno/symmetry.py`)
 
@@ -605,3 +626,38 @@ misses) and the same exploitability of the uniform profile; `tabulate`
 rejects an asymmetric agent on `TOY`; a tree survives save / load and the
 cache; on the quotient of `TOY` the twelve step 5-6 / 8.6 best-response
 values and the Nash value 0.6196 are reproduced.
+
+## 19. Sizing by position (`uno/sizing.py`)
+
+`census` (section 16 and `uno/tree.py`) visits every history, so counting a
+candidate toy costs as much as walking it and a cap hides everything above
+it. But the subtree below a history is a function of its **position** only:
+the two hands, the pile (the unknown multiset and the known tail), the top
+card and current color, the player, the phase and the pending drawn card
+(plus the turn count when `max_turns` is set). The public history, the
+initial hands and the draw records feed the information-set keys, not the
+transitions. So every count that never mentions an information set is a
+function of the position and the tree is sized by a dynamic program
+memoised over positions: `size(rs, symmetric, world, position_cap)` returns
+the number of roots (deals or worlds, or their orbits), positions, histories,
+decision nodes, terminals, the maximal depth, and, under two history-free
+policies (UniformLegal, the census's policy, and PlayFirstRandom, the ladder's
+Random row), the exact end distribution and the expected number of decisions
+per game. `random_p0_score` is the exact random-vs-random seat-0 score, the
+seat-parity readout of the census rounds. `world=True` sizes the L3 world
+tree (the bare engine over ordered piles). `position_cap` stops the walk
+(~0.5 KB per memoised position) and marks the result incomplete; the
+histories are then a lower bound and the masses are dropped.
+
+What it cannot count: L1 / L2 information sets, which depend on the history;
+they come out of `compile_tree` once a candidate is chosen. On `TOY` the DP
+visits 12,737 positions for 33,646 quotient histories (2.6x) and 174,952 for
+the 1,252,040 full histories (7x); on `TOY_FULL` 49,177 for 774,007 (16x).
+The ratio grows with the tree, which is what makes the 13-card candidates
+countable.
+
+Checks (`tests/test_sizing.py`): on small rulesets, full and quotient, every
+count and the UniformLegal end mass equal the census's; the PlayFirstRandom
+end mass reproduces the compiled tree's exact random-vs-random value and the
+compiled node count; the world tree has the same values and depth; the cap
+stops the walk; `TOY` and `TOY_FULL` sizes and values of step 8.6 are pinned.

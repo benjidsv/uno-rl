@@ -1047,8 +1047,14 @@ DFS with undo), which is the next measurement.
 - Measure what the quotient + cache buy on the step 10-11 loop (a best
   response per checkpoint is now 0.01 s on `TOY`, 0.2 s on `TOY_FULL`),
   then decide on numba kernels / a faster walker / discounted CFR.
+  **Done in step 8.7, see notes_toy2.md**: the loop is milliseconds per
+  checkpoint; the walker was replaced by a position DP for sizing; discounted
+  and predictive CFR were built and cut the iterations 4-7x.
 - Size the 13-card candidates past the 6M cap and pick `TOY2` (a third rank
   or skips, the two that move seat parity and add the missing decisions).
+  **Done in step 8.7**: every 13-card candidate is over 34M histories forced
+  and over a billion free; `TOY2` = 3 colors x 3 ranks + wild, hand 3 (312k
+  forced, 28M free, both solved). Nash seat gap 23.9 -> 15.7 -> 11.3 points.
 - The RL agent (step 11) is made symmetric by construction (canonical
   observation in, action mapped back), so every exact cell stays on the
   quotient; a raw asymmetric checkpoint would need `symmetric=False`.

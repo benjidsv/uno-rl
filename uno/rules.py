@@ -240,3 +240,54 @@ TOY_FULL = Ruleset(
 )
 
 FULL_UNO = Ruleset()
+
+# Step 8.7 (notes_toy2.md): the position DP sized every 10-14 card candidate.
+# Three colors x three ranks keeps the quotient at 312k histories with forced
+# play and 28M without (the only candidate whose free-play version fits in
+# memory), and moves the random-vs-random seat-0 score from 0.649 to 0.588.
+# TOY2_SKIP (three colors, two ranks, one skip per color) is the action-card
+# alternative at 923k histories forced; its free version is 77M, out of reach.
+TOY2 = Ruleset(
+    colors=3,
+    rank_copies=(1, 1, 1),
+    skip_per_color=0,
+    reverse_per_color=0,
+    draw_two_per_color=0,
+    wild_count=1,
+    wild_draw_four_count=0,
+    hand_size=3,
+    draw_then_may_play=True,
+    forced_play=True,
+    reshuffle="none",
+    max_turns=None,
+)
+
+TOY2_FULL = Ruleset(
+    colors=3,
+    rank_copies=(1, 1, 1),
+    skip_per_color=0,
+    reverse_per_color=0,
+    draw_two_per_color=0,
+    wild_count=1,
+    wild_draw_four_count=0,
+    hand_size=3,
+    draw_then_may_play=True,
+    forced_play=False,
+    reshuffle="none",
+    max_turns=None,
+)
+
+TOY2_SKIP = Ruleset(
+    colors=3,
+    rank_copies=(1, 1),
+    skip_per_color=1,
+    reverse_per_color=0,
+    draw_two_per_color=0,
+    wild_count=1,
+    wild_draw_four_count=0,
+    hand_size=3,
+    draw_then_may_play=True,
+    forced_play=True,
+    reshuffle="none",
+    max_turns=None,
+)

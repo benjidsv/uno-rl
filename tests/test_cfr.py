@@ -72,3 +72,29 @@ def test_vanilla_cfr_also_converges_but_slower():
     assert plus.final.nashconv < vanilla.final.nashconv
     # both bracket the same Nash value
     assert plus.final.bracket[0] <= vanilla.final.bracket[1] and vanilla.final.bracket[0] <= plus.final.bracket[1]
+
+
+def test_variants_converge_to_the_same_value():
+    """DCFR, PCFR+ and their combination: NashConv falls, brackets agree with CFR+,
+    strategies stay symmetric on the quotient, and vanilla is the slowest."""
+    from uno import rules
+    from uno.cfr import VARIANTS
+
+    tree = compile_tree(rules.TOY, (Level.L1,), symmetric=True)
+    k = tree.keyings[Level.L1]
+    results = {v: cfr(tree, iterations=60, variant=v, log_at=(10, 60)) for v in VARIANTS}
+    for v, res in results.items():
+        assert res.log[-1].nashconv < res.log[0].nashconv, v
+        assert k.is_symmetric(res.avg), v
+        assert np.allclose(k.info_sum(res.avg), 1.0)
+        assert res.config["variant"] == v
+    lo = max(res.final.bracket[0] for res in results.values())
+    hi = min(res.final.bracket[1] for res in results.values())
+    assert lo <= hi + 1e-9  # every variant brackets the same Nash value (0.6196)
+    assert lo - 1e-3 <= 0.6196 <= hi + 1e-3
+    nc = {v: res.final.nashconv for v, res in results.items()}
+    assert nc["vanilla"] > nc["cfr+"] > nc["dcfr"]
+    assert nc["cfr+"] > nc["pcfr+"]
+    # the explicit flags reproduce the presets
+    same = cfr(tree, iterations=60, plus=True, alternating=True, predictive=True, gamma=2.0, log_at=(60,))
+    assert math.isclose(same.final.nashconv, nc["pcfr+"], abs_tol=1e-12)

@@ -52,16 +52,17 @@ def timed(f):
     return out, time.perf_counter() - t0
 
 
-def nash(tree: CompiledTree, name: str, iterations: int, verbose: bool) -> CFRResult:
-    path = CACHE / f"cfr_{cache_name(tree.rs, (Level.L1,), tree.symmetric)}.npz"
+def nash(tree: CompiledTree, name: str, iterations: int, verbose: bool, variant: str = "cfr+") -> CFRResult:
+    suffix = "" if variant == "cfr+" else f"_{variant.replace('+', 'p')}"
+    path = CACHE / f"cfr_{cache_name(tree.rs, (Level.L1,), tree.symmetric)}{suffix}.npz"
     if path.exists():
         res = CFRResult.load(path)
         if res.iterations >= iterations and len(res.avg) == tree.keyings[Level.L1].n_ia:
             print(f"   loaded {path.name}: {res.iterations} iterations, NashConv {100 * res.final.nashconv:.3f} pts, {res.seconds:.0f}s")
             return res
-    res = cfr(tree, iterations=iterations, verbose=verbose)
+    res = cfr(tree, iterations=iterations, verbose=verbose, variant=variant)
     res.save(path)
-    print(f"   CFR+ {res.iterations} iterations in {res.seconds:.1f}s ({1000 * res.seconds / res.iterations:.1f} ms each), NashConv {100 * res.final.nashconv:.3f} pts, saved to {path.name}")
+    print(f"   {variant} {res.iterations} iterations in {res.seconds:.1f}s ({1000 * res.seconds / res.iterations:.1f} ms each), NashConv {100 * res.final.nashconv:.3f} pts, saved to {path.name}")
     return res
 
 

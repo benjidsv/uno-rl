@@ -19,6 +19,25 @@ alternating: player 1 sees player 0's updated strategy):
 
 Vanilla CFR converges as O(1 / sqrt(T)); CFR+ (regret matching+, alternating
 updates, linear averaging) has the same bound and is far faster in practice.
+
+Two accelerations on the same passes (step 8.7, notes_toy2.md):
+
+- **Discounting** (DCFR, Brown & Sandholm 2019): after iteration t the
+  accumulated positive regrets are multiplied by t^a / (t^a + 1), the
+  negative ones by t^b / (t^b + 1), and a contribution to the average
+  strategy made at iteration t carries weight t^g. CFR+ is (a = inf, b =
+  -inf, g = 1): no discount, negatives clipped, linear averaging. DCFR's
+  published choice is (1.5, 0, 2).
+- **Prediction** (PCFR+, Farina, Kroer & Sandholm 2021): the current
+  strategy is regret matching on (accumulated regrets + the last
+  instantaneous regret) instead of the accumulated regrets alone, an
+  optimistic step; quadratic averaging (g = 2).
+
+`variant` names the presets; the flags compose (prediction with discounting
+is a valid combination). Every variant produces an average strategy whose
+exploitability is measured exactly, so a variant that stalls is seen, not
+trusted.
+
 Exploitability (`uno.compiled.exploitability`, two best responses) is measured
 at the logged iterations; NashConv in score points is
 score(BR seat 0) + score(BR seat 1) - 1, and the Nash seat-0 score lies in
@@ -37,6 +56,15 @@ from uno.compiled import CompiledAgent, CompiledTree, Exploitability, exploitabi
 from uno.observe import Level
 
 DEFAULT_LOG_AT = (1, 2, 3, 5, 7, 10, 15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 700, 1000, 1500, 2000, 3000, 5000)
+
+# name -> (plus, alternating, predictive, alpha, beta, gamma); None = no discount on that sign
+VARIANTS: dict[str, tuple[bool, bool, bool, float | None, float | None, float]] = {
+    "vanilla": (False, False, False, None, None, 0.0),
+    "cfr+": (True, True, False, None, None, 1.0),
+    "dcfr": (False, True, False, 1.5, 0.0, 2.0),
+    "pcfr+": (True, True, True, None, None, 2.0),
+    "dpcfr+": (True, True, True, 1.5, None, 2.0),  # prediction with DCFR's positive-regret discount
+}
 
 
 @dataclass(frozen=True)
@@ -108,11 +136,24 @@ def cfr(
     log_at=DEFAULT_LOG_AT,
     target: float | None = None,
     verbose: bool = False,
+    variant: str | None = None,
+    predictive: bool = False,
+    alpha: float | None = None,
+    beta: float | None = None,
+    gamma: float | None = None,
 ) -> CFRResult:
     """CFR+ by default (`plus`: regret matching+, `alternating`, `linear`
-    averaging); all three off is vanilla CFR. Logs exploitability at the
-    iterations in `log_at` (the last iteration always) and stops early once
-    NashConv is below `target` score points."""
+    averaging); all three off is vanilla CFR. `variant` picks a preset from
+    `VARIANTS` and overrides the flags; `predictive`, `alpha`, `beta`, `gamma`
+    (see the module docstring) refine them, `gamma` defaulting to 1 with
+    `linear` and 0 without. Logs exploitability at the iterations in `log_at`
+    (the last iteration always) and stops early once NashConv is below
+    `target` score points."""
+    if variant is not None:
+        plus, alternating, predictive, alpha, beta, g = VARIANTS[variant]
+        gamma = g if gamma is None else gamma
+    if gamma is None:
+        gamma = 1.0 if linear else 0.0
     t0 = time.perf_counter()
     k = tree.keyings[level]
     K = k.n_ia
@@ -125,6 +166,7 @@ def cfr(
     mass = np.zeros(K)
     log: list[LogEntry] = []
     paused = 0.0
+    t = 0
 
     def passes(sig):
         w0, w1 = tree.weights(level, sig, 0), tree.weights(level, sig, 1)
@@ -139,16 +181,27 @@ def cfr(
         # on a symmetric tree the regret and the mass are averaged within every action orbit
         # (RULES.md section 18): the strategies stay symmetric, and CFR runs on the game whose
         # actions are the orbits
-        regrets[ia_of[i]] += k.orbit_mean(np.bincount(ia, weights=cf * (av[arcs] - v[nodes]) * sign, minlength=K))[ia_of[i]]
+        mine = ia_of[i]
+        inst = k.orbit_mean(np.bincount(ia, weights=cf * (av[arcs] - v[nodes]) * sign, minlength=K))[mine]
+        R = regrets[mine] + inst
         if plus:
-            regrets[ia_of[i]] = np.maximum(regrets[ia_of[i]], 0.0)
-        mass[ia_of[i]] += weight * k.orbit_mean(np.bincount(ia, weights=r[nodes, i] * sigma[ia], minlength=K))[ia_of[i]]
-        sigma[ia_of[i]] = k.normalize(np.maximum(regrets, 0.0))[ia_of[i]]
+            R = np.maximum(R, 0.0)
+        if alpha is not None or beta is not None:
+            # DCFR: discount the accumulated regrets after the iteration's update
+            fp = 1.0 if alpha is None else t**alpha / (t**alpha + 1.0)
+            fn = 1.0 if beta is None else t**beta / (t**beta + 1.0)
+            R = np.where(R > 0, R * fp, R * fn)
+        regrets[mine] = R
+        mass[mine] += weight * k.orbit_mean(np.bincount(ia, weights=r[nodes, i] * sigma[ia], minlength=K))[mine]
+        # the next current strategy: regret matching on the (predicted) regrets
+        base = regrets.copy()
+        if predictive:
+            base[mine] += inst
+        sigma[mine] = k.normalize(np.maximum(base, 0.0))[mine]
 
     log_at = set(log_at) | {iterations}
-    t = 0
     for t in range(1, iterations + 1):
-        weight = float(t) if linear else 1.0
+        weight = float(t) ** gamma
         if alternating:
             for i in (0, 1):
                 update(i, *passes(sigma), weight)
@@ -175,7 +228,7 @@ def cfr(
         current=sigma,
         log=log,
         seconds=time.perf_counter() - t0 - paused,
-        config=dict(plus=plus, alternating=alternating, linear=linear, iterations=iterations, target=target),
+        config=dict(plus=plus, alternating=alternating, predictive=predictive, alpha=alpha, beta=beta, gamma=gamma, variant=variant, iterations=iterations, target=target),
     )
 
 

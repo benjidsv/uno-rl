@@ -566,7 +566,7 @@ def cache_name(rs: Ruleset, levels: tuple[Level, ...], symmetric: bool) -> str:
 
     from uno import rules
 
-    name = next((n for n in ("TOY", "TOY_FULL", "TOY_CANDIDATE", "FULL_UNO") if getattr(rules, n) == rs), None)
+    name = next((n for n in ("TOY", "TOY_FULL", "TOY2", "TOY2_FULL", "TOY2_SKIP", "TOY_CANDIDATE", "FULL_UNO") if getattr(rules, n) == rs), None)
     if name is None:
         name = hashlib.blake2b(repr(rs).encode(), digest_size=6).hexdigest()
     return f"{name}_{''.join(lv.name for lv in levels)}_{'sym' if symmetric else 'full'}"
