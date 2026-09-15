@@ -129,7 +129,8 @@ for ((i = 0; i < total; i++)); do
                 'BEGIN { s = (de > 0) ? dr / de : 1; cur = e * s - el; if (cur < 0) cur = 0; printf "%d", rest * s + cur }')
             src=$log
             [ -s "$prog" ] && [ "$prog" -nt "$log" ] && src=$prog
-            last=$(tail -c 400 "$src" | tr '\r' '\n' | awk 'NF' | tail -1)
+            # tail -c can cut a multibyte character (bar blocks, ±): split bytes under C, then drop the pieces
+            last=$(tail -c 400 "$src" | LC_ALL=C tr '\r' '\n' | LC_ALL=C awk 'NF' | tail -1 | iconv -c -f UTF-8 -t UTF-8 2>/dev/null)
             line="[$((i + 1))/$total] $name $(hms $el) (~$(hms $exp)) | run $(hms $((SECONDS - run_start))), ~$(hms $left) left | $last"
             cols=$(tput cols 2>/dev/null || echo 120)
             printf "\r\033[K%s" "${line:0:$((cols - 1))}"
