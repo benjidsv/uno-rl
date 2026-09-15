@@ -17,6 +17,9 @@ from uno import (
     legal_actions,
     step,
 )
+from uno.game.chance import roots_and_expand
+from uno.game.keys import KEYS
+from uno.game.observe import observe
 from uno.reference.census import census
 
 
@@ -118,3 +121,25 @@ def small(rs: Ruleset):
     c = census(rs, node_cap=CAP)
     assume(c.complete)
     return c
+
+
+def responder_infosets(rs, opp, seat, level) -> dict:
+    """Every information set of the responder reachable under the opponent's
+    support, with its legal actions. Independent of the solver's bookkeeping."""
+    key = KEYS[level]
+    roots, expand = roots_and_expand(rs, (level,))
+    sets: dict = {}
+    stack = [s for s, _ in roots]
+    while stack:
+        s = stack.pop()
+        if s.terminal:
+            continue
+        ch = expand(s)
+        if s.player == seat:
+            sets.setdefault(key(s, seat), tuple(ch))
+            for outs in ch.values():
+                stack.extend(c for c, _ in outs)
+        else:
+            for a in opp.policy(observe(s, seat ^ 1, Level.L1), tuple(ch)):
+                stack.extend(c for c, _ in ch[a])
+    return sets

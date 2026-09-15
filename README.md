@@ -24,7 +24,7 @@ Every experiment is a module of `uno/experiments/` run through the CLI;
 
 | what | command | was |
 |------|---------|-----|
-| all tests (92, ~4 min) | `uv run pytest` | |
+| all tests (97, ~4 min) | `uv run pytest` | |
 | step 3: tree-size census of the toy candidates | `uv run uno census [node_cap=2e6] [games=2000] [letters e.g. S,O]` | `scripts/census.py` |
 | steps 5-6: exact best responses L1/L2/L3 (pure-Python reference solvers) | `uv run uno ladder [ruleset=TOY] [games=4000]` | `scripts/ladder.py` |
 | step 7: mirrored evaluator vs exact values | `uv run uno mirror [ruleset=TOY] [games=4000]` | `scripts/mirror.py` |
@@ -53,10 +53,11 @@ Experiments report on the held-out `EVAL_SEEDS` (1,000,000+); build and test on
 | `uno/game/symmetry.py` | color / rank symmetry group, canonical keys, orbit representatives ([spec section 18](docs/spec.md)) |
 | `uno/agents/baseline.py` | `UniformLegal`, `PlayFirstRandom` (the "Random" row), `Heuristic`, `BySeat` |
 | `uno/agents/tabular.py` | `TabularAgent`, `PureStrategy`, `CompiledAgent`: agents that play a table |
+| `uno/agents/symmetrized.py` | `Symmetrized`: any agent made symmetric, so it can be evaluated on the quotient tree |
 | `uno/reference/` | pure-Python reference walkers (slow, trusted): `census`, `solve` (evaluate, best response), `mirrored` (exact moments), `sizing` (position DP) |
 | `uno/compiled/tree.py` | the tree as numpy arrays (quotient under the symmetry by default), keyings, `compile_tree` |
 | `uno/compiled/solvers.py` | fast `evaluate`, `best_response`, `best_response_perfect`, `exploitability`, `exact_mirrored` |
-| `uno/compiled/strategies.py` | `tabulate`, `tabulate_table` |
+| `uno/compiled/strategies.py` | `tabulate`, `tabulate_table`, `br_row` (a best-response row with a fill-in for unreached sets) |
 | `uno/compiled/cfr.py` | CFR+ / vanilla / DCFR / PCFR+ on the compiled tree |
 | `uno/eval/play.py` | `play_game`, `match` (common random numbers), seed ranges |
 | `uno/eval/estimate.py` | `play_pairs`, `estimate_mirrored`, `compare`, statistics |

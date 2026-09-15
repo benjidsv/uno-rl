@@ -84,18 +84,17 @@ Against the Nash agent on `TOY` ([step 8](08-cfr.md), full-tree CFR+ strategy): 
 | `TOY` | 17.1 / 17.4 | 5.6 / 11.8 | 1.6 / 0.4 (1.4 / 0.3) |
 | `TOY_FULL` | 17.5 / 21.5 | 6.0 / 15.8 | 4.6 / 1.3 (3.1 / 2.4) |
 | `TOY2` | 14.8 / 15.2 | 7.2 / 11.8 | 1.7 / 2.2 (1.4 / 1.7) |
-| `TOY2_SKIP` | 16.7 / 16.8 | 11.0 / 11.9 | 1.3 / 1.7 (step 8.8) |
+| `TOY2_SKIP` | 16.7 / 16.8 | 11.0 / 11.9 | 1.3 / 1.7 (1.1 / 1.1) |
 | `TOY2_FULL` | 17.3 / 19.1 | 9.4 / 15.5 | 6.3 / 4.9 (3.4 / 3.3) |
 
-The Nash-filled numbers are from the step 8.8 review's scratch measurement;
-Phase 3 of step 8.8 makes them reproducible with `uno symmetry` / `uno toy2`.
+`uv run uno symmetry`, `uno toy2` and `uno validate` print both rows ([step 8.8](08.8-review.md)).
 
 ## Nash row and column (exact, score of the first-named, seat 0 / seat 1)
 
-| ruleset | nash vs random | nash vs heuristic | random vs nash | heuristic vs nash | BR L1(random) vs nash |
+| ruleset | nash vs random | nash vs heuristic | random vs nash | heuristic vs nash | BR L1(random), as solved, vs nash |
 |---------|----------------|-------------------|----------------|-------------------|-----------------------|
 | `TOY` | 0.7871 / 0.5235 | 0.7328 / 0.4139 | 0.4765 / 0.2129 | 0.5861 / 0.2672 | 0.6149 / 0.3792 |
-| `TOY_FULL` | 0.7595 / 0.5123 | 0.7065 / 0.4372 | | | |
+| `TOY_FULL` | 0.7595 / 0.5123 | 0.7065 / 0.4372 | 0.4877 / 0.2405 | 0.5628 / 0.2935 | 0.5560 / 0.4060 |
 | `TOY2` | 0.7184 / 0.5330 | 0.6784 / 0.4578 | 0.4670 / 0.2816 | 0.5422 / 0.3216 | 0.5697 / 0.4099 |
 | `TOY2_SKIP` | 0.7268 / 0.5545 | 0.6712 / 0.5059 | 0.4455 / 0.2732 | 0.4941 / 0.3288 | 0.5670 / 0.4160 |
 | `TOY2_FULL` | 0.7048 / 0.5478 | 0.6671 / 0.4843 | 0.4522 / 0.2952 | 0.5157 / 0.3329 | 0.5407 / 0.4238 |

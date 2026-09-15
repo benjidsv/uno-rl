@@ -17,12 +17,12 @@ import sys
 
 from uno.agents.baseline import BySeat, Heuristic, PlayFirstRandom
 from uno.agents.tabular import TabularAgent
-from uno.eval.estimate import compare, estimate_mirrored, games_needed, play_pairs
+from uno.eval.estimate import bootstrap_moments, compare, estimate_mirrored, games_needed, play_pairs
 from uno.eval.play import EVAL_SEEDS
 from uno.game import rules
 from uno.game.observe import Level
 from uno.reference.mirrored import exact_mirrored
-from uno.reference.solve import best_response, evaluate_on_seeds
+from uno.reference.solve import best_response, scores_on_seeds
 
 EDGE = 0.03  # score points; the intro's "3-point edge near 60 %"
 
@@ -54,20 +54,24 @@ def main(argv: list[str] | None = None) -> None:
         played[name] = pairs
         m = estimate_mirrored(pairs)
         ex = exact_mirrored(rs, (a, b))
-        on0 = (evaluate_on_seeds(rs, (a, b), pairs.seeds)[0] + 1) / 2
-        on1 = (evaluate_on_seeds(rs, (b, a), pairs.seeds)[1] + 1) / 2
-        ok0 = abs(m.seat[0].mean - on0) <= m.seat[0].half
-        ok1 = abs(m.seat[1].mean - on1) <= m.seat[1].half
+        os0, os1 = scores_on_seeds(rs, (a, b), pairs.seeds), scores_on_seeds(rs, (b, a), pairs.seeds)
+        on0, on1 = os0.mean[0], os1.mean[1]
+        z0, z1 = os0.z(m.seat[0].mean, 0), os1.z(m.seat[1].mean, 1)
+        ok0, ok1 = os0.ok(m.seat[0].mean, 0), os1.ok(m.seat[1].mean, 1)
+        bs = bootstrap_moments(pairs)
+        covered = bs.covers(ex)
         print(f"\n   {name}")
         print(f"      {'':10s} {'seat 0':>16s} {'seat 1':>16s} {'mean':>16s}")
         print(f"      {'exact':10s} {ex.mean[0]:16.4f} {ex.mean[1]:16.4f} {ex.pair_mean:16.4f}")
         print(f"      {'on seeds':10s} {on0:16.4f} {on1:16.4f} {(on0 + on1) / 2:16.4f}")
-        print(f"      {'sim raw':10s} {str(m.seat[0]):>16s} {str(m.seat[1]):>16s} {str(m.raw):>16s}  {'ok' if ok0 and ok1 else 'XX'}")
+        print(f"      {'sim raw':10s} {str(m.seat[0]):>16s} {str(m.seat[1]):>16s} {str(m.raw):>16s}  z={z0:+.2f} / {z1:+.2f} {'ok' if ok0 and ok1 else 'XX'}")
         misses = sum(t.misses for x in (a, b) if isinstance(x, BySeat) for t in x.seats)
         print(f"      {'mirrored':10s} {'':16s} {'':16s} {str(m.mirrored):>16s}" + (f"  misses={misses}" if misses else ""))
         print(f"      {'':10s} {'corr':>8s} {'splits':>8s} {'var ratio':>10s} {'sd0':>8s} {'sd1':>8s}")
         print(f"      {'exact':10s} {ex.corr:8.3f} {ex.splits:8.3f} {ex.var_ratio:10.3f} {ex.var[0] ** 0.5:8.4f} {ex.var[1] ** 0.5:8.4f}")
         print(f"      {'sim':10s} {m.corr:8.3f} {m.splits:8.3f} {m.var_ratio:10.3f} {m.seat[0].var ** 0.5:8.4f} {m.seat[1].var ** 0.5:8.4f}")
+        missed = [k for k, v in covered.items() if not v]
+        print(f"      {'99.8% CI':10s} [{bs.corr[0]:+.3f}, {bs.corr[1]:+.3f}] [{bs.splits[0]:.3f}, {bs.splits[1]:.3f}] [{bs.var_ratio[0]:.3f}, {bs.var_ratio[1]:.3f}]  exact inside: {'ok' if not missed else 'XX ' + ', '.join(missed)}")
         g_raw, g_mir = (games_needed(EDGE, v) for v in (2 * ex.var_raw, 2 * ex.var_mirrored))
         g_seat = tuple(games_needed(EDGE, v) for v in ex.var)
         print(

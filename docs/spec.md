@@ -306,8 +306,7 @@ Only for `reshuffle == "none"` rulesets (they walk the lazy-chance tree of
   same on the real deal and real pile order of every seed, i.e. exactly what a
   simulation on those seeds estimates up to action sampling. **A fixed seed
   range carries its own deal luck**: seeds 0-4000 on `TOY` favour seat 0 by
-  about 1.5 points, so a simulation is checked against the exact value on the
-  same games, not against the global value.
+  about 1.5 points, so a simulation is checked against the exact value on the same games, not against the global value. `scores_on_seeds(rs, agents, seeds, levels)` returns the per-seat score means on those games and the mean over the seeds of Var(score | seed), the action noise of such a simulation; the check is z = (sim - mean) / sqrt(cond_var / n) with |z| <= 3 (0.27 % false alarms per check), and exact equality for two deterministic agents (zero conditional variance). A CI of the simulated score is the wrong scale for this: it also counts the deal and pile variance that the seeds fix, so a check against it is conservative and a miss under it more significant than it looks (step 8.8).
 - `best_response(rs, opponent, seat, level)`: the responder's best pure
   strategy against a fixed opponent (seen at L1), at information level:
   - **L1**: information set = `info_state`.
@@ -335,8 +334,7 @@ over every pure strategy of the responder, and the L3 worlds equal the set of
 distinct deck permutations with their frequencies; on small rulesets the table
 replayed through `evaluate` gives the solver's value, values are monotone in
 information (L1 <= L2 <= L3), dominate Random / Heuristic / UniformLegal as
-responder, coincide across levels on a ruleset with no draw pile, and the
-simulated score matches the exact value on the same deals.
+responder, coincide across levels on a ruleset with no draw pile, and the simulated score matches the exact value on the same deals (|z| <= 3 against the action noise); `scores_on_seeds` has zero conditional variance for two deterministic agents, their simulation matches it to the digit, and its conditional variance is below the total variance of a stochastic matchup.
 
 ## 15. Estimators (`uno/eval/estimate.py`)
 
@@ -361,6 +359,7 @@ of a game is the first-named agent's `(return + 1) / 2`.
   alongside. **Common random numbers**: the runner keys the action rng on
   (seed, information state), so the column agent makes the same choices in
   both matchups until the public histories diverge.
+- `bootstrap_moments(pairs, reps, level)`: seeded percentile bootstrap CIs over the pairs (resampling seeds; 99.8 % per moment by default, a family-wise 99 % for the five moments of a matchup) for the per-seat variances, the correlation, the split share and the variance ratio, with the definitions of `estimate_mirrored`; `covers(exact)` says which exact moments lie inside.
 - Self-play pairs are degenerate: under common random numbers the two games
   of an A-vs-A pair are the same game, so every pair scores exactly 1/2.
 - `exact_mirrored(rs, agents, levels)`: exact means, variances, covariance
@@ -384,9 +383,7 @@ pairs are identical games; `outcome_distribution` sums to 1 with the
 `evaluate` mean; `exact_mirrored` means equal `evaluate` (worlds + bare engine
 against the lazy tree); on `TOY` (Heuristic vs Random, 4000 seeds) and on the
 7-card test ruleset (BR L1 vs Heuristic, deterministic) the sampled per-seat
-means match the exact on-seeds values (to the last digit for deterministic
-pairs, within the CI otherwise) and the sampled variances, correlation and
-split share match the exact ones (10 %, 0.06, 0.03); exact and sampled
+means match the exact on-seeds values (to the last digit for deterministic pairs, |z| <= 3 against the action noise otherwise) and the exact variances, correlation, split share and variance ratio lie inside the bootstrap CIs of the sampled ones (99.8 % per moment, a family-wise 99 % for the five); the bootstrap CIs contain the sample moments, are reproducible and narrow with more pairs; exact and sampled
 variance ratios are below 1; paired differences of deterministic agents equal
 the difference of the on-seeds exact values and never exceed the unpaired
 variance.
@@ -472,7 +469,7 @@ level, opponent, seat)` (counterfactual reach = chance x opponent from
 `reach`, then backward from the deepest level choosing per set the action
 maximising the reach-weighted sum of its histories' arc values; ties to the
 lowest action id, as section 14; on a symmetric tree the choice is an action
-*orbit*, played uniformly, section 18); `exploitability(tree, level, sigma)` = both
+*orbit*, played uniformly, section 18; responder sets with zero counterfactual reach, which the opponent never lets the game reach, do not affect the value and take their first orbit, or `completion`, a strategy over the same keying, when given, and `BestResponse.unreached` counts them. As a row agent a best response also meets other opponents, who can steer the game into those sets, so its exploitability depends on the fill-in: the ladder reports the best response to Random both as solved and with its unreached sets filled with the Nash strategy, `br_row(tree, opponent, completion)`, step 8.8); `exploitability(tree, level, sigma)` = both
 best responses to a profile, NashConv in return units and in score points
 (`score(BR seat 0) + score(BR seat 1) - 1`), the per-seat gains and the
 bracket `[1 - score(BR seat 1), score(BR seat 0)]` that contains the Nash
@@ -505,8 +502,7 @@ tree equals L1 on the lazy tree; evaluate, outcome distributions and exact
 mirrored moments match the reference on a 7-card ruleset; the node order of
 a compile does not depend on its keyings (lazy and world trees), a keying
 attached from another compile gives the same L2 best response, and
-`best_response_perfect` equals the keyed L3 best response and replays to its
-value. On `TOY` the twelve step 5-6 values are reproduced (`uno cfr`).
+`best_response_perfect` equals the keyed L3 best response and replays to its value; the unreached sets of a best response are exactly the responder sets the reference walker does not reach under the opponent's support, a completion leaves the value unchanged, and `br_row` assembles both seats into a row that replays to each seat's value. On `TOY` the twelve step 5-6 values are reproduced (`uno cfr`).
 The symmetric tree's checks are in section 18.
 
 ## 17. CFR (`uno/compiled/cfr.py`)
@@ -603,7 +599,7 @@ the subtree below a deal and below its image are isomorphic, so one
 representative weighted by the orbit's mass gives the same expectation, and
 a quotient node weighted by its root's orbit mass stands for exactly the
 full-game histories in its orbit. `UniformLegal`, `PlayFirstRandom` and the
-`Heuristic` (section 13) are symmetric. A learned agent is made symmetric in two steps: canonicalise its observation and map its action back with the inverse element (`canonical`, `map_policy`), which is also a |G|-fold gain in data efficiency; and at a canonical key with a non-trivial stabilizer, average its output within every action orbit of that stabilizer (see **Orbits** below). The first step alone does not give a symmetric policy: `canonical` returns one of several elements that reach the canonical key, and the action played would depend on which. A raw, asymmetric agent needs the full tree (`symmetric=False`). Symmetrising a policy by *mixing* its images under G (one image drawn uniformly for the whole game, equivalently the reach-weighted average of their behaviour strategies) never raises its exploitability, because the best-response value is convex in the opponent's mixed strategy and every image has the same exploitability; averaging the behaviour probabilities set by set is a different policy and has no such guarantee.
+`Heuristic` (section 13) are symmetric. A learned agent is made symmetric in two steps: canonicalise its observation and map its action back with the inverse element (`canonical`, `map_policy`), which is also a |G|-fold gain in data efficiency; and at a canonical key with a non-trivial stabilizer, average its output within every action orbit of that stabilizer (see **Orbits** below). `uno.agents.symmetrized.Symmetrized` does both. The first step alone does not give a symmetric policy: `canonical` returns one of several elements that reach the canonical key, and the action played would depend on which. A raw, asymmetric agent needs the full tree (`symmetric=False`). Symmetrising a policy by *mixing* its images under G (one image drawn uniformly for the whole game, equivalently the reach-weighted average of their behaviour strategies) never raises its exploitability, because the best-response value is convex in the opponent's mixed strategy and every image has the same exploitability; averaging the behaviour probabilities set by set is a different policy and has no such guarantee.
 
 **Orbits.** A symmetric strategy is, at a canonical set whose key has a
 non-trivial stabilizer, uniform within every orbit of the set's actions
@@ -631,8 +627,7 @@ and UniformLegal score; the quotient tree gives the full tree's `evaluate`
 for every pair of baseline agents, the full tree's best-response values at
 L1 / L2 / L3 against each of them (with symmetric strategies that replay to
 their value on the quotient and through the engine in the real game, no
-misses) and the same exploitability of the uniform profile; `tabulate`
-rejects an asymmetric agent on `TOY`; a tree survives save / load and the
+misses) and the same exploitability of the uniform profile; `tabulate` rejects an asymmetric agent on `TOY`; `Symmetrized` commutes with the group on random games and leaves the Heuristic unchanged, and a wrapped asymmetric agent tabulates on the quotient with the value it has on the full tree and through the engine; a tree survives save / load and the
 cache; on the quotient of `TOY` the twelve step 5-6 / 8.6 best-response
 values and the Nash value 0.6196 are reproduced.
 

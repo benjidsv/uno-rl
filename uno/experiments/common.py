@@ -10,7 +10,7 @@ import numpy as np
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.compiled.cfr import CFRResult
 from uno.compiled.solvers import best_response, evaluate
-from uno.compiled.strategies import tabulate
+from uno.compiled.strategies import br_row, tabulate
 from uno.compiled.tree import CompiledTree
 from uno.game.observe import Level
 
@@ -26,6 +26,8 @@ def timed(f):
 
 
 def by_seat(tree: CompiledTree, brs) -> tuple[Level, np.ndarray]:
+    """Both seats' best responses as one L1 strategy, as solved (first orbit at the
+    sets the opponent never reaches; `br_row` takes a fill-in)."""
     k = tree.keyings[Level.L1]
     return (Level.L1, np.where(k.info_player[k.ia_info] == 0, brs[0].sigma, brs[1].sigma))
 
@@ -61,23 +63,35 @@ def matchups(tree: CompiledTree, label: str) -> dict:
     return out
 
 
-def exploitability_rows(tree: CompiledTree, res: CFRResult, cols: dict) -> None:
+def exploitability_rows(tree: CompiledTree, res: CFRResult, cols: dict) -> dict:
+    """Exploitability of Random, the Heuristic, the best response to Random (as solved,
+    and with the sets Random never reaches filled with the Nash strategy) and the
+    Nash agent, per seat; then the Nash row and column. Returns {(row, seat): points}."""
     rs = tree.rs
     k = tree.keyings[Level.L1]
     rows = {a.name: (Level.L1, tabulate(tree, Level.L1, a)) for a in (PlayFirstRandom(rs), Heuristic(rs))}
     rows["br_l1(random)"] = by_seat(tree, [cols[("random", seat)][0] for seat in (0, 1)])
+    rows["br_l1(random)+nash"], filled = br_row(tree, rows["random"], completion=res.avg)
     rows["nash_l1"] = (Level.L1, res.avg)
     nash_value = score(evaluate(tree, rows["nash_l1"], rows["nash_l1"])[0])
+    n_sets = [int((k.info_player == seat).sum()) for seat in (0, 1)]
     print(f"\n   Nash seat-0 score {nash_value:.4f} (NashConv {100 * res.final.nashconv:.3f} pts); exploitability of the rows (score points)")
-    print(f"   {'row':16s} {'seat':4s} {'keeps vs BR L1':>14s} {'BR to it':>9s} {'Nash (resp.)':>12s} {'exploitability':>14s}")
+    print(
+        f"   BR L1(random) leaves {filled[0].unreached:,} of {n_sets[0]:,} seat-0 L1 sets and {filled[1].unreached:,} of {n_sets[1]:,} seat-1 sets "
+        f"unreached ({100 * filled[0].unreached / n_sets[0]:.0f} % / {100 * filled[1].unreached / n_sets[1]:.0f} %); '+nash' plays the Nash strategy there"
+    )
+    print(f"   {'row':20s} {'seat':4s} {'keeps vs BR L1':>14s} {'BR to it':>9s} {'Nash (resp.)':>12s} {'exploitability':>14s}")
+    out = {}
     for label, s in rows.items():
         for seat in (0, 1):
             br = best_response(tree, Level.L1, s, seat ^ 1)
             nash_resp = 1 - nash_value if seat == 0 else nash_value
-            print(f"   {label:16s} {seat:<4d} {1 - br.score:14.4f} {br.score:9.4f} {nash_resp:12.4f} {100 * (br.score - nash_resp):14.2f}")
+            out[(label, seat)] = 100 * (br.score - nash_resp)
+            print(f"   {label:20s} {seat:<4d} {1 - br.score:14.4f} {br.score:9.4f} {nash_resp:12.4f} {out[(label, seat)]:14.2f}")
     print("\n   Nash row and column (exact, score of the first-named, seat 0 / seat 1)")
-    for a, b in (("nash_l1", "random"), ("nash_l1", "heuristic"), ("nash_l1", "nash_l1"), ("random", "nash_l1"), ("heuristic", "nash_l1"), ("br_l1(random)", "nash_l1")):
-        print(f"   {a + ' vs ' + b:26s} {score(evaluate(tree, rows[a], rows[b])[0]):.4f}  {score(evaluate(tree, rows[b], rows[a])[1]):.4f}")
+    for a, b in (("nash_l1", "random"), ("nash_l1", "heuristic"), ("nash_l1", "nash_l1"), ("random", "nash_l1"), ("heuristic", "nash_l1"), ("br_l1(random)", "nash_l1"), ("br_l1(random)+nash", "nash_l1")):
+        print(f"   {a + ' vs ' + b:30s} {score(evaluate(tree, rows[a], rows[b])[0]):.4f}  {score(evaluate(tree, rows[b], rows[a])[1]):.4f}")
+    return out
 
 
 def voluntary_draws(tree: CompiledTree, seat0, seat1) -> tuple[float, float]:

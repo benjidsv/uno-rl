@@ -10,10 +10,10 @@ from tests.strategies import SMALL, rulesets, seeds
 from uno import TOY, Level, legal_actions, new_game, step
 from uno.agents.baseline import BySeat, Heuristic, PlayFirstRandom, UniformLegal
 from uno.agents.tabular import TabularAgent
-from uno.eval.estimate import Pairs, compare, estimate_mirrored, games_needed, play_pairs
+from uno.eval.estimate import Pairs, bootstrap_moments, compare, estimate_mirrored, games_needed, play_pairs
 from uno.eval.play import DEV_SEEDS
 from uno.reference.mirrored import exact_mirrored
-from uno.reference.solve import best_response, evaluate, evaluate_on_seeds, outcome_distribution
+from uno.reference.solve import best_response, evaluate, evaluate_on_seeds, outcome_distribution, scores_on_seeds
 
 
 class Deterministic:
@@ -105,28 +105,20 @@ def test_exact_mirrored_means_equal_evaluate():
 # -- simulation against exact ----------------------------------------------------------
 
 
-def check_against_exact(rs, agents, levels, pairs: Pairs, tol_var: float, exact_means: bool) -> None:
+def check_against_exact(rs, agents, levels, pairs: Pairs, exact_means: bool) -> None:
     m = estimate_mirrored(pairs)
     ex = exact_mirrored(rs, agents, levels)
-    # means: on the played seeds, exactly (deterministic) or within the CI (stochastic)
-    on0 = (evaluate_on_seeds(rs, agents, pairs.seeds, levels)[0] + 1) / 2
-    on1 = (evaluate_on_seeds(rs, (agents[1], agents[0]), pairs.seeds, (levels[1], levels[0]))[1] + 1) / 2
-    for got, want, est in ((m.seat[0].mean, on0, m.seat[0]), (m.seat[1].mean, on1, m.seat[1])):
+    # means: on the played seeds, against the exact action noise of those seeds (none for deterministic agents)
+    ons = (scores_on_seeds(rs, agents, pairs.seeds, levels), scores_on_seeds(rs, (agents[1], agents[0]), pairs.seeds, (levels[1], levels[0])))
+    for seat in (0, 1):
+        got = m.seat[seat].mean
+        assert ons[seat].ok(got, seat), (seat, got, ons[seat].mean[seat], ons[seat].z(got, seat))
         if exact_means:
-            assert math.isclose(got, want, abs_tol=1e-12), (got, want)
-        else:
-            assert abs(got - want) <= est.half, (got, want, est.half)
+            assert ons[seat].cond_var[seat] == 0.0 and math.isclose(got, ons[seat].mean[seat], abs_tol=1e-12)
     assert math.isclose(m.mirrored.mean, (m.seat[0].mean + m.seat[1].mean) / 2, abs_tol=1e-12)
-    # second moments: sample variances against the exact ones
-    for got, want in (
-        (m.seat[0].var, ex.var[0]),
-        (m.seat[1].var, ex.var[1]),
-        (m.mirrored.var, ex.var_mirrored),
-        (m.raw.var, ex.var_raw),
-    ):
-        assert abs(got - want) <= tol_var * want, (got, want)
-    assert abs(m.corr - ex.corr) < 0.06, (m.corr, ex.corr)
-    assert abs(m.splits - ex.splits) < 0.03, (m.splits, ex.splits)
+    # second moments: every exact one inside the bootstrap CI of the sampled one (99.8 % each, family-wise 99 %)
+    covered = bootstrap_moments(pairs, reps=2000).covers(ex)
+    assert all(covered.values()), covered
     # the point of the exercise, exact and observed
     assert ex.cov < 0 and ex.var_ratio < 1
     assert m.var_ratio < 1
@@ -135,14 +127,14 @@ def check_against_exact(rs, agents, levels, pairs: Pairs, tol_var: float, exact_
 def test_mirrored_matches_exact_stochastic_row():
     rs = TOY
     heu, rnd = Heuristic(rs), PlayFirstRandom(rs)
-    check_against_exact(rs, (heu, rnd), (Level.L1, Level.L1), play_pairs(rs, (heu, rnd), DEV_SEEDS), 0.1, exact_means=False)
+    check_against_exact(rs, (heu, rnd), (Level.L1, Level.L1), play_pairs(rs, (heu, rnd), DEV_SEEDS), exact_means=False)
 
 
 def test_mirrored_matches_exact_deterministic_row():
     rs = SMALL
     heu = Deterministic(Heuristic(rs))
     br = BySeat(*(TabularAgent(rs, best_response(rs, heu, seat, Level.L1)) for seat in (0, 1)))
-    check_against_exact(rs, (br, heu), (Level.L1, Level.L1), play_pairs(rs, (br, heu), range(3000)), 0.1, exact_means=True)
+    check_against_exact(rs, (br, heu), (Level.L1, Level.L1), play_pairs(rs, (br, heu), range(3000)), exact_means=True)
 
 
 def test_compare_is_exact_for_deterministic_agents_and_pairs_help():
@@ -164,3 +156,17 @@ def test_compare_is_exact_for_deterministic_agents_and_pairs_help():
     for seat in (0, 1):
         assert c.corr[seat] > 0.3 and c.var_ratio(seat) < 0.7
         assert c.seat[seat].mean > 0
+
+
+def test_bootstrap_moments():
+    """The bootstrap CIs contain the sample moments, are seeded, and narrow with more pairs."""
+    rs = TOY
+    heu, rnd = Heuristic(rs), PlayFirstRandom(rs)
+    pairs = play_pairs(rs, (heu, rnd), range(400))
+    m = estimate_mirrored(pairs)
+    b = bootstrap_moments(pairs, reps=200)
+    for ci, x in ((b.corr, m.corr), (b.splits, m.splits), (b.var_ratio, m.var_ratio), (b.var[0], m.seat[0].var), (b.var[1], m.seat[1].var)):
+        assert ci[0] <= x <= ci[1], (ci, x)
+    assert b == bootstrap_moments(pairs, reps=200)
+    wide = bootstrap_moments(play_pairs(rs, (heu, rnd), range(100)), reps=200)
+    assert wide.corr[1] - wide.corr[0] > b.corr[1] - b.corr[0]

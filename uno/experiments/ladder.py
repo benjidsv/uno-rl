@@ -7,8 +7,9 @@ the exact best-response score, and the score of the best-response agent
 replayed through `match` on `games` seeds. A fixed seed range carries its own
 deal and pile luck, so the simulation is compared with the exact value *on
 those games* ("on seeds", real deal and real pile order): the difference is
-action-sampling noise only and must sit inside the CI half-width; when both
-agents are deterministic it is exactly zero. Also prints the exact values of
+action-sampling noise only, scored as z = difference / sqrt(action-noise
+variance / n) with |z| <= 3 (docs/spec.md section 14); when both agents are
+deterministic it is exactly zero. Also prints the exact values of
 the row agents against each other, to compare with the sampled step 4 numbers.
 """
 
@@ -21,7 +22,7 @@ from uno.agents.tabular import TabularAgent
 from uno.eval.play import EVAL_SEEDS, match
 from uno.game import rules
 from uno.game.observe import Level
-from uno.reference.solve import best_response, evaluate, evaluate_on_seeds
+from uno.reference.solve import best_response, evaluate, scores_on_seeds
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -48,12 +49,13 @@ def main(argv: list[str] | None = None) -> None:
                 r = match(rs, (agent, opp), seeds, swap=(seat == 1), levels=(level, Level.L1))
                 agents = (agent, opp) if seat == 0 else (opp, agent)
                 lv = (level, Level.L1) if seat == 0 else (Level.L1, level)
-                on_seeds = (evaluate_on_seeds(rs, agents, seeds, lv)[seat] + 1) / 2
-                ok = abs(r.score - on_seeds) <= (r.score_ci[1] - r.score_ci[0]) / 2
+                on = scores_on_seeds(rs, agents, seeds, lv)
+                on_seeds, z = on.mean[seat], on.z(r.score, seat)
+                ok = on.ok(r.score, seat)
                 rows[(opp.name, seat, level)] = br.score
                 print(
                     f"   {opp.name:10s} {seat:<4d} {level.name:5s} {br.score:7.4f} {on_seeds:8.4f}  {r.score:7.4f} "
-                    f"[{r.score_ci[0]:.4f}, {r.score_ci[1]:.4f}]  {'ok' if ok else 'XX'} "
+                    f"[{r.score_ci[0]:.4f}, {r.score_ci[1]:.4f}] z={z:+5.2f} {'ok' if ok else 'XX'} "
                     f"{br.histories:9d} {br.infosets:7d} {br.seconds:5.1f}"
                     + (f" misses={agent.misses}" if agent.misses else "")
                 )

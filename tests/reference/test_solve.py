@@ -8,39 +8,17 @@ from dataclasses import replace
 
 from hypothesis import HealthCheck, assume, given, settings
 
-from tests.strategies import SMALL, pair, small_lazy_rulesets
-from uno import TOY, Level, initial_state, observe
+from tests.strategies import SMALL, pair, responder_infosets, small_lazy_rulesets
+from uno import TOY, Level, initial_state
 from uno.agents.baseline import Heuristic, PlayFirstRandom, UniformLegal
 from uno.agents.tabular import PureStrategy, TabularAgent
 from uno.eval.play import match
-from uno.game.chance import roots_and_expand, worlds
+from uno.game.chance import worlds
 from uno.game.keys import KEYS
 from uno.reference.census import census
-from uno.reference.solve import best_response, evaluate, evaluate_on_seeds
+from uno.reference.solve import best_response, evaluate, evaluate_on_seeds, scores_on_seeds
 
 LEVELS = (Level.L1, Level.L2, Level.L3)
-
-
-def responder_infosets(rs, opp, seat, level) -> dict:
-    """Every information set of the responder reachable under the opponent's
-    support, with its legal actions. Independent of the solver's bookkeeping."""
-    key = KEYS[level]
-    roots, expand = roots_and_expand(rs, (level,))
-    sets: dict = {}
-    stack = [s for s, _ in roots]
-    while stack:
-        s = stack.pop()
-        if s.terminal:
-            continue
-        ch = expand(s)
-        if s.player == seat:
-            sets.setdefault(key(s, seat), tuple(ch))
-            for outs in ch.values():
-                stack.extend(c for c, _ in outs)
-        else:
-            for a in opp.policy(observe(s, seat ^ 1, Level.L1), tuple(ch)):
-                stack.extend(c for c, _ in ch[a])
-    return sets
 
 
 # -- brute force: enumerate every pure strategy ---------------------------------
@@ -132,7 +110,8 @@ def test_best_response_to_uniform_beats_census_value():
 def test_simulated_score_matches_exact_on_the_same_deals():
     """A fixed seed range carries its own deal luck (seeds 0-1500 on SMALL favour
     seat 0 by 1.6 points), so compare the simulation with the exact value on
-    those very deals; the residual is action-sampling noise only."""
+    those very deals; the residual is action-sampling noise only, scored against
+    its own exact variance."""
     rs = SMALL
     opp = PlayFirstRandom(rs)
     seeds = range(1500)
@@ -140,6 +119,27 @@ def test_simulated_score_matches_exact_on_the_same_deals():
         br = best_response(rs, opp, seat, Level.L1)
         agents, levels = pair(rs, TabularAgent(rs, br), opp, seat, Level.L1)
         r = match(rs, (agents[seat], opp), seeds, swap=(seat == 1), levels=(Level.L1, Level.L1))
-        exact = (evaluate_on_seeds(rs, agents, seeds, levels)[seat] + 1) / 2
-        half = (r.score_ci[1] - r.score_ci[0]) / 2
-        assert abs(r.score - exact) <= half, (seat, r.score, exact, br.score)
+        on = scores_on_seeds(rs, agents, seeds, levels)
+        assert on.ok(r.score, seat), (seat, r.score, on.mean[seat], on.z(r.score, seat))
+
+
+def test_on_seeds_moments():
+    """`scores_on_seeds`: the means are the on-seeds returns, the conditional variance
+    is zero for two deterministic agents (their simulation then matches to the
+    digit) and positive but below the total variance of the simulated scores otherwise."""
+    rs = SMALL
+    seeds = range(400)
+    first = PureStrategy(rs, Level.L1, {})  # the first legal action everywhere
+    on = scores_on_seeds(rs, (first, first), seeds)
+    assert on.cond_var == (0.0, 0.0)
+    r = match(rs, (first, first), seeds)
+    assert math.isclose(r.score, on.mean[0], abs_tol=1e-12) and on.z(r.score, 0) == 0.0
+    assert on.z(r.score + 0.01, 0) == math.inf
+    rnd = PlayFirstRandom(rs)
+    on = scores_on_seeds(rs, (rnd, rnd), seeds)
+    v = evaluate_on_seeds(rs, (rnd, rnd), seeds)
+    assert math.isclose(2 * on.mean[0] - 1, v[0], abs_tol=1e-12) and math.isclose(on.mean[0] + on.mean[1], 1.0, abs_tol=1e-12)
+    r = match(rs, (rnd, rnd), seeds)
+    total_var = r.n * ((r.score_ci[1] - r.score_ci[0]) / (2 * 1.96)) ** 2
+    assert 0 < on.cond_var[0] < total_var
+    assert on.ok(r.score, 0)

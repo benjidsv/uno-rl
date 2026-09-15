@@ -40,13 +40,14 @@ class BestResponse:
     value: float  # responder's expected return in [-1, 1]
     sigma: np.ndarray
     seconds: float
+    unreached: int = 0  # responder sets with zero counterfactual reach: their action is a fill-in, not a choice
 
     @property
     def score(self) -> float:
         return (self.value + 1.0) / 2.0
 
 
-def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: int) -> BestResponse:
+def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: int, completion: np.ndarray | None = None) -> BestResponse:
     """Best response of `seat` at information level `level` (a keying of the tree)
     to a fixed opponent strategy. One forward pass for the counterfactual reach
     (chance x opponent), one backward pass choosing per information set, from
@@ -55,7 +56,14 @@ def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: in
     On a symmetric tree the choice is an *orbit* of actions under the set's
     stabilizer, played uniformly (docs/spec.md section 18): the value equals the
     full game's best-response value against a symmetric opponent, and the
-    strategy is symmetric."""
+    strategy is symmetric.
+
+    Responder sets with zero counterfactual reach (the opponent never lets the
+    game get there) do not affect the value and get no real choice: they take
+    their first orbit, or `completion` (a strategy over the same keying, e.g. the
+    Nash strategy) when given. What is played there still matters when another
+    opponent steers the game there, i.e. for the exploitability of the best
+    response as a row agent (docs/spec.md section 16)."""
     t0 = time.perf_counter()
     k = tree.keyings[level]
     opp = seat ^ 1
@@ -63,6 +71,8 @@ def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: in
     ones = np.ones(tree.m)
     r = tree.reach(w_opp if opp == 0 else ones, w_opp if opp == 1 else ones)
     cf = r[:, 2] * r[:, opp]
+    dec = np.nonzero(tree.player == seat)[0]
+    unreached = (np.bincount(k.node_info[dec], weights=cf[dec], minlength=k.n_info) <= 0) & (k.info_player == seat)
     v = np.zeros(tree.n)
     av = np.zeros(tree.m)
     v[tree.terminals] = tree.seat_util(seat)
@@ -98,7 +108,12 @@ def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: in
     # sets never touched above (no responder arc at their level, i.e. the opponent's) take their first orbit
     untouched = (k.info_sum(choice) == 0)[k.ia_info]
     choice[untouched] = k.first_orbit_uniform()[untouched]
-    return BestResponse(seat=seat, level=level, value=float(v[0]), sigma=choice, seconds=time.perf_counter() - t0)
+    if completion is not None:
+        if len(completion) != k.n_ia:
+            raise ValueError("completion must be a strategy over the responder's keying")
+        fill = unreached[k.ia_info]
+        choice[fill] = completion[fill]
+    return BestResponse(seat=seat, level=level, value=float(v[0]), sigma=choice, seconds=time.perf_counter() - t0, unreached=int(unreached.sum()))
 
 
 def best_response_perfect(tree: CompiledTree, opponent: Strategy, seat: int) -> BestResponse:

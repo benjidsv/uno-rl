@@ -39,6 +39,7 @@ i.e. P(win) with draws worth 1/2, comparable to `uno.eval.play.match`.
 
 from __future__ import annotations
 
+import math
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -103,25 +104,65 @@ def evaluate(
     return (v0, -v0)
 
 
-def evaluate_on_seeds(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels=(Level.L1, Level.L1)) -> tuple[float, float]:
-    """Mean exact returns over the games of `seeds` (invalid deals skipped), each
+Z_MAX = 3.0  # |z| above this fails an on-seeds check: 0.27 % false alarms per check
+
+
+@dataclass(frozen=True)
+class OnSeeds:
+    """Exact per-seat scores (draws worth 1/2) of two agents over the games of a seed
+    set, each played on its real deal and pile order (`scores_on_seeds`).
+
+    `mean[seat]` is exactly what a simulation on those seeds estimates: the deal
+    and pile luck of the seed set is in it. `cond_var[seat]` is the mean over the
+    seeds of Var(score | seed), the action noise that simulation adds, so
+    `(sim - mean) / sqrt(cond_var / n)` is a z-score with the right scale. The CI
+    of the simulated score is the wrong scale for this comparison: it also counts
+    the deal and pile variance, which the seeds fix. Two deterministic agents have
+    no action noise, and the simulation must then match to the digit."""
+
+    n: int
+    mean: tuple[float, float]
+    cond_var: tuple[float, float]
+
+    def z(self, sim: float, seat: int) -> float:
+        diff = sim - self.mean[seat]
+        se = math.sqrt(self.cond_var[seat] / self.n)
+        if se < 1e-12:
+            return 0.0 if abs(diff) <= 1e-9 else math.copysign(math.inf, diff)
+        return diff / se
+
+    def ok(self, sim: float, seat: int, z_max: float = Z_MAX) -> bool:
+        return abs(self.z(sim, seat)) <= z_max
+
+
+def scores_on_seeds(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels=(Level.L1, Level.L1)) -> OnSeeds:
+    """Exact score moments over the games of `seeds` (invalid deals skipped), each
     played on its real deal *and* pile order: the expectation over the agents'
-    randomness only, with the deal and pile luck of that seed set left in. This
-    is exactly what a simulation on those seeds estimates, so the difference
-    between the two is action-sampling noise and nothing else (zero for two
-    deterministic agents). Works at every level."""
-    total = [0.0, 0.0]
+    randomness only, with the deal and pile luck of that seed set left in, and
+    the variance of that randomness. Works at every level."""
+    mean = [0.0, 0.0]
+    var = [0.0, 0.0]
     n = 0
     for seed in seeds:
         try:
             s0 = new_game(rs, seed)
         except ValueError:
             continue
-        v = evaluate(rs, agents, levels, roots=[(s0, 1.0)], expand=engine_children)
-        total[0] += v[0]
-        total[1] += v[1]
+        dist = outcome_distribution(rs, agents, levels, roots=[(s0, 1.0)], expand=engine_children)
+        for seat, sign in ((0, 1.0), (1, -1.0)):
+            e = sum(p * (sign * r + 1.0) / 2.0 for r, p in dist.items())
+            e2 = sum(p * ((sign * r + 1.0) / 2.0) ** 2 for r, p in dist.items())
+            mean[seat] += e
+            var[seat] += max(e2 - e * e, 0.0)
         n += 1
-    return (total[0] / n, total[1] / n)
+    return OnSeeds(n, (mean[0] / n, mean[1] / n), (var[0] / n, var[1] / n))
+
+
+def evaluate_on_seeds(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels=(Level.L1, Level.L1)) -> tuple[float, float]:
+    """Mean exact returns over the games of `seeds`, each on its real deal and pile
+    order (the returns of `scores_on_seeds`)."""
+    on = scores_on_seeds(rs, agents, seeds, levels)
+    return (2.0 * on.mean[0] - 1.0, 2.0 * on.mean[1] - 1.0)
 
 
 # -- best response ------------------------------------------------------------

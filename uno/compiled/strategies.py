@@ -7,7 +7,8 @@ from __future__ import annotations
 import numpy as np
 
 from uno.agents.baseline import Agent
-from uno.compiled.tree import CompiledTree, Key
+from uno.compiled.solvers import BestResponse, best_response
+from uno.compiled.tree import CompiledTree, Key, Strategy
 from uno.game.keys import decode_key
 from uno.game.observe import Level, observation_from_key
 
@@ -40,3 +41,14 @@ def tabulate_table(tree: CompiledTree, level: Level, table: dict[Key, int]) -> n
         legal = k.actions(i)
         sigma[k.info_start[i] + (legal.index(a) if a in legal else 0)] = 1.0
     return k.orbit_mean(sigma)  # on a symmetric tree: the choice spread over its orbit, same value against a symmetric opponent
+
+
+def br_row(tree: CompiledTree, opponent: Strategy, completion: np.ndarray | None = None, level: Level = Level.L1) -> tuple[Strategy, tuple[BestResponse, BestResponse]]:
+    """The ladder's "BR Lx(opponent)" row agent: both seats' best responses to
+    `opponent` as one strategy over the keying (each seat's sets from its own best
+    response), and the two best responses. `completion` is played at the sets the
+    opponent never lets the responder reach; None keeps the solver's first orbit
+    there (docs/spec.md section 16)."""
+    brs = (best_response(tree, level, opponent, 0, completion), best_response(tree, level, opponent, 1, completion))
+    k = tree.keyings[level]
+    return (level, np.where(k.info_player[k.ia_info] == 0, brs[0].sigma, brs[1].sigma)), brs

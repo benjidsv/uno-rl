@@ -8,12 +8,12 @@ import numpy as np
 from hypothesis import HealthCheck, assume, given, settings
 
 from tests.known import HEURISTIC_TOY
-from tests.strategies import SMALL, pair, small, small_lazy_rulesets
+from tests.strategies import SMALL, pair, responder_infosets, small, small_lazy_rulesets
 from uno import Level
 from uno.agents.baseline import BySeat, Heuristic, PlayFirstRandom, UniformLegal
 from uno.agents.tabular import CompiledAgent
 from uno.compiled.solvers import best_response, evaluate, exact_mirrored, exploitability, outcome_distribution
-from uno.compiled.strategies import tabulate, tabulate_table
+from uno.compiled.strategies import br_row, tabulate, tabulate_table
 from uno.compiled.tree import END_KINDS, compile_tree
 from uno.reference.census import census
 from uno.reference.mirrored import exact_mirrored as exact_mirrored_ref
@@ -174,3 +174,27 @@ def test_keyings_attach_and_perfect_best_response(rs):
             # the per-arc profile (responder's choice, opponent's weights) replays to its value
             v, _ = w1.values(a.sigma, w1.seat_util(seat))
             assert math.isclose(float(v[0, 0]), a.value, abs_tol=1e-9)
+
+
+@given(rs=small_lazy_rulesets())
+@settings(deadline=None, max_examples=15, suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow])
+def test_unreached_sets_and_completion(rs):
+    """The sets a best response leaves unreached are exactly the responder sets the
+    reference walker does not reach under the opponent's support; filling them
+    with another strategy leaves the value against that opponent unchanged, and
+    `br_row` assembles both seats' best responses into one playable row."""
+    small(rs)
+    tree = compile_tree(rs, (Level.L1,), symmetric=False)
+    k = tree.keyings[Level.L1]
+    for opp in (PlayFirstRandom(rs), Heuristic(rs)):
+        sig = (Level.L1, tabulate(tree, Level.L1, opp))
+        (_, row), filled = br_row(tree, sig, completion=k.uniform())
+        for seat in (0, 1):
+            plain = best_response(tree, Level.L1, sig, seat)
+            reached = responder_infosets(rs, opp, seat, Level.L1)
+            assert filled[seat].unreached == plain.unreached == int((k.info_player == seat).sum()) - len(reached)
+            assert math.isclose(filled[seat].value, plain.value, abs_tol=1e-9)
+            mine = k.info_player[k.ia_info] == seat
+            assert np.array_equal(row[mine], filled[seat].sigma[mine])
+            prof = ((Level.L1, row), sig) if seat == 0 else (sig, (Level.L1, row))
+            assert math.isclose(evaluate(tree, *prof)[seat], plain.value, abs_tol=1e-9)

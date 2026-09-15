@@ -32,16 +32,16 @@ import numpy as np
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.compiled.cfr import cfr, exploitability_of
 from uno.compiled.solvers import best_response, evaluate, exact_mirrored
-from uno.compiled.strategies import tabulate
+from uno.compiled.strategies import br_row, tabulate
 from uno.compiled.tree import compile_tree
-from uno.eval.estimate import estimate_mirrored, play_pairs
+from uno.eval.estimate import bootstrap_moments, estimate_mirrored, play_pairs
 from uno.eval.play import EVAL_SEEDS
 from uno.experiments.common import score
 from uno.game import rules
 from uno.game.observe import Level
 from uno.reference.solve import best_response as best_response_ref
 from uno.reference.solve import evaluate as evaluate_ref
-from uno.reference.solve import evaluate_on_seeds
+from uno.reference.solve import scores_on_seeds
 from uno.store import CACHE, load_or_solve_nash
 
 
@@ -107,6 +107,7 @@ def main(argv: list[str] | None = None) -> None:
         brs[("random", seat)] = best_response(lazy, Level.L1, sig["random"], seat)
     br_rnd_sigma = np.where(lazy.keyings[Level.L1].info_player[lazy.keyings[Level.L1].ia_info] == 0, brs[("random", 0)].sigma, brs[("random", 1)].sigma)
     rows["br_l1(random)"] = (Level.L1, br_rnd_sigma)
+    rows["br_l1(random)+nash"], _ = br_row(lazy, sig["random"], completion=res.avg)  # unreached sets filled with Nash
     rows["nash_l1"] = (Level.L1, res.avg)
     for label, s in rows.items():
         for seat in (0, 1):
@@ -132,12 +133,11 @@ def main(argv: list[str] | None = None) -> None:
         v1 = score(evaluate(world, sb, sa)[1])
         pairs_exact[label] = (v0, v1)
         print(f"   {label:24s} {v0:.4f}  {v1:.4f}")
-    # BR L1(random) vs nash needs the per-seat tables on the world tree
-    brw = [best_response(world, Level.L1, sigw["random"], seat) for seat in (0, 1)]
-    kw = world.keyings[Level.L1]
-    brw_sigma = (Level.L1, np.where(kw.info_player[kw.ia_info] == 0, brw[0].sigma, brw[1].sigma))
-    v0, v1 = score(evaluate(world, brw_sigma, nash_w)[0]), score(evaluate(world, nash_w, brw_sigma)[1])
-    print(f"   {'br_l1(random) vs nash':24s} {v0:.4f}  {v1:.4f}")
+    # BR L1(random) vs nash needs the per-seat tables on the world tree: as solved, and with the unreached sets filled with Nash
+    for label, completion in (("br_l1(random) vs nash", None), ("br_l1(random)+nash vs nash", nash_w[1])):
+        brw_sigma, _ = br_row(world, sigw["random"], completion=completion)
+        v0, v1 = score(evaluate(world, brw_sigma, nash_w)[0]), score(evaluate(world, nash_w, brw_sigma)[1])
+        print(f"   {label:26s} {v0:.4f}  {v1:.4f}")
     sys.stdout.flush()
 
     print(f"\n== Nash row on {games} held-out pairs: sim vs exact on those seeds, mirrored estimate")
@@ -146,14 +146,20 @@ def main(argv: list[str] | None = None) -> None:
         pairs = play_pairs(rs, (nash, opp), seeds)
         m = estimate_mirrored(pairs)
         exm = exact_mirrored(world, nash_w, s_opp)
-        on0 = score(evaluate_on_seeds(rs, (nash, opp), pairs.seeds)[0])
-        on1 = score(evaluate_on_seeds(rs, (opp, nash), pairs.seeds)[1])
-        for seat, on in ((0, on0), (1, on1)):
+        ons = (scores_on_seeds(rs, (nash, opp), pairs.seeds), scores_on_seeds(rs, (opp, nash), pairs.seeds))
+        for seat in (0, 1):
+            on = ons[seat].mean[seat]
             e = m.seat[seat]
-            ok = abs(e.mean - on) <= e.half
+            ok = ons[seat].ok(e.mean, seat)
             tail = f" | {exm.pair_mean:10.4f} {m.raw.half:7.4f} {m.mirrored.half:10.4f} {m.corr:7.3f} {m.splits:7.3f} {m.var_ratio:9.3f}" if seat == 0 else ""
-            print(f"   {label if seat == 0 else '':20s} {seat:<4d} {exm.mean[seat]:7.4f} {on:9.4f} {str(e):>17s} {'ok' if ok else 'XX'}{tail}")
-        print(f"   {'':20s} exact corr={exm.corr:+.3f} splits={exm.splits:.3f} var ratio={exm.var_ratio:.3f}" + (f"  misses={nash.misses}" if nash.misses else ""))
+            print(f"   {label if seat == 0 else '':20s} {seat:<4d} {exm.mean[seat]:7.4f} {on:9.4f} {str(e):>17s} z={ons[seat].z(e.mean, seat):+5.2f} {'ok' if ok else 'XX'}{tail}")
+        bs = bootstrap_moments(pairs)
+        missed = [k for k, v in bs.covers(exm).items() if not v]
+        print(
+            f"   {'':20s} exact corr={exm.corr:+.3f} splits={exm.splits:.3f} var ratio={exm.var_ratio:.3f}; 99.8% bootstrap CI "
+            f"corr [{bs.corr[0]:+.3f}, {bs.corr[1]:+.3f}] splits [{bs.splits[0]:.3f}, {bs.splits[1]:.3f}] var ratio [{bs.var_ratio[0]:.3f}, {bs.var_ratio[1]:.3f}] "
+            f"{'ok' if not missed else 'XX ' + ', '.join(missed)}" + (f"  misses={nash.misses}" if nash.misses else "")
+        )
     sys.stdout.flush()
 
     print("\n== best responses to the Nash agent by information level (score of the responder)")

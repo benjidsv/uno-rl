@@ -31,6 +31,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
 from uno.agents.baseline import Agent
 from uno.eval.play import Trace, play_from
 from uno.game.engine import new_game, returns
@@ -285,3 +287,57 @@ class ExactMirrored:
             f"seat0 {self.mean[0]:.4f} (sd {math.sqrt(self.var[0]):.4f})  seat1 {self.mean[1]:.4f} (sd {math.sqrt(self.var[1]):.4f})  "
             f"mean {self.pair_mean:.4f}  corr={self.corr:+.3f} splits={self.splits:.3f} var ratio={self.var_ratio:.3f}"
         )
+
+
+@dataclass(frozen=True)
+class Bootstrap:
+    """Percentile bootstrap CIs (resampling pairs, i.e. seeds) for the second moments
+    of a mirrored estimate: the per-seat variances, the correlation between the two
+    seats' scores, the split share and the variance ratio mirrored / raw."""
+
+    level: float
+    reps: int
+    var: tuple[tuple[float, float], tuple[float, float]]
+    corr: tuple[float, float]
+    splits: tuple[float, float]
+    var_ratio: tuple[float, float]
+
+    def covers(self, exact: ExactMirrored) -> dict[str, bool]:
+        """Whether each exact moment lies inside its CI."""
+        inside = lambda ci, x: ci[0] <= x <= ci[1]  # noqa: E731
+        return {
+            "var0": inside(self.var[0], exact.var[0]),
+            "var1": inside(self.var[1], exact.var[1]),
+            "corr": inside(self.corr, exact.corr),
+            "splits": inside(self.splits, exact.splits),
+            "var_ratio": inside(self.var_ratio, exact.var_ratio),
+        }
+
+
+def bootstrap_moments(pairs: Pairs, reps: int = 4000, level: float = 0.998, seed: int = 0) -> Bootstrap:
+    """Seeded percentile bootstrap over the pairs, with the definitions of
+    `estimate_mirrored` (sample variances, pair score (s0 + s1) / 2, split = 1/2).
+
+    The default level is 99.8 % per moment, a family-wise 99 % for the five
+    moments of a matchup (Bonferroni): at 99 % per moment one of the five misses
+    about one time in twenty by chance (step 8.8, the TOY split share on the dev
+    seeds at z = +2.1 while 20,000 pooled pairs sit at z = +0.2). 4000 resamples
+    leave a few draws in each 0.1 % tail."""
+    x, y = np.array(pairs.seat_scores(0)), np.array(pairs.seat_scores(1))
+    n = len(x)
+    rng = np.random.default_rng(seed)
+    stats = {name: [] for name in ("v0", "v1", "corr", "splits", "ratio")}
+    for start in range(0, reps, 100):
+        idx = rng.integers(0, n, size=(min(100, reps - start), n))
+        xs, ys = x[idx], y[idx]
+        dx, dy = xs - xs.mean(axis=1, keepdims=True), ys - ys.mean(axis=1, keepdims=True)
+        vx, vy, cxy = (dx * dx).sum(axis=1) / (n - 1), (dy * dy).sum(axis=1) / (n - 1), (dx * dy).sum(axis=1) / (n - 1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            stats["corr"].append(cxy / np.sqrt(vx * vy))
+            stats["ratio"].append((vx + vy + 2 * cxy) / (vx + vy))
+        stats["v0"].append(vx)
+        stats["v1"].append(vy)
+        stats["splits"].append((xs + ys == 1.0).mean(axis=1))
+    q = ((1 - level) / 2, 1 - (1 - level) / 2)
+    ci = {name: tuple(float(v) for v in np.nanquantile(np.concatenate(parts), q)) for name, parts in stats.items()}
+    return Bootstrap(level, reps, (ci["v0"], ci["v1"]), ci["corr"], ci["splits"], ci["ratio"])

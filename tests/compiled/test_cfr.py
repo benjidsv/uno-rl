@@ -16,7 +16,7 @@ from uno.compiled.tree import compile_tree
 from uno.eval.play import match
 from uno.reference.solve import best_response as best_response_ref
 from uno.reference.solve import evaluate as evaluate_ref
-from uno.reference.solve import evaluate_on_seeds
+from uno.reference.solve import scores_on_seeds
 
 
 def test_cfr_plus_converges_and_agrees_with_reference(tmp_path):
@@ -50,12 +50,12 @@ def test_cfr_plus_converges_and_agrees_with_reference(tmp_path):
         assert best_response(tree, Level.L1, sig, 0).score >= hi - 1e-9
         assert 1 - best_response(tree, Level.L1, sig, 1).score <= lo + 1e-9
 
-    # simulation on seeds matches the exact value on those seeds within the CI
+    # simulation on seeds matches the exact value on those seeds, against its action noise
     seeds = range(600)
     rnd = PlayFirstRandom(rs)
     r = match(rs, (agent, rnd), seeds)
-    on = (evaluate_on_seeds(rs, (agent, rnd), seeds)[0] + 1) / 2
-    assert abs(r.score - on) <= (r.score_ci[1] - r.score_ci[0]) / 2
+    on = scores_on_seeds(rs, (agent, rnd), seeds)
+    assert on.ok(r.score, 0), on.z(r.score, 0)
 
     # save / load round trip
     res.save(tmp_path / "cfr.npz")

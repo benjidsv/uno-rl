@@ -13,6 +13,7 @@ from hypothesis import HealthCheck, given, settings
 from tests.strategies import CAP, SMALL, pair, rulesets, seeds, small, small_lazy_rulesets, walk
 from uno import Level, legal_actions, returns, step
 from uno.agents.baseline import Heuristic, PlayFirstRandom, UniformLegal
+from uno.agents.symmetrized import Symmetrized
 from uno.agents.tabular import CompiledAgent
 from uno.compiled.solvers import best_response, evaluate, exploitability
 from uno.compiled.strategies import tabulate
@@ -228,3 +229,39 @@ def test_toy_quotient_reproduces_the_random_column_and_the_nash_value():
     res = cfr(lazy, iterations=300, log_at=(300,))
     assert res.final.nashconv < 0.005 and abs(res.final.value - 0.6196) < 5e-4
     assert lazy.keyings[Level.L1].is_symmetric(res.avg, 1e-9)
+
+
+@given(rs=rulesets(), seed=seeds, policy_seed=seeds, g_seed=seeds)
+@settings(deadline=None, max_examples=40)
+def test_symmetrized_agent_commutes_with_the_group(rs, seed, policy_seed, g_seed):
+    """`Symmetrized` turns an asymmetric agent into a symmetric one and leaves a
+    symmetric agent unchanged (docs/spec.md section 18)."""
+    sym = Symmetry(rs)
+    rng = random.Random(g_seed)
+    states, _ = walk(rs, seed, policy_seed)
+    lowest, heu, sym_heu = Symmetrized(LowestId(rs), rs), Heuristic(rs), Symmetrized(Heuristic(rs), rs)
+    for s in states:
+        if s.terminal:
+            continue
+        g = rng.randrange(sym.order)
+        gs = sym.state(g, s)
+        obs, legal, glegal = observe(s, s.player), legal_actions(s), legal_actions(gs)
+        want = sym.map_policy(g, lowest.policy(obs, legal))
+        got = lowest.policy(observe(gs, gs.player), glegal)
+        assert set(got) == set(want) and all(math.isclose(got[a], want[a]) for a in got)
+        assert set(got) <= set(glegal) and math.isclose(sum(got.values()), 1.0)
+        h, sh = heu.policy(obs, legal), sym_heu.policy(obs, legal)
+        assert set(h) == set(sh) and all(math.isclose(h[a], sh[a]) for a in h)
+
+
+def test_symmetrized_agent_is_exact_on_the_quotient():
+    """A wrapped asymmetric agent tabulates on the quotient tree, and its value there
+    against Random equals the full tree's and the engine's."""
+    rs = SMALL
+    agent, rnd = Symmetrized(LowestId(rs), rs), PlayFirstRandom(rs)
+    values = []
+    for symmetric in (True, False):
+        tree = compile_tree(rs, (Level.L1,), symmetric=symmetric)
+        values.append(evaluate(tree, (Level.L1, tabulate(tree, Level.L1, agent)), (Level.L1, tabulate(tree, Level.L1, rnd)))[0])
+    assert math.isclose(values[0], values[1], abs_tol=1e-9)
+    assert math.isclose(values[0], evaluate_ref(rs, (agent, rnd))[0], abs_tol=1e-9)

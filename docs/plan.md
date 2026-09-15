@@ -18,7 +18,7 @@ rules in [spec.md](spec.md).
 | 8.5 | transfer check, `TOY` against `FULL_UNO` | done | [08.5](results/08.5-transfer.md) |
 | 8.6 | symmetric quotient, compact keys, tree cache; `TOY_FULL` solved | done | [08.6](results/08.6-symmetry.md) |
 | 8.7 | `TOY2` family sized and solved, DCFR / PCFR+, validation | done | [08.7](results/08.7-toy2.md) |
-| 8.8 | review, restructure, methodology fixes | in progress | [08.8](results/08.8-review.md) |
+| 8.8 | review, restructure, methodology fixes | done | [08.8](results/08.8-review.md) |
 | 9 | AIVAT | next | |
 | 10 | skill check on the toy: is there something to learn? | | |
 | 11 | RL | | |
