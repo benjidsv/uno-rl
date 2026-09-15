@@ -21,7 +21,7 @@ rules in [spec.md](spec.md).
 | 8.8 | review, restructure, methodology fixes | done | [08.8](results/08.8-review.md), [re-runs](results/08.8-results.md) |
 | 8.9 | fixes before AIVAT: deal probabilities with duplicate cards, rng names, cache version | done | [08.9](results/08.9-fixes.md) |
 | 9 | review follow-ups: split share, test power, exhaustion scorings, two-sided values, equilibrium choice, fill-in, deal model, pairing on full UNO, ticket draws, speed-ups | done | [09 review](results/09-review.md), [results](results/09-results.md) |
-| 9.5 | sampled methods validated on the toys: AIVAT, PIMC / MCTS | next | |
+| 9.5 | 9.5a exact: nested memory keys, edge-by-decision decomposition, fixed-opponent metric, deal model at 100k seeds, divergence statistic; 9.5b sampled: AIVAT, fitted L3 critic, PIMC on the toys and full UNO, intermediate rulesets (MCTS deferred) | next | [09.5 brainstorm](results/09.5-brainstorm.md) |
 | 10 | formalise the toy results for RL: a performance range with ceilings, an edge-by-decision diagnostic tool, figures and tables | | |
 | 11 | RL | | |
 

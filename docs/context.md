@@ -902,7 +902,7 @@ Kept because they show where this kind of analysis goes wrong.
 | 8.8 | review, methodology fixes M1-M4 | done |
 | 8.9 | duplicate-card deal fix, rng-name check, cache version, full rerun | done |
 | 9 | review follow-ups (`docs/results/09-review.md`, `09-results.md`): split share, test power, exhaustion scorings, two-sided values, equilibrium choice, fill-in, deal model, pairing on full UNO, ticket draws, speed-ups; the review's section D (where the skill is, memory ceiling, metrics) is still to discuss | done |
-| **9.5** | **sampled methods validated against exact values on the toys: AIVAT, PIMC / MCTS** | **next** |
+| **9.5** | **9.5a exact (memory keys, edge-by-decision, metric, deal model 100k, divergence stat), then 9.5b sampled (AIVAT, L3 critic, PIMC, intermediate rulesets; MCTS deferred); brainstorm and section D verdicts in `docs/results/09.5-brainstorm.md`** | **next** |
 | 10 | formalise the toy results: figures and tables that RL relies on | |
 | 11 | RL | |
 
