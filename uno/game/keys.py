@@ -1,6 +1,6 @@
 """Information-set keys at L1 / L2 / L3 and their compact byte encoding.
 
-See RULES.md sections 10 and 14 (the keys) and 16 (bytes keys in the compiled tree).
+See docs/spec.md sections 10 and 14 (the keys) and 16 (bytes keys in the compiled tree).
 """
 
 from __future__ import annotations

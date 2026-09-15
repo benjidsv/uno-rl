@@ -1,6 +1,6 @@
 """Core engine: immutable State, deal / initial_state, legal_actions, step, returns.
 
-See RULES.md sections 3, 4, 6, 7, 8, 9. Everything is a pure function of
+See docs/spec.md sections 3, 4, 6, 7, 8, 9. Everything is a pure function of
 (permutation, seed, action sequence).
 """
 

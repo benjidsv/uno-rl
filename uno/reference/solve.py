@@ -1,6 +1,6 @@
 """Exact solvers: policy evaluation and best response at L1, L2 and L3.
 
-See RULES.md section 14 and notes.md ("The oracle levels").
+See docs/spec.md section 14 and docs/plan.md ("The oracle levels").
 
 A best response is the responder's best pure strategy against a *fixed*
 opponent (an `Agent` seen at L1), given the responder's information level:

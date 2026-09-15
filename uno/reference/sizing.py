@@ -15,12 +15,12 @@ positions, of which there are far fewer than histories.
 Two policies are tracked: UniformLegal (what `census` reports, the
 cross-check) and PlayFirstRandom (the ladder's Random row, whose random-vs-
 random seat-0 score is the seat-parity readout of the census rounds in
-notes.md). Their end masses are exact, not sampled.
+docs/results/03-census.md). Their end masses are exact, not sampled.
 
 What this cannot count: L1 / L2 information sets (they depend on the
 history). Those come out of `compile_tree` once a candidate is chosen.
 
-The symmetric quotient tree (RULES.md section 18) is one subtree per orbit of
+The symmetric quotient tree (docs/spec.md section 18) is one subtree per orbit of
 deals, so its size is the sum over the orbit representatives; positions are
 shared across roots, so the quotient costs no more than one root's worth of
 new positions per orbit.

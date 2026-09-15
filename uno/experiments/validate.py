@@ -5,7 +5,7 @@
 The `ladder` and `mirror` experiments run the pure-Python reference
 solvers, which do not fit the TOY2 family (its full game is ~10M histories,
 ~10 GB in the reference walkers). This script does the same checks from the
-cached quotient trees (RULES.md sections 16 and 18):
+cached quotient trees (docs/spec.md sections 16 and 18):
 
 1. best-response columns (L1 / L2 on the lazy tree, L3 on the world tree)
    against Random and the Heuristic, per seat: the exact score, the exact

@@ -1,4 +1,4 @@
-"""Observations at the three information levels. See RULES.md section 10.
+"""Observations at the three information levels. See docs/spec.md section 10.
 
 The information level is a property of the observer, not of the game.
 Observations are frozen and hashable so they can key information sets.

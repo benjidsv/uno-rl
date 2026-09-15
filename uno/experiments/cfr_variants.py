@@ -1,4 +1,4 @@
-"""Step 8.7: CFR variants raced on the cached quotient trees (notes_toy2.md).
+"""Step 8.7: CFR variants raced on the cached quotient trees (docs/results/08.7-toy2.md).
 
     uv run uno cfr_variants [iterations=300] [rulesets=TOY,TOY_FULL,TOY2]
 

@@ -4,7 +4,7 @@
 
 Prints:
 
-1. sizes and costs on TOY: full tree vs quotient (color x rank orbits, RULES.md
+1. sizes and costs on TOY: full tree vs quotient (color x rank orbits, docs/spec.md
    section 18), compile seconds, bytes, load-from-cache seconds;
 2. the twelve best-response values and the row matchups of steps 5-6 on both
    trees (the Heuristic has symmetric tie-breaks from this step on, so its

@@ -14,7 +14,7 @@ d. which skill-carrying decisions each ruleset actually offers (Heuristic vs
 Part 2, exact, `TOY` only (compiled tree): how games end under weak and strong
 play, and through which ending each row agent collects its points, to see how
 much of the toy's skill goes through exhaustion endings (the pile-parity
-tactic of RULES.md section 9, which full UNO does not have). The Nash agent is
+tactic of docs/spec.md section 9, which full UNO does not have). The Nash agent is
 the CFR+ strategy cached by the `cfr` experiment (`.cache/cfr_TOY_L1_sym.npz`) if present,
 otherwise `cfr_iterations` of CFR+ (not saved).
 """
@@ -55,7 +55,7 @@ CATEGORIES = (
 
 
 def classify(rs: Ruleset, s: State) -> set[str]:
-    """Skill-carrying decision kinds at a decision node (see notes.md, "Which decisions carry skill")."""
+    """Skill-carrying decision kinds at a decision node (see docs/plan.md, "Which decisions carry skill")."""
     types = rs.card_types
     legal = legal_actions(s)
     plays = {rs.actions[a].card for a in legal if isinstance(rs.actions[a], Play)}

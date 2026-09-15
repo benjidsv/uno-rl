@@ -1,6 +1,6 @@
 """Counterfactual regret minimisation on the compiled tree: Nash L1 (step 8).
 
-See RULES.md section 17 and notes.md ("The oracle levels"). Both seats are
+See docs/spec.md section 17 and docs/plan.md ("The oracle levels"). Both seats are
 solved at once; the result is one strategy vector over the L1 keying of the
 tree (the average strategy, whose exploitability goes to zero), plus the
 exploitability log that must go next to every ladder cell using it.
@@ -20,7 +20,7 @@ alternating: player 1 sees player 0's updated strategy):
 Vanilla CFR converges as O(1 / sqrt(T)); CFR+ (regret matching+, alternating
 updates, linear averaging) has the same bound and is far faster in practice.
 
-Two accelerations on the same passes (step 8.7, notes_toy2.md):
+Two accelerations on the same passes (step 8.7, docs/results/08.7-toy2.md):
 
 - **Discounting** (DCFR, Brown & Sandholm 2019): after iteration t the
   accumulated positive regrets are multiplied by t^a / (t^a + 1), the
@@ -193,7 +193,7 @@ def cfr(
         cf = r[nodes, 2] * r[nodes, 1 - i]
         sign = 1.0 if i == 0 else -1.0
         # on a symmetric tree the regret and the mass are averaged within every action orbit
-        # (RULES.md section 18): the strategies stay symmetric, and CFR runs on the game whose
+        # (docs/spec.md section 18): the strategies stay symmetric, and CFR runs on the game whose
         # actions are the orbits
         mine = ia_of[i]
         inst = k.orbit_mean(np.bincount(ia, weights=cf * (av[arcs] - v[nodes]) * sign, minlength=K))[mine]

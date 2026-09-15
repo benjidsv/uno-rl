@@ -1,4 +1,4 @@
-"""Baseline agents. See RULES.md section 13.
+"""Baseline agents. See docs/spec.md section 13.
 
 An agent maps (observation, legal actions) to a probability distribution over
 actions. It never samples: best response tabulates the policy and AIVAT needs
@@ -71,7 +71,7 @@ class PlayFirstRandom:
 
 
 class Heuristic:
-    """Rulebot, symmetric under color and rank renaming (RULES.md section 18).
+    """Rulebot, symmetric under color and rank renaming (docs/spec.md section 18).
 
     Play over draw. Among playable non-wild cards prefer action cards when the
     opponent is low, then the color held most, then a card of the current color

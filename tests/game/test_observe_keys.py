@@ -1,4 +1,4 @@
-"""`observation_from_key` rebuilds the observation at every decision node from the key alone (RULES.md section 10)."""
+"""`observation_from_key` rebuilds the observation at every decision node from the key alone (docs/spec.md section 10)."""
 
 from __future__ import annotations
 

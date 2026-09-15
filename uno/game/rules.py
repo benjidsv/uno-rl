@@ -1,6 +1,6 @@
 """Ruleset: parameters, card types, deck multiset and action encoding.
 
-See RULES.md sections 1, 2, 5 and 12.
+See docs/spec.md sections 1, 2, 5 and 12.
 """
 
 from __future__ import annotations
@@ -203,12 +203,12 @@ TOY_CANDIDATE = Ruleset(
     max_turns=None,
 )
 
-# Step 3 census (the `census` experiment, notes.md). Two lessons: the pile drives
+# Step 3 census (the `census` experiment, docs/results/03-census.md). Two lessons: the pile drives
 # tree size (forced play removes the "draw with a play in hand" branch and cuts
 # the tree ~65x), and per-card playability drives the first-player edge (with 2
 # colors x 2 ranks nobody gets stuck, so seat 0 wins 72% of pure races; with 4
-# colors x 2 ranks x 1 copy seat 0 is 59%). TOY_FULL keeps the voluntary draw
-# for the one-pass solvers (best response).
+# colors x 2 ranks x 1 copy seat 0 is 59%). TOY_FULL is TOY without forced play
+# (solved on the quotient since step 8.6).
 TOY = Ruleset(
     colors=4,
     rank_copies=(1, 1),
@@ -241,7 +241,7 @@ TOY_FULL = Ruleset(
 
 FULL_UNO = Ruleset()
 
-# Step 8.7 (notes_toy2.md): the position DP sized every 10-14 card candidate.
+# Step 8.7 (docs/results/08.7-toy2.md): the position DP sized every 10-14 card candidate.
 # Three colors x three ranks keeps the quotient at 312k histories with forced
 # play and 28M without (the only candidate whose free-play version fits in
 # memory), and moves the random-vs-random seat-0 score from 0.649 to 0.588.

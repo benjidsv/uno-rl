@@ -1,4 +1,4 @@
-"""Color / rank symmetry (uno/game/symmetry.py, RULES.md section 18): the group acts on
+"""Color / rank symmetry (uno/game/symmetry.py, docs/spec.md section 18): the group acts on
 the engine, canonical forms are invariant, the baseline agents are symmetric, and
 the quotient tree reproduces the full tree's values."""
 
@@ -210,7 +210,7 @@ def test_cache_round_trip(tmp_path):
 def test_toy_quotient_reproduces_the_random_column_and_the_nash_value():
     """Steps 5, 6 and 8 on the quotient of TOY: the twelve best-response values
     (Random from steps 5-6, the Heuristic from step 8.6) and the Nash value 0.6196
-    (notes.md), on 37x fewer histories."""
+    (docs/results/08-cfr.md), on 37x fewer histories."""
     from uno import TOY
     from uno.compiled.cfr import cfr
 

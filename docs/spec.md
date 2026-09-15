@@ -1,9 +1,9 @@
-# UNO V5 rules specification
+# Specification
 
 One parametrized ruleset. The toy game and full UNO are the same rules with
 different parameters. Two players, always. Everything below is what the engine
 in `uno/` implements and what `tests/` checks; if code and this file disagree,
-this file wins and the code is wrong.
+this file wins and the code is wrong. Measured numbers are not part of the spec: they are in [results/](results/index.md), one file per step.
 
 ## 1. Parameters
 
@@ -248,30 +248,31 @@ Checked at every step of random games over random small rulesets:
 
 ## 12. Named rulesets
 
-- `TOY`: 4 colors, ranks `(1, 1)` (one copy each), no action cards, 1 wild,
-  hand 3, `draw_then_may_play`, **forced play**, no reshuffle, no cap. 9 cards,
-  draw pile of 2 after the deal. Chosen for low per-card playability: with 2
-  colors x 2 ranks x 2 copies nobody ever got stuck and seat 0 won 72 % of
-  random games on pure tempo; here seat 0 wins 59 % of random games outright
-  (score 0.65 with ties worth 1/2). Sizes in notes.md (step 3).
-- `TOY_FULL`: same as `TOY` without forced play, so "draw with a play in hand"
-  is a decision. More than 2e7 histories (census stopped at the cap), so it is
-  a name for later, not a working size. The value gap between `TOY_FULL` and
-  `TOY` best responses would be the worth of that decision.
-- `TOY_CANDIDATE`: the original 13-card candidate (2 colors, ranks `(2, 2, 2)`,
-  1 wild, hand 2, no forced play). Rejected by the census: more than 4e7
-  histories. Kept as a name only.
-- `FULL_UNO`: 4 colors, ranks `(1, 2, 2, 2, 2, 2, 2, 2, 2, 2)`, 2 skip / 2
-  reverse / 2 draw-two per color, 4 wild, 4 wild draw four, hand 7,
-  `draw_then_may_play`, no forced play, seeded reshuffle, cap 1000. 108 cards.
+`uno.game.rules.NAMED` holds every named ruleset; the cache (`uno.store`) names
+its files after them. Sizes are the quotient tree of section 18 (the full tree
+in brackets where it was compiled); why each was chosen is in the results.
 
-## 13. Baseline agents (`uno/agents.py`)
+| name | cards | hand | forced play | deck / pile | histories | L1 sets | status |
+|------|-------|------|-------------|-------------|-----------|---------|--------|
+| `TOY` | 4 colors x ranks `(1, 1)`, 1 wild | 3 | yes | 9 / 2 | 33,646 (1,252,040) | 12,036 (558,656) | solved, [step 3](results/03-census.md) |
+| `TOY_FULL` | as `TOY` | 3 | no | 9 / 2 | 774,007 | 138,876 | solved, [step 8.6](results/08.6-symmetry.md) |
+| `TOY2` | 3 colors x ranks `(1, 1, 1)`, 1 wild | 3 | yes | 10 / 3 | 311,819 | 129,428 | solved, [step 8.7](results/08.7-toy2.md) |
+| `TOY2_FULL` | as `TOY2` | 3 | no | 10 / 3 | 28,057,516 | 3,753,530 | solved (Nash by DCFR), step 8.7 |
+| `TOY2_SKIP` | 3 colors x ranks `(1, 1)`, 1 skip per color, 1 wild | 3 | yes | 10 / 3 | 922,744 | 439,268 | solved, step 8.7 |
+| `TOY_CANDIDATE` | 2 colors x ranks `(2, 2, 2)`, 1 wild | 2 | no | 13 / 8 | > 4e7 (full, census capped) | | rejected, step 3 |
+| `FULL_UNO` | 4 colors x ranks `(1, 2, 2, 2, 2, 2, 2, 2, 2, 2)`, 2 skip / 2 reverse / 2 draw-two per color, 4 wild, 4 wild draw four | 7 | no | 108 | | | sampled only |
+
+Every toy has no reverse or draw-two cards, `draw_then_may_play`, no reshuffle
+and no turn cap. `FULL_UNO` has `draw_then_may_play`, a seeded reshuffle and a
+cap of 1000.
+
+## 13. Baseline agents (`uno/agents/baseline.py`)
 
 An agent is a function `policy(observation, legal_actions) -> {action: prob}`
 whose support is inside the legal actions and whose probabilities sum to 1.
 Agents return distributions, never sampled actions, because best response
 tabulates the policy and AIVAT needs the action probabilities. Sampling is done
-by the runner (`uno/play.py`) with an rng seeded from `(match seed, agent name,
+by the runner (`uno/eval/play.py`) with an rng seeded from `(match seed, agent name,
 information state)`, so the same agent makes the same choice in the same
 situation across games and opponents (common random numbers). The agent name
 is part of the key so that two different stochastic agents never share a
@@ -291,16 +292,14 @@ information states, coupling the games beyond the shared deal.
   then a number card; what still ties is played uniformly at random. Wilds are
   held unless no other card plays; a wild takes the color held most (the
   current color on ties, then uniform). After a draw, always play the drawn
-  card. Up to step 8.5 ties were broken on the lowest type id, which is not
-  symmetric; the old values are in notes.md steps 4-8.5, the new ones from
-  step 8.6 on.
+  card. (Before [step 8.6](results/08.6-symmetry.md) ties went to the lowest type id, which is not symmetric.)
 
-## 14. Exact solvers (`uno/solve.py`)
+## 14. Exact solvers (`uno/reference/solve.py`)
 
 Only for `reshuffle == "none"` rulesets (they walk the lazy-chance tree of
-`uno/tree.py`). Values are the responder's expected return in `[-1, 1]`;
+`uno/game/chance.py`). Values are the responder's expected return in `[-1, 1]`;
 `score = (value + 1) / 2` is P(win) with draws worth 1/2, the same quantity
-`uno.play.match` estimates.
+`uno.eval.play.match` estimates.
 
 - `evaluate(rs, agents, levels)`: exact expected returns of two fixed agents
   over the whole game. `evaluate_on_seeds(rs, agents, seeds, levels)`: the
@@ -328,10 +327,10 @@ Only for `reshuffle == "none"` rulesets (they walk the lazy-chance tree of
   the same player. The forward pass asserts that all histories of a set have
   the same legal actions. Only sets reachable under the opponent's support are
   solved and tabulated.
-- `TabularAgent(rs, br)`: plays the table through `uno.play` at `br.level`.
+- `TabularAgent(rs, br)`: plays the table through `uno.eval.play` at `br.level`.
   Unreachable sets fall back to the first legal action and are counted.
 
-Checks (`tests/test_solve.py`): on tiny rulesets the value equals the maximum
+Checks (`tests/reference/test_solve.py`): on tiny rulesets the value equals the maximum
 over every pure strategy of the responder, and the L3 worlds equal the set of
 distinct deck permutations with their frequencies; on small rulesets the table
 replayed through `evaluate` gives the solver's value, values are monotone in
@@ -339,7 +338,7 @@ information (L1 <= L2 <= L3), dominate Random / Heuristic / UniformLegal as
 responder, coincide across levels on a ruleset with no draw pile, and the
 simulated score matches the exact value on the same deals.
 
-## 15. Estimators (`uno/estimate.py`)
+## 15. Estimators (`uno/eval/estimate.py`)
 
 Play once, estimate many ways. `play_pairs(rs, agents, seeds, levels)` plays
 every seed from both seats (the first-named agent at seat 0, then at seat 1,
@@ -365,7 +364,7 @@ of a game is the first-named agent's `(return + 1) / 2`.
 - Self-play pairs are degenerate: under common random numbers the two games
   of an A-vs-A pair are the same game, so every pair scores exactly 1/2.
 - `exact_mirrored(rs, agents, levels)`: exact means, variances, covariance
-  and split share over the worlds of `uno.solve.worlds` (deal x pile order),
+  and split share over the worlds of `uno.game.chance.worlds` (deal x pile order),
   from `outcome_distribution` on each world. Exact for deterministic agents;
   for stochastic ones it takes the two games of a pair as independent given
   the world, which holds because the rng streams are keyed on the agent name
@@ -373,13 +372,13 @@ of a game is the first-named agent's `(return + 1) / 2`.
   seats, share a stream.
 - `games_needed(edge, var_per_game, z)` = `z² var / edge²`, with the per-game
   variance of the design (a pair is two games).
-- `uno.solve.outcome_distribution`: exact distribution of seat 0's return
+- `uno.reference.solve.outcome_distribution`: exact distribution of seat 0's return
   under two fixed agents, `{+1, 0, -1} -> probability`; `evaluate` is its mean.
-- Seed ranges (`uno.play`): `DEV_SEEDS` = 0..3999 for building, testing and
+- Seed ranges (`uno.eval.play`): `DEV_SEEDS` = 0..3999 for building, testing and
   tuning; `EVAL_SEEDS` = 1,000,000..1,003,999 held out for the ladder's
   reported numbers, nothing is ever chosen on it.
 
-Checks (`tests/test_estimate.py`): pair traces replay; naming the agents the
+Checks (`tests/eval/test_estimate.py`): pair traces replay; naming the agents the
 other way round plays the same two games scored from the other side; self-play
 pairs are identical games; `outcome_distribution` sums to 1 with the
 `evaluate` mean; `exact_mirrored` means equal `evaluate` (worlds + bare engine
@@ -392,13 +391,13 @@ variance ratios are below 1; paired differences of deterministic agents equal
 the difference of the on-seeds exact values and never exceed the unpaired
 variance.
 
-## 16. Compiled tree (`uno/compiled.py`)
+## 16. Compiled tree (`uno/compiled/`)
 
 The lazy-chance tree of section 14 (or, with L3, the world tree: one root per
 deal x unknown-pile order, bare engine below) walked **once** into flat numpy
 arrays. Every exact computation of sections 14-15 is then a vectorized pass,
-and CFR (section 17) becomes affordable. The walkers of `uno/solve.py` and
-`uno/estimate.py` stay as the reference implementation the compiled versions
+and CFR (section 17) becomes affordable. The walkers of `uno/reference/solve.py` and
+`uno/eval/estimate.py` stay as the reference implementation the compiled versions
 are tested against.
 
 By default (`symmetric=True`, step 8.6) the tree is the **quotient** under
@@ -446,7 +445,7 @@ Layout:
 - A **keying** is one information-set partition (L1, L2 or L3 key of section
   14) over the tree: set id per node, set-action ("ia") id per arc, and the
   key -> id dictionary for playback and tabulation. Keys are stored
-  **encoded as bytes** (`uno.solve.encode_key` / `decode_key`, lossless, a
+  **encoded as bytes** (`uno.game.keys.encode_key` / `decode_key`, lossless, a
   few dozen bytes each) instead of nested tuples: on the full `TOY` tree the
   key dictionaries were ~90 % of 1.1 GB. Sets are numbered in order of first
   appearance, hence contiguous per level; a set's ia are contiguous. A
@@ -482,17 +481,17 @@ distributions of the two seat-swapped profiles on a world tree.
 
 Strategies from agents: `tabulate(tree, level, agent)` asks the agent at
 every set of the keying, both seats, with the observation rebuilt from the
-set's key by `uno.observe.observation_from_key` (the key is by definition
+set's key by `uno.game.observe.observation_from_key` (the key is by definition
 everything the observer knows, section 10; the L3 key is the state). On a
 symmetric tree it raises if the agent is not symmetric (its policy is not
 uniform within some action orbit). `tabulate_table` maps a
 `BestResponse.table` onto a keying (on a symmetric tree the chosen action is
 spread over its orbit). `CompiledAgent` plays any strategy over any keying
-through `uno.play`; on a symmetric tree it canonicalises the observation's
+through `uno.eval.play`; on a symmetric tree it canonicalises the observation's
 key, looks the canonical set up and maps the actions back with the inverse
 element.
 
-Checks (`tests/test_compiled.py`, `tests/test_observe_keys.py`): the
+Checks (`tests/compiled/test_compiled.py`, `tests/game/test_observe_keys.py`): the
 observation rebuilt from an L1 / L2 / L3 key equals `observe` at every
 decision of random games over random rulesets; node, terminal, decision and
 set counts equal the census; the end-kind mass under the uniform profile equals
@@ -507,10 +506,10 @@ mirrored moments match the reference on a 7-card ruleset; the node order of
 a compile does not depend on its keyings (lazy and world trees), a keying
 attached from another compile gives the same L2 best response, and
 `best_response_perfect` equals the keyed L3 best response and replays to its
-value. On `TOY` the twelve step 5-6 values are reproduced (`scripts/cfr.py`).
+value. On `TOY` the twelve step 5-6 values are reproduced (`uno cfr`).
 The symmetric tree's checks are in section 18.
 
-## 17. CFR (`uno/cfr.py`)
+## 17. CFR (`uno/compiled/cfr.py`)
 
 Nash L1: counterfactual regret minimisation on the L1 keying of the compiled
 tree, both seats at once. Iteration `t`, for player `i`:
@@ -533,7 +532,7 @@ its equilibrium is a symmetric Nash equilibrium of the full game.
 `alternating` (CFR+) updates player 0, recomputes the passes, then updates
 player 1; vanilla updates both from one pass.
 
-**Variants** (step 8.7, notes_toy2.md), same passes, `cfr(variant=...)`:
+**Variants** (step 8.7, [step 8.7](results/08.7-toy2.md)), same passes, `cfr(variant=...)`:
 
 - discounting (DCFR, Brown & Sandholm 2019): after iteration `t` the
   accumulated positive regrets are multiplied by `t^a / (t^a + 1)`, the
@@ -544,7 +543,7 @@ player 1; vanilla updates both from one pass.
   regret matching on the accumulated regrets *plus the last instantaneous
   regret* (the optimistic step), with regret matching+ and `g = 2`.
 
-Presets in `uno.cfr.VARIANTS`: `vanilla`, `cfr+`, `dcfr`, `pcfr+`, and
+Presets in `uno.compiled.cfr.VARIANTS`: `vanilla`, `cfr+`, `dcfr`, `pcfr+`, and
 `dpcfr+` (prediction with DCFR's positive-regret discount). The orbit
 averaging applies to every variant, so all of them stay symmetric.
 
@@ -555,7 +554,7 @@ last entry (iteration count and NashConv) goes next to every ladder cell that
 uses the strategy. `CFRResult.save` / `load` persist it (`.cache/`, not
 committed).
 
-Checks (`tests/test_cfr.py`): on the 7-card ruleset CFR+ reaches NashConv
+Checks (`tests/compiled/test_cfr.py`): on the 7-card ruleset CFR+ reaches NashConv
 under 0.2 score points in 60 iterations and the log decreases; the profile's
 value sits inside its bracket at every logged iteration; the reference best
 response to the average strategy played as an agent equals the compiled
@@ -569,7 +568,7 @@ brackets intersect at the Nash value 0.6196, vanilla > CFR+ > DCFR and CFR+
 > PCFR+ in NashConv after 60 iterations, and the explicit flags reproduce
 the preset.
 
-## 18. Symmetry (`uno/symmetry.py`)
+## 18. Symmetry (`uno/game/symmetry.py`)
 
 The rules never name a particular color or rank. Renaming the colors (any
 permutation) and the ranks (any permutation among ranks with the same
@@ -604,13 +603,7 @@ the subtree below a deal and below its image are isomorphic, so one
 representative weighted by the orbit's mass gives the same expectation, and
 a quotient node weighted by its root's orbit mass stands for exactly the
 full-game histories in its orbit. `UniformLegal`, `PlayFirstRandom` and the
-`Heuristic` (section 13) are symmetric. An RL agent is made symmetric by
-canonicalising its observation and mapping its action back with the inverse
-element (`canonical`, `map_policy`), which is also a |G|-fold gain in data
-efficiency; a raw, asymmetric agent needs the full tree (`symmetric=False`),
-and symmetrising a policy (averaging its images under G) never raises its
-exploitability, because the best-response value is convex in the opponent's
-strategy and every image has the same exploitability.
+`Heuristic` (section 13) are symmetric. A learned agent is made symmetric in two steps: canonicalise its observation and map its action back with the inverse element (`canonical`, `map_policy`), which is also a |G|-fold gain in data efficiency; and at a canonical key with a non-trivial stabilizer, average its output within every action orbit of that stabilizer (see **Orbits** below). The first step alone does not give a symmetric policy: `canonical` returns one of several elements that reach the canonical key, and the action played would depend on which. A raw, asymmetric agent needs the full tree (`symmetric=False`). Symmetrising a policy by *mixing* its images under G (one image drawn uniformly for the whole game, equivalently the reach-weighted average of their behaviour strategies) never raises its exploitability, because the best-response value is convex in the opponent's mixed strategy and every image has the same exploitability; averaging the behaviour probabilities set by set is a different policy and has no such guarantee.
 
 **Orbits.** A symmetric strategy is, at a canonical set whose key has a
 non-trivial stabilizer, uniform within every orbit of the set's actions
@@ -623,12 +616,11 @@ real information set and score above the true best response (0.8065 against
 0.7934 for BR L1 seat 0 vs Random on `TOY`, found while building this). So
 `best_response` chooses the best orbit (mean of its actions' reach-weighted
 values) and plays it uniformly, which attains the full game's best-response
-value against a symmetric opponent (a symmetric best response always exists:
-average the images of any best response), and CFR averages regrets and
+value against a symmetric opponent (a symmetric best response always exists: mix the images of any best response), and CFR averages regrets and
 average-strategy mass within orbits (section 17). `tabulate` refuses an
 agent whose tabulated policy is not orbit-uniform.
 
-Checks (`tests/test_symmetry.py`): on random games over random rulesets,
+Checks (`tests/game/test_symmetry.py`): on random games over random rulesets,
 `g . step(s, a) == step(g . s, g . a)`, legal actions, returns and every
 level's keys commute with the action, inverses invert, keys round-trip
 through `encode_key` / `decode_key`, canonical forms are invariant
@@ -644,9 +636,9 @@ rejects an asymmetric agent on `TOY`; a tree survives save / load and the
 cache; on the quotient of `TOY` the twelve step 5-6 / 8.6 best-response
 values and the Nash value 0.6196 are reproduced.
 
-## 19. Sizing by position (`uno/sizing.py`)
+## 19. Sizing by position (`uno/reference/sizing.py`)
 
-`census` (section 16 and `uno/tree.py`) visits every history, so counting a
+`census` (`uno/reference/census.py`) visits every history, so counting a
 candidate toy costs as much as walking it and a cap hides everything above
 it. But the subtree below a history is a function of its **position** only:
 the two hands, the pile (the unknown multiset and the known tail), the top
@@ -673,7 +665,7 @@ the 1,252,040 full histories (7x); on `TOY_FULL` 49,177 for 774,007 (16x).
 The ratio grows with the tree, which is what makes the 13-card candidates
 countable.
 
-Checks (`tests/test_sizing.py`): on small rulesets, full and quotient, every
+Checks (`tests/reference/test_sizing.py`): on small rulesets, full and quotient, every
 count and the UniformLegal end mass equal the census's; the PlayFirstRandom
 end mass reproduces the compiled tree's exact random-vs-random value and the
 compiled node count; the world tree has the same values and depth; the cap

@@ -1,5 +1,5 @@
 """Exact moments of the mirrored evaluator by walking every world with the reference
-solver: the cross-check for `uno.compiled.solvers.exact_mirrored`. See RULES.md section 15.
+solver: the cross-check for `uno.compiled.solvers.exact_mirrored`. See docs/spec.md section 15.
 """
 
 from __future__ import annotations

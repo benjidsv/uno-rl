@@ -149,7 +149,7 @@ def _perms(ms: tuple[int, ...]) -> int:
 def initial_deals(rs: Ruleset, symmetric: bool = False) -> list[Outcome]:
     """All distinct initial states with their probabilities (sum to 1), or with
     `symmetric` one representative per color / rank orbit carrying the orbit's
-    probability (`uno.game.symmetry`, RULES.md section 18).
+    probability (`uno.game.symmetry`, docs/spec.md section 18).
 
     Conditioned on the deal being valid (a number card exists for the first
     discard); on the named toy rulesets every deal is valid.
@@ -214,7 +214,7 @@ Expand = Callable[[State], dict[int, list[Outcome]]]
 def worlds(rs: Ruleset, symmetric: bool = False) -> list[Outcome]:
     """L3 roots: every deal x every order of the unknown part of the pile.
     `symmetric`: one representative per orbit under `uno.game.symmetry`, carrying
-    the orbit's probability (RULES.md section 18)."""
+    the orbit's probability (docs/spec.md section 18)."""
     out: list[Outcome] = []
     for s, p in initial_deals(rs):
         unknown, tail = pile_split(s)

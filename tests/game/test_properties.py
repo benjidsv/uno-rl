@@ -1,4 +1,4 @@
-"""RULES.md section 11: invariants checked on random games over random small rulesets."""
+"""docs/spec.md section 11: invariants checked on random games over random small rulesets."""
 
 from __future__ import annotations
 

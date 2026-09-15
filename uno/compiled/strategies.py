@@ -1,5 +1,5 @@
 """Strategies over a keying of a compiled tree, from agents and from
-best-response tables. See RULES.md sections 16 and 18.
+best-response tables. See docs/spec.md sections 16 and 18.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def tabulate(tree: CompiledTree, level: Level, agent: Agent) -> np.ndarray:
         for a, p in probs.items():
             sigma[start + legal.index(a)] = p
     if tree.symmetric and not k.is_symmetric(sigma, 1e-9):
-        raise ValueError(f"{agent.name} is not symmetric: it is not uniform within some orbit of a canonical set (RULES.md section 18)")
+        raise ValueError(f"{agent.name} is not symmetric: it is not uniform within some orbit of a canonical set (docs/spec.md section 18)")
     return sigma
 
 

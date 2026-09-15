@@ -1,6 +1,6 @@
 """Exact computations as passes over a compiled tree: evaluation, outcome
 distributions, best responses (keyed, and perfect-information on a world tree),
-exploitability and the exact mirrored moments. See RULES.md section 16.
+exploitability and the exact mirrored moments. See docs/spec.md section 16.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: in
     the deepest level up, the action maximising the reach-weighted sum of its
     histories' continuation values. Ties: the lowest action id, as `uno.reference.solve`.
     On a symmetric tree the choice is an *orbit* of actions under the set's
-    stabilizer, played uniformly (RULES.md section 18): the value equals the
+    stabilizer, played uniformly (docs/spec.md section 18): the value equals the
     full game's best-response value against a symmetric opponent, and the
     strategy is symmetric."""
     t0 = time.perf_counter()

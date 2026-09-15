@@ -3,10 +3,12 @@
 Measurement first, learning second: an own UNO engine, a small toy game solved
 exactly, and evaluators that can tell skill from luck, before any RL.
 
-- `RULES.md`: the spec (engine, solvers, estimators, compiled tree, CFR). If
-  the code disagrees with it, the code is wrong.
-- `notes.md`: the plan, the build order and the results of steps 3-8.6;
-  `notes_toy2.md`: step 8.7 (TOY2).
+- [`docs/plan.md`](docs/plan.md): motivation, information levels, evaluators, the
+  ladder, and the build order with its status.
+- [`docs/spec.md`](docs/spec.md): the spec (engine, solvers, estimators, compiled
+  tree, CFR, symmetry, sizing). If the code disagrees with it, the code is wrong.
+- [`docs/results/`](docs/results/index.md): one file per step, and `index.md`
+  with the current headline numbers of every toy.
 
 ## Setup
 
@@ -48,7 +50,7 @@ Experiments report on the held-out `EVAL_SEEDS` (1,000,000+); build and test on
 | `uno/game/observe.py` | L1 / L2 / L3 observations, `observation_from_key` |
 | `uno/game/keys.py` | information-set keys per level and their byte encoding |
 | `uno/game/chance.py` | the chance model: lazy-chance children, deals, worlds, pile decomposition |
-| `uno/game/symmetry.py` | color / rank symmetry group, canonical keys, orbit representatives (RULES.md section 18) |
+| `uno/game/symmetry.py` | color / rank symmetry group, canonical keys, orbit representatives ([spec section 18](docs/spec.md)) |
 | `uno/agents/baseline.py` | `UniformLegal`, `PlayFirstRandom` (the "Random" row), `Heuristic`, `BySeat` |
 | `uno/agents/tabular.py` | `TabularAgent`, `PureStrategy`, `CompiledAgent`: agents that play a table |
 | `uno/reference/` | pure-Python reference walkers (slow, trusted): `census`, `solve` (evaluate, best response), `mirrored` (exact moments), `sizing` (position DP) |

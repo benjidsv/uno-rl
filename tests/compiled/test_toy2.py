@@ -1,4 +1,4 @@
-"""TOY2 (notes_toy2.md): the sizes, best-response values and Nash value are pinned."""
+"""TOY2 (docs/results/08.7-toy2.md): the sizes, best-response values and Nash value are pinned."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def test_toy2_best_responses(toy2_tree):
 
 
 def test_toy2_nash(toy2_tree):
-    """Nash seat-0 score 0.5784 (1000 CFR+ iterations in the script); 100 here brackets it to 0.02 pts."""
+    """Nash seat-0 score 0.5784 (1000 CFR+ iterations in the script); 100 here bracket it to 0.05 pts."""
     res = cfr(toy2_tree, iterations=100)
     lo, hi = res.final.bracket
     assert hi - lo < 0.0005

@@ -1,6 +1,6 @@
 """Estimators over recorded games: raw, mirrored (duplicate deals), paired
-comparison, and their exact counterparts on the toy. See RULES.md section 15
-and notes.md ("A better evaluator").
+comparison, and their exact counterparts on the toy. See docs/spec.md section 15
+and docs/plan.md ("A better evaluator").
 
 Play once, estimate many ways. `play_pairs` plays every seed from both seats
 (the first-named agent at seat 0, then at seat 1, same deal and pile order)
