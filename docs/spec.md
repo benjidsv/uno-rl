@@ -24,6 +24,11 @@ this file wins and the code is wrong. Measured numbers are not part of the spec:
 
 Deck size: toy `4 * (1+1) + 1 = 9`, full `108`.
 
+One more field, not a rule of the game: `draws` (`"pile"` by default, or
+`"tickets"`) says how a drawn card is chosen (section 8). Both give the same game;
+tickets only change which card a seed hands out. It is left out of the ruleset's
+repr, which names cached trees, and the exact trees refuse `"tickets"`.
+
 A ruleset is valid only if the deck has at least `2 * hand_size + 1` cards.
 
 ## 2. Cards and deck
@@ -154,6 +159,25 @@ If the pile is empty when a card must be drawn:
   `("reshuffle",)` is recorded, then the draw continues.
 - otherwise (`"none"`, or nothing to reshuffle): the game ends by
   **exhaustion** (section 9). Cards already drawn in this draw stay drawn.
+
+**Ticket draws** (`draws == "tickets"`, step 9, for evaluation). The card is not
+the top of the pile. For player p's k-th draw of the game (k = cards p has drawn
+so far), every physical card of the deck gets an independent uniform ticket from
+`Random(f"{seed}:t{p}:{k}")` (the i-th copy of a type holds that type's i-th
+ticket), and the card of the pile's unknown part with the lowest ticket is drawn
+(`uno.game.engine.ticket_index`). The unknown part excludes the cards skipped at
+setup, which stay at the bottom in their public order and are drawn last, as with
+the pile; after a reshuffle the whole pile is unknown. The lowest ticket among
+the cards present is equally likely to be any of them, and a player's k-th
+tickets are independent of everything before, so every draw is uniform over the
+unknown part given the history: the same game as the top of a shuffled pile, at
+L1 and L2. What changes is the coupling across games on one seed: two games give
+a player the same k-th card unless their piles differ in the card holding the
+lowest ticket, however their draw counts parted earlier, where the pile shifts
+every later draw by one card per extra draw. There is no pile order, so the L3
+worlds (pile order known) are not defined: the lazy tree and `worlds` raise.
+A game with tickets is still a deterministic function of (permutation, seed,
+actions), so the on-seeds exact values of section 14 work unchanged.
 
 ## 9. End of game and returns
 
@@ -291,7 +315,11 @@ identify a policy: `play_pairs` raises when two different agent objects share a
 name, and self-play passes the same object twice (step 8.9). The stream is keyed
 on the name rather than on the object so that runs reproduce across processes
 and the same policy built twice (two experiments, two loads of a checkpoint)
-still gets common random numbers.
+still gets common random numbers. An agent may set `stream` to key its rng on
+another name (`uno.eval.play.stream_name`): two variants of one policy (two
+checkpoints, `Mixture(heuristic, random, 0.05, stream="heuristic")`) then draw
+the same random numbers in the same information state, which `compare` wants;
+`play_pairs` also raises when the two agents of a pair share a stream (step 9).
 
 - `UniformLegal`: uniform over every legal action, including `Draw` with a play
   in hand and `Pass` after a playable draw. Sanity opponent only.
@@ -319,7 +347,7 @@ Only for `reshuffle == "none"` rulesets (they walk the lazy-chance tree of
   same on the real deal and real pile order of every seed, i.e. exactly what a
   simulation on those seeds estimates up to action sampling. **A fixed seed
   range carries its own deal luck**: seeds 0-4000 on `TOY` favour seat 0 by
-  about 1.5 points, so a simulation is checked against the exact value on the same games, not against the global value. `scores_on_seeds(rs, agents, seeds, levels)` returns the per-seat score means on those games and the mean over the seeds of Var(score | seed), the action noise of such a simulation; the check is z = (sim - mean) / sqrt(cond_var / n) with |z| <= 3 (0.27 % false alarms per check), and exact equality for two deterministic agents (zero conditional variance). A CI of the simulated score is the wrong scale for this: it also counts the deal and pile variance that the seeds fix, so a check against it is conservative and a miss under it more significant than it looks (step 8.8).
+  about 1.5 points, so a simulation is checked against the exact value on the same games, not against the global value. `scores_on_seeds(rs, agents, seeds, levels)` returns the per-seat score means on those games and the mean over the seeds of Var(score | seed), the action noise of such a simulation; the check is z = (sim - mean) / sqrt(cond_var / n) with |z| <= 3 (0.27 % false alarms per check), and exact equality for two deterministic agents (zero conditional variance). A CI of the simulated score is the wrong scale for this: it also counts the deal and pile variance that the seeds fix, so a check against it is conservative and a miss under it more significant than it looks (step 8.8). The on-seeds values start from real deals and never use the chance model's deal probabilities, so no simulation check sees a wrong one (the step 8.9 bug passed them all); `OnSeeds.deal_var` (the variance over the seeds of the per-seed exact score) and `z_global(exact, seat)` = (mean over the seeds - whole-game exact score) / sqrt(deal_var / n) check the chance model against real deals (step 9).
 - `best_response(rs, opponent, seat, level)`: the responder's best pure
   strategy against a fixed opponent (seen at L1), at information level:
   - **L1**: information set = `info_state`.
@@ -491,6 +519,27 @@ bracket `[1 - score(BR seat 1), score(BR seat 0)]` that contains the Nash
 seat-0 score; `exact_mirrored` (section 15) from the per-world outcome
 distributions of the two seat-swapped profiles on a world tree.
 
+Step 9 additions. `BestResponse.unreached_sets` is the mask behind `unreached`,
+and `ties` counts the reached responder sets where two or more action orbits
+share the best value (relative 1e-9), whose choice is a tie-break.
+`CompiledTree.rescored(exhaustion)` is the same tree with exhaustion endings
+scored another way (arrays and keyings shared, `util` replaced), so every solver
+runs unchanged: `"hand"` is the rule of section 9, `"draw"` scores every
+exhaustion ending as a draw (degenerate on free-play rulesets: the trailing
+player can always draw the pile empty and claim, so optimal play stalls into
+draws), `"stuck"` makes the player who had to draw from the empty pile lose (the
+drawer is the Draw arc's player, or the opponent of a play whose penalty draw
+exhausted the pile). `two_sided(tree)` is the value of the
+game in which both players see what a node holds, from a max / min backward pass
+(`extremal_values`): on the lazy tree both hands with the pile as chance
+(expectiminimax, the two-sided L2 game), on a world tree everything (minimax per
+world, L3), with the mass of the worlds whose result is the same under every pair
+of strategies and the outcome shares under minimax play. Both games are invariant
+under the symmetry group, so the quotient gives the full game's values. Unlike
+the one-sided L2 / L3 columns (best responses to a fixed opponent) these are
+games in which both sides play optimally, and they sit between the one-sided best
+responses of the two seats to any fixed opponent.
+
 Strategies from agents: `tabulate(tree, level, agent)` asks the agent at
 every set of the keying, both seats, with the observation rebuilt from the
 set's key by `uno.game.observe.observation_from_key` (the key is by definition
@@ -501,7 +550,16 @@ uniform within some action orbit). `tabulate_table` maps a
 spread over its orbit). `CompiledAgent` plays any strategy over any keying
 through `uno.eval.play`; on a symmetric tree it canonicalises the observation's
 key, looks the canonical set up and maps the actions back with the inverse
-element.
+element. `transfer(src, dst, level, sigma)` (step 9) rewrites a strategy over one
+tree's keying as a strategy over another tree's keying of the same level by
+matching set keys (raising unless every destination set is in the source with the
+same actions): the lazy and world trees of a ruleset share their L1 sets, numbered
+differently, so a tabulated or solved strategy moves between them without asking
+an agent again. `uno.store.load_or_tabulate` caches `tabulate` in
+`tab_<name>_<D|W>_<sym|full>_<level>_<agent>.npz`, keyed on the agent's name (a
+name identifies a policy, section 13) and a fingerprint of the keying; it is meant
+for the fixed baseline agents, and `CACHE_VERSION` is bumped when one of their
+policies changes.
 
 Checks (`tests/compiled/test_compiled.py`, `tests/game/test_observe_keys.py`): the
 observation rebuilt from an L1 / L2 / L3 key equals `observe` at every
@@ -557,6 +615,12 @@ player 1; vanilla updates both from one pass.
 Presets in `uno.compiled.cfr.VARIANTS`: `vanilla`, `cfr+`, `dcfr`, `pcfr+`, and
 `dpcfr+` (prediction with DCFR's positive-regret discount). The orbit
 averaging applies to every variant, so all of them stay symmetric.
+
+`cfr(fixed=(mask, strategy))` (step 9) plays `strategy` at the set-actions of
+`mask` (whole sets) at every iteration and in the average: CFR on the game in
+which those sets are fixed. With a best response's reached sets fixed, the free
+responder sets converge to the least exploitable completion of its unreached
+sets.
 
 The result is the normalised
 average strategy (sets never reached by their owner are uniform), the

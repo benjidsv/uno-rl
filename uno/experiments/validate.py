@@ -43,7 +43,7 @@ from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.agents.tabular import CompiledAgent
 from uno.compiled.cfr import CFRResult
 from uno.compiled.solvers import best_response, evaluate, exact_mirrored, exploitability
-from uno.compiled.strategies import br_row, tabulate
+from uno.compiled.strategies import br_row, transfer
 from uno.compiled.tree import CompiledTree, compile_tree
 from uno.eval.estimate import bootstrap_moments, compare, estimate_mirrored, play_pairs
 from uno.eval.play import EVAL_SEEDS, match
@@ -83,8 +83,8 @@ def main(argv: list[str] | None = None) -> None:
     lazy = compile_tree(rs, (Level.L1,) if light else (Level.L1, Level.L2), True, cache=CACHE)
     world = None if light else compile_tree(rs, (Level.L1, Level.L3), True, cache=CACHE)
     print(f"== {name}: {lazy}" + ("" if world is None else f"\n   world: {world}"))
-    sig = {a.name: (Level.L1, tabulate(lazy, Level.L1, a)) for a in (rnd, heu)}
-    sigw = None if world is None else {a.name: (Level.L1, tabulate(world, Level.L1, a)) for a in (rnd, heu)}
+    sig = {a.name: (Level.L1, store.load_or_tabulate(lazy, Level.L1, a)) for a in (rnd, heu)}
+    sigw = None if world is None else {name: (Level.L1, transfer(lazy, world, Level.L1, s)) for name, (_, s) in sig.items()}
     # the tree each level's best response lives on
     where = {Level.L1: lazy, Level.L2: lazy, Level.L3: world}
     levels = (Level.L1,) if light else (Level.L1, Level.L2, Level.L3)
@@ -144,7 +144,7 @@ def main(argv: list[str] | None = None) -> None:
                 ok = check(e >= -100 * ex.score_points - 1e-6, f"exploitability of {label} seat {seat} non-negative")
                 print(f"   {label:20s} {seat:<4d} {br.score:11.4f} {nash_resp:12.4f} {e:14.2f}  {ok}")
         nash = res.agent(lazy)
-        nash_w = None if world is None else (Level.L1, tabulate(world, Level.L1, nash))
+        nash_w = None if world is None else (Level.L1, transfer(lazy, world, Level.L1, res.avg))
         print("   exact Nash row / column (score of the first-named, seat 0 / seat 1)")
         for a, b in (("nash_l1", "random"), ("nash_l1", "heuristic"), ("nash_l1", "nash_l1"), ("random", "nash_l1"), ("heuristic", "nash_l1"), ("br_l1(random)", "nash_l1"), ("br_l1(random)+nash", "nash_l1")):
             print(f"   {a + ' vs ' + b:30s} {score(evaluate(lazy, (Level.L1, rows[a]), (Level.L1, rows[b]))[0]):.4f}  {score(evaluate(lazy, (Level.L1, rows[b]), (Level.L1, rows[a]))[1]):.4f}")

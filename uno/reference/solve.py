@@ -133,6 +133,15 @@ class OnSeeds:
     n: int
     mean: tuple[float, float]
     cond_var: tuple[float, float]
+    deal_var: tuple[float, float] = (math.nan, math.nan)  # variance over the seeds of the per-seed exact score
+
+    def z_global(self, exact: float, seat: int) -> float:
+        """z of the mean over these seeds against the exact score of the whole game,
+        on the deal and pile variance (step 9). The on-seeds values start from the
+        real deals, the whole-game value from the chance model's deal probabilities:
+        a wrong chance model moves one and not the other, which no simulation
+        check against `mean` can see."""
+        return (self.mean[seat] - exact) / math.sqrt(self.deal_var[seat] / self.n)
 
     def z(self, sim: float, seat: int) -> float:
         diff = sim - self.mean[seat]
@@ -152,6 +161,7 @@ def scores_on_seeds(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels=(Lev
     the variance of that randomness. Works at every level."""
     mean = [0.0, 0.0]
     var = [0.0, 0.0]
+    sq = [0.0, 0.0]
     n = 0
     for seed in bar(seeds, desc="exact on seeds", unit="seeds"):
         try:
@@ -164,8 +174,10 @@ def scores_on_seeds(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels=(Lev
             e2 = sum(p * ((sign * r + 1.0) / 2.0) ** 2 for r, p in dist.items())
             mean[seat] += e
             var[seat] += max(e2 - e * e, 0.0)
+            sq[seat] += e * e
         n += 1
-    return OnSeeds(n, (mean[0] / n, mean[1] / n), (var[0] / n, var[1] / n))
+    deal_var = tuple(max(sq[s] - mean[s] ** 2 / n, 0.0) / max(n - 1, 1) for s in (0, 1))
+    return OnSeeds(n, (mean[0] / n, mean[1] / n), (var[0] / n, var[1] / n), deal_var)
 
 
 def evaluate_on_seeds(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels=(Level.L1, Level.L1)) -> tuple[float, float]:

@@ -5,7 +5,7 @@ See docs/spec.md sections 1, 2, 5 and 12.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 from functools import cached_property
 from typing import Literal
@@ -60,6 +60,7 @@ class Pass:
 Action = Play | Draw | Pass
 
 Reshuffle = Literal["none", "seeded"]
+Draws = Literal["pile", "tickets"]
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,10 @@ class Ruleset:
     forced_play: bool = False
     reshuffle: Reshuffle = "seeded"
     max_turns: int | None = 1000
+    # how a card is drawn (docs/spec.md section 8): "pile" pops the top of the pile, "tickets"
+    # draws by per-draw tickets, same distribution, for coupled evaluation (step 9). Out of the
+    # repr, which names cached trees: those are only ever compiled with "pile".
+    draws: Draws = field(default="pile", repr=False)
 
     def __post_init__(self) -> None:
         if self.colors < 1:
@@ -84,6 +89,8 @@ class Ruleset:
             raise ValueError("rank_copies must be non-empty and non-negative")
         if self.reshuffle not in ("none", "seeded"):
             raise ValueError(f"unknown reshuffle mode {self.reshuffle!r}")
+        if self.draws not in ("pile", "tickets"):
+            raise ValueError(f"unknown draws mode {self.draws!r}")
         if self.hand_size < 1:
             raise ValueError("hand_size must be >= 1")
         if self.deck_size < 2 * self.hand_size + 1:
@@ -137,6 +144,11 @@ class Ruleset:
     def deck(self) -> tuple[int, ...]:
         """The deck multiset expanded into a sorted tuple of type ids."""
         return tuple(t for t, n in enumerate(self.deck_counts) for _ in range(n))
+
+    @cached_property
+    def deck_start(self) -> tuple[int, ...]:
+        """Index in `deck` of the first copy of each type."""
+        return tuple(self.deck.index(t) for t in range(self.num_types))
 
     @property
     def deck_size(self) -> int:

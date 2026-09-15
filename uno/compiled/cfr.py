@@ -159,6 +159,7 @@ def cfr(
     alpha: float | None = None,
     beta: float | None = None,
     gamma: float | None = None,
+    fixed: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> CFRResult:
     """CFR+ by default (`plus`: regret matching+, `alternating`, `linear`
     averaging); all three off is vanilla CFR. `variant` picks a preset from
@@ -166,7 +167,13 @@ def cfr(
     (see the module docstring) refine them, `gamma` defaulting to 1 with
     `linear` and 0 without. Logs exploitability at the iterations in `log_at`
     (the last iteration always) and stops early once NashConv is below
-    `target` score points."""
+    `target` score points.
+
+    `fixed = (mask, strategy)`: the set-actions in `mask` (whole information sets)
+    play `strategy` at every iteration and in the average. CFR then solves the game
+    in which those sets are fixed, e.g. the least exploitable completion of a best
+    response's unreached sets (step 9): fix the responder's reached sets and let
+    both seats run."""
     if variant is not None:
         plus, alternating, predictive, alpha, beta, g = VARIANTS[variant]
         gamma = g if gamma is None else gamma
@@ -180,6 +187,15 @@ def cfr(
     arc_node = (tree.arc_node[tree.arcs_of[0]], tree.arc_node[tree.arcs_of[1]])
     util = tree.seat_util(0)
     sigma = k.uniform()
+    if fixed is not None:
+        sigma[fixed[0]] = fixed[1][fixed[0]]
+
+    def average() -> np.ndarray:
+        avg = k.normalize(mass)
+        if fixed is not None:
+            avg[fixed[0]] = fixed[1][fixed[0]]
+        return avg
+
     regrets = np.zeros(K)
     mass = np.zeros(K)
     log: list[LogEntry] = []
@@ -216,6 +232,8 @@ def cfr(
         if predictive:
             base[mine] += inst
         sigma[mine] = k.normalize(np.maximum(base, 0.0))[mine]
+        if fixed is not None:
+            sigma[fixed[0]] = fixed[1][fixed[0]]
 
     log_at = set(log_at) | {iterations}
     progress = bar(total=iterations, desc=variant or ("cfr+" if plus else "cfr"), unit="iterations")
@@ -231,7 +249,7 @@ def cfr(
             update(1, r, v, av, weight)
         if t in log_at:
             p0 = time.perf_counter()
-            ex = exploitability(tree, level, k.normalize(mass))
+            ex = exploitability(tree, level, average())
             entry = LogEntry(t, p0 - t0 - paused, (ex.br[0].score, ex.br[1].score), (ex.value + 1) / 2, ex.score_points)
             paused += time.perf_counter() - p0
             log.append(entry)
@@ -243,13 +261,13 @@ def cfr(
     return CFRResult(
         level=level,
         iterations=t,
-        avg=k.normalize(mass),
+        avg=average(),
         mass=mass,
         regrets=regrets,
         current=sigma,
         log=log,
         seconds=time.perf_counter() - t0 - paused,
-        config=dict(plus=plus, alternating=alternating, predictive=predictive, alpha=alpha, beta=beta, gamma=gamma, variant=variant, iterations=iterations, target=target),
+        config=dict(plus=plus, alternating=alternating, predictive=predictive, alpha=alpha, beta=beta, gamma=gamma, variant=variant, iterations=iterations, target=target, fixed=fixed is not None),
     )
 
 

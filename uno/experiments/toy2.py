@@ -20,9 +20,9 @@ from __future__ import annotations
 import sys
 import time
 
+from uno import store
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.compiled.solvers import evaluate
-from uno.compiled.strategies import tabulate
 from uno.compiled.tree import compile_tree
 from uno.experiments.common import by_seat, columns, exploitability_rows, matchups, score, voluntary_draws
 from uno.game import rules
@@ -40,7 +40,7 @@ def columns_l1(lazy, label: str) -> dict:
     print(f"\n   {label}: best-response column (score of the responder, L1 only)")
     print(f"   {'opponent':10s} {'seat':4s} {'BR L1':>7s} {'sec':>5s}")
     for opp in (PlayFirstRandom(rs), Heuristic(rs)):
-        sl = (Level.L1, tabulate(lazy, Level.L1, opp))
+        sl = (Level.L1, store.load_or_tabulate(lazy, Level.L1, opp))
         for seat in (0, 1):
             t0 = time.perf_counter()
             l1 = best_response(lazy, Level.L1, sl, seat)
@@ -96,8 +96,8 @@ def main(argv: list[str] | None = None) -> None:
     exploitability_rows(lazy, res, cols)
     sys.stdout.flush()
 
-    rnd = (Level.L1, tabulate(lazy, Level.L1, PlayFirstRandom(rs)))
-    heu = (Level.L1, tabulate(lazy, Level.L1, Heuristic(rs)))
+    rnd = (Level.L1, store.load_or_tabulate(lazy, Level.L1, PlayFirstRandom(rs)))
+    heu = (Level.L1, store.load_or_tabulate(lazy, Level.L1, Heuristic(rs)))
     br_r = by_seat(lazy, [cols[("random", seat)][0] for seat in (0, 1)])
     br_h = by_seat(lazy, [cols[("heuristic", seat)][0] for seat in (0, 1)])
     nash_s = (Level.L1, res.avg)

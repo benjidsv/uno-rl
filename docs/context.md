@@ -3,9 +3,8 @@
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 8.9, 2026-09-15** (commit
-`fca5589`); next step is **9, review follow-ups**, then **9.5, AIVAT and the
-sampled methods**.
+with no access to the repo. State as of **step 9, 2026-09-15** (on top of commit
+`fca5589`); next step is **9.5, AIVAT and the sampled methods**.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -47,7 +46,7 @@ Status of the three suspected causes today:
 
 | cause | status |
 |-------|--------|
-| noisy evaluator | **supported.** On the toy a 3-point edge at one seat reaches 3 sigma at 1,700-2,400 raw games (50 % power; 2,800-3,900 for 80 %). On full UNO, pairing Heuristic against Random removed only ~10 % of the variance, so a 3-point comparison reaches 3 sigma at ~9,000 games either way (~15,000 at 80 % power); near-identical policies are not measured there yet. Iterations 1-4 never had that budget. |
+| noisy evaluator | **supported.** On the toy a 3-point edge at one seat reaches 3 sigma at 1,700-2,400 raw games (50 % power; 2,800-3,900 for 80 %). On full UNO, pairing Heuristic against Random removed only ~10 % of the variance, so a 3-point comparison reaches 3 sigma at ~9,000 games either way (~15,000 at 80 % power); between near-identical variants on a shared action-rng stream pairing removes 77-85 % (1,250-1,800 deals, step 9). Iterations 1-4 never had that budget. |
 | buggy rules | sidestepped: own engine with a written spec and property tests. Not measured on rlcard itself. |
 | unknown ceiling | **measured on the toys**: the exact best response beats Random by 14-20 points at the same seat, and the rulebot ("Heuristic") leaves 5-14 points on the table. The full-UNO ceiling is still unknown. |
 
@@ -69,9 +68,10 @@ Status of the three suspected causes today:
   - **L3**: L2 + the draw-pile order: perfect information, an oracle.
 - **Best response (BR Lx)**: the best strategy against a *fixed, known*
   opponent policy, computed at information level x. Exact, one backward pass.
-  L2 and L3 "optimal" only exist as best responses: once the opponent's
-  policy is known and their hand visible there is nothing hidden to be in
-  equilibrium about.
+  One-sided L2 and L3 "optimal" only exist as best responses: once the
+  opponent's policy is known and their hand visible there is nothing hidden to
+  be in equilibrium about. **Two-sided** games, where both players see both hands
+  (L2) or everything (L3), do have minimax values (`two_sided`, step 9).
 - **Nash L1**: the only level where "optimal" can mean an equilibrium (both
   players hide information). Computed with **CFR** (counterfactual regret
   minimisation). The Nash *value* is unique, the strategy is not, so every
@@ -105,7 +105,9 @@ Python 3.14 + numpy, managed with uv.
 **One parametrised ruleset.** Toy and full UNO are the same code with
 different parameters: colors, copies per rank, skip/reverse/+2 per color,
 wilds, wild +4, hand size, `draw_then_may_play`, `forced_play`, `reshuffle`
-(`none` or `seeded`), `max_turns`. Two players always.
+(`none` or `seeded`), `max_turns`. Two players always. Since step 9 also
+`draws` (`pile` or `tickets`), which is not a rule: same game, different
+coupling of games on one seed (section 5.14).
 
 **Deterministic and immutable.** All chance is the initial permutation (plus
 seeded reshuffles on full UNO). A game is a pure function of (permutation,
@@ -192,8 +194,9 @@ added once 72 % showed up), so steps 5-6 were the first numbers on a ruleset
 fixed *before* running them.
 
 **Step 8.5 asked "does the toy transfer?"** (section 6.7). Answer: the gap was
-not size but **missing decisions** (voluntary draw = 60 % of full-UNO
-decisions, action cards = 20 %, both absent on `TOY`) and **game length**.
+not size but **missing decisions** (the voluntary draw is *available* at 60 % of
+full-UNO decisions, action cards among other plays at 20 %, both absent on `TOY`)
+and **game length**.
 
 **`TOY_FULL`** = `TOY` without forced play. 774k quotient histories. Measures
 the worth of the voluntary draw. Solvable only after the symmetry quotient
@@ -355,10 +358,14 @@ checkpoint better than the rulebot" is always a paired comparison, never two raw
 winrates. `TOY2`: 55-90 % removed.
 
 **On full UNO pairing Heuristic against Random removes only ~10 %** (var ratio
-0.89); ~9,000 games for a 3-point comparison at 3σ either way (~15,000 at 80 %
-power). **This is the main reason AIVAT (step 9.5) exists in the plan.** Not
-measured yet: pairing two near-identical policies (checkpoints) on full UNO,
-where the games may stay coupled longer (step 9).
+0.89); ~9,000 games for a 3-point comparison at 3σ (~15,000 at 80 % power).
+**Between near-identical variants on one action-rng stream it removes 77-85 %**
+(step 9: the Heuristic against a 5 %-Random mixture or a changed threshold,
+1,250-1,800 deals for 3 points at 3σ with 80 % power instead of ~8,000). The same
+mixture on its own rng stream keeps 54-72 % of the variance: checkpoints of one
+policy must share a stream (`stream`, spec section 13). Ticket draws (spec
+section 8, same game, a player's k-th draw coupled across games) cut another
+3-20 %. AIVAT (step 9.5) remains the estimator for dissimilar policies.
 
 **Bug (step 8.6): rng coupling.** With the Heuristic now stochastic on ties,
 the sampled seat correlation came out -0.364 against exact -0.300 (4.5σ). The
@@ -529,18 +536,20 @@ row agent was partly a property of an arbitrary fill-in. Random never draws with
 a play in hand, so on free-play toys an exploiter reaches those sets just by
 drawing.
 
-| ruleset | L1 sets Random never reaches (seat 0 / 1) | exploitability as solved | Nash-filled |
-|---------|-------------------------------------------|--------------------------|-------------|
-| `TOY` | 42 % / 47 % | 1.56 / 0.36 | 1.38 / 0.29 |
-| `TOY_FULL` | 76 % / 84 % | 4.55 / 1.26 | 3.06 / 2.44 |
-| `TOY2` | 52 % / 60 % | 1.68 / 2.17 | 1.41 / 1.70 |
-| `TOY2_SKIP` | 49 % / 59 % | 1.34 / 1.74 | 1.05 / 1.09 |
-| `TOY2_FULL` | 85 % / 91 % | 6.25 / 4.89 | 3.40 / 3.30 |
+| ruleset | L1 sets Random never reaches (seat 0 / 1) | exploitability as solved | Nash-filled | least exploitable (step 9) |
+|---------|-------------------------------------------|--------------------------|-------------|----------------------------|
+| `TOY` | 42 % / 47 % | 1.56 / 0.36 | 1.38 / 0.29 | 1.21 / 0.24 |
+| `TOY_FULL` | 76 % / 84 % | 4.55 / 1.26 | 3.06 / 2.44 | 2.83 / 1.14 |
+| `TOY2` | 52 % / 60 % | 1.68 / 2.17 | 1.41 / 1.70 | 1.37 / 1.64 |
+| `TOY2_SKIP` | 49 % / 59 % | 1.34 / 1.74 | 1.05 / 1.09 | 1.01 / 0.99 |
+| `TOY2_FULL` | 85 % / 91 % | 6.25 / 4.89 | 3.40 / 3.30 | 3.11 / 2.59 |
 
 Fix: `best_response(..., completion=strategy)` fills unreached sets explicitly,
 and `br_row` builds a two-seat row. Reports now show both. Nash-filled is *one*
-reasonable fill-in, not the least exploitable (solving for minimal
-exploitability was not done). **The earlier claim "BR to Random is no longer
+reasonable fill-in, not the least exploitable. Step 9 solved for the least
+exploitable one (CFR with the reached sets fixed): on `TOY_FULL` the Nash fill
+was worse than the solver's arbitrary one at seat 1, and half or more of the
+free toys' reached sets are tied as well, so even these are upper bounds. **The earlier claim "BR to Random is no longer
 near-Nash on free-play toys" survives at about half the size**, and its per-seat
 split was an artefact.
 
@@ -565,6 +574,46 @@ split was an artefact.
 - Smaller fixes along the way: `match` used to swallow any `ValueError` as an
   "invalid seed" (now only deal errors); a test asserted `x == constant or True`;
   a hypothesis filter health check was flaky on one test (suppressed).
+
+### 5.14 Step 9 tools: robustness checks and coupled evaluation
+
+**Problem (step 9 review):** several readings depended on choices never varied
+(the scoring of exhaustion, the Nash strategy CFR happened to reach, the fill-in of
+unreached sets), the on-seeds checks could not see the deal model, and "pairing
+does not help on full UNO" had only been measured on dissimilar policies.
+
+**Techniques**, all exact passes on the existing trees unless noted:
+
+- `CompiledTree.rescored("draw" | "stuck")`: the same tree with exhaustion scored
+  as a draw, or as a loss for the player stuck on the empty pile; every solver
+  runs unchanged, so a sampled method can be validated against three exact games
+  for free.
+- `two_sided(tree)`: minimax values when both see both hands / everything, and the
+  share of worlds no play changes.
+- `cfr(fixed=...)`: CFR with some sets frozen; the least exploitable completion of
+  a best response's unreached sets. `best_response` also counts tied reached sets.
+- `OnSeeds.z_global`: mean of on-seeds exact values over many real deals against
+  the whole-game value (catches a wrong deal model, which no simulation check can).
+- **Ticket draws** (`draws="tickets"`, sampled only): a player's k-th draw is the
+  pile card with the lowest of fresh tickets keyed on (seed, player, k); same game,
+  but paired games keep drawing the same cards after their draw counts part.
+- **Shared rng streams** (`stream` on an agent): variants of one policy draw the
+  same action random numbers, as two checkpoints should.
+- **Speed-ups for `TOY2_FULL`**: `transfer` moves a strategy between the lazy and
+  world trees by key instead of tabulating again, and `store.load_or_tabulate`
+  caches the baseline agents' tabulations (a Python call per set, ~50 s per agent
+  per tree on 3.75M sets). The cache is keyed on the agent's name: bump
+  `CACHE_VERSION` if a baseline policy changes.
+
+**Bug caught by its own test:** the first ticket draw could pick the setup's
+known tail (cards skipped at setup, public, drawn last), 4.7σ off the exact value
+on a 7-card ruleset; fixed before any number was reported. The ticket paths the
+named toys never take (duplicate cards, +2 / +4 penalty draws) are checked on a
+10-card ruleset in `pairing`.
+
+**What it bought:** section 6 readings now carry their scoring and fill-in
+caveats (section 7); checkpoint comparisons on full UNO turned out affordable
+with pairing on a shared stream. Results: `docs/results/09-results.md`.
 
 ## 6. Results: what we know
 
@@ -649,11 +698,14 @@ Exploitability of row agents (points, row at seat 0 / seat 1):
 
 | ruleset | Random | Heuristic | BR L1(random): as solved (Nash-filled) |
 |---------|--------|-----------|----------------------------------------|
-| `TOY` | 17.1 / 17.4 | 5.6 / 11.8 | 1.6 / 0.4 (1.4 / 0.3) |
-| `TOY_FULL` | 17.5 / 21.5 | 6.0 / 15.8 | 4.6 / 1.3 (3.1 / 2.4) |
-| `TOY2` | 14.8 / 15.2 | 7.2 / 11.8 | 1.7 / 2.2 (1.4 / 1.7) |
-| `TOY2_SKIP` | 16.7 / 16.8 | 11.0 / 11.9 | 1.3 / 1.7 (1.1 / 1.1) |
-| `TOY2_FULL` | 17.3 / 19.1 | 9.4 / 15.5 | 6.3 / 4.9 (3.4 / 3.3) |
+| `TOY` | 17.1 / 17.4 | 5.6 / 11.8 | 1.6 / 0.4 (1.4 / 0.3) [1.2 / 0.2] |
+| `TOY_FULL` | 17.5 / 21.5 | 6.0 / 15.8 | 4.6 / 1.3 (3.1 / 2.4) [2.8 / 1.1] |
+| `TOY2` | 14.8 / 15.2 | 7.2 / 11.8 | 1.7 / 2.2 (1.4 / 1.7) [1.4 / 1.6] |
+| `TOY2_SKIP` | 16.7 / 16.8 | 11.0 / 11.9 | 1.3 / 1.7 (1.1 / 1.1) [1.0 / 1.0] |
+| `TOY2_FULL` | 17.3 / 19.1 | 9.4 / 15.5 | 6.3 / 4.9 (3.4 / 3.3) [3.1 / 2.6] |
+
+(In square brackets: least exploitable fill-in, step 9. All under the exhaustion
+rule; other scorings move these by several points, section 6.8.)
 
 Nash row and column (seat 0 / seat 1):
 
@@ -667,24 +719,27 @@ Nash row and column (seat 0 / seat 1):
 
 Readings:
 
-- **On forced-play toys, the best response to Random is near-Nash** (1.1-1.7
-  pts exploitable, Nash-filled). Playing well against a weak player and playing
+- **On forced-play toys, the best response to Random is near-Nash** (1.0-1.6
+  pts exploitable with the least exploitable fill-in). Playing well against a weak player and playing
   unexploitably are almost the same thing there.
-- **On free-play toys they separate** (2.4-3.4 pts Nash-filled): enough room for
-  deception that the exploitability column becomes informative for RL rows. This
-  was first reported at double the size (4.6-6.3) before the fill-in correction.
+- **On free-play toys they separate, most on `TOY2_FULL`** (least exploitable
+  3.1 / 2.6 pts there, 2.8 / 1.1 on `TOY_FULL`): enough room for deception that
+  the exploitability column becomes informative for RL rows. First reported as
+  4.6-6.3 (as solved), then 2.4-3.4 (Nash-filled, step 8.8).
 - **Nash gives up little against weak opponents**: on `TOY` 0.6 / 2.8 pts vs
-  Random and ~1-2 vs the Heuristic compared with dedicated best responses. The
+  Random and 0.5 / 2.2 vs the Heuristic compared with dedicated best responses. The
   cost of safety is small.
 - **The Heuristic is weakest where the draw matters** (15.5 exploitable from seat
   1 on `TOY2_FULL`), and on `TOY2_SKIP` (11.0 / 11.9) its skip rule is a guess.
   Its self-play seat gap collapses from 27.7 to 15.3 on the skip toy.
 - A best response to Random transfers: against the Heuristic it scores within
-  0.8-1.4 pts of the dedicated best response (`TOY`, step 7).
+  0.8-1.4 pts of the dedicated best response (`TOY`, step 7, step 4 Heuristic).
 
 ### 6.5 The voluntary draw is a real decision
 
-It is 60 % of full-UNO decisions, so step 8.5 asked whether it carries skill.
+It is available at 60 % of full-UNO decisions (a card plays and `Draw` is legal;
+how often drawing is right there is unknown), so step 8.5 asked whether it
+carries skill.
 BR L1 gain from allowing it (free minus forced, points, seat 0 / seat 1):
 `TOY_FULL` - `TOY` +0.8 / +3.7 vs Random, +0.7 / +3.7 vs Heuristic;
 `TOY2_FULL` - `TOY2` +1.7 / +4.7 vs Random, +1.6 / +4.3 vs Heuristic. **Mostly
@@ -699,7 +754,11 @@ How often it's used (draws with a play in hand per game, seat 0 / seat 1):
 | `TOY2_FULL` | 0.129 / 0.329 | 0.248 / 0.495 (0.055 / 0.079) |
 
 On `TOY_FULL` it is mostly a tempo tool of the trailing seat; with three ranks
-it becomes a real alternative to a bad play. **Its value is not the toy-only
+it is used more, which step 8.7 read as "a real alternative to a bad play"; that
+mechanism is untested, every draw on a 2-3-card pile changes pile parity, and on the
+2-card-pile `TOY_FULL` the draw's effect on the Nash seat gap changes sign with
+the scoring of exhaustion (on the three-rank toys it shrinks the gap under every
+scoring, -4.4 / -5.2 / -0.6 pts, step 9). **Its value is not the toy-only
 claim**: forbidding the claim with a play in hand leaves BR L1 unchanged to 4
 decimals on both free toys. Best responders never claim.
 
@@ -717,10 +776,9 @@ Budget arithmetic (exact, `TOY`): a 3-point edge at one seat, raw, needs
 1,700-2,400 games at 3σ (the intro's ~2,400 estimate holds). That is 50 % power:
 a 3σ test catches a real 3-point edge half the time; 1.64x for 80 % power
 (2,800-3,900), 2.4x for 95 %. Paired comparison of near-identical policies:
-370-570 games (600-940 at 80 %). **On full UNO neither trick helped between
-Heuristic and Random**; near-identical policies and a draw coupling that survives
-diverging draw counts are still to measure (step 9) before concluding that AIVAT
-is the only estimator that can.
+370-570 games (600-940 at 80 %). **On full UNO neither trick helps between
+Heuristic and Random** (var ratio 0.89-0.90), but pairing near-identical variants
+on a shared rng stream removes 77-85 % of the variance (step 9, section 5.5).
 
 ### 6.7 Transfer: how `TOY` differs from full UNO (step 8.5)
 
@@ -734,7 +792,7 @@ Decisions per game (Heuristic vs Random, both players), share of all decisions:
 | wild: hold or spend | 12 % | 8 % |
 | wild: pick a color | 18 % | 10 % |
 | action card among other plays | 0 | 20 % |
-| draw with a play in hand | 0 | 60 % |
+| draw with a play in hand (legal, not taken) | 0 | 60 % |
 | play or keep the drawn card | 8 % | 11 % |
 
 Color and wild decisions exist on both at comparable shares (3-5x more per game
@@ -745,13 +803,19 @@ cards). Full-UNO games: 55 actions random vs random, 44.5 heuristic vs random,
 draw luck) is the part no exact toy can reproduce; it belongs to sampled
 estimators validated on the toys.
 
-### 6.8 Exhaustion is less of a distortion than feared
+### 6.8 Exhaustion: a modest share of games, a first-order rule
+
+*Step 9: scoring exhaustion differently on the same tree (as a draw, or as a loss
+for the player stuck on the empty pile) moves the Nash seat gap by up to 13
+points on the forced toys (under 1 on `TOY2_SKIP`), and the alternatives
+distort free play ("stuck" on both free toys, "draw" on `TOY_FULL`). Seat gaps, exploitability and voluntary-draw readings
+belong to the rule; the accounting below stands.*
 
 ~19 % of `TOY` games end by exhaustion under Random, **15 % under Nash vs Nash**:
 strong play doesn't drift into it. The edges of the best responder and of Nash
 over Random arrive mostly through emptied hands (exhaustion contributes -2.7 to
 +4.0 pts, accounting identity, not a causal split). The Heuristic *loses*
-exhaustion endings (0.44 within them at seat 0 vs Random's 0.57), giving back 5-6
+exhaustion endings (step 4 Heuristic: 0.44 within them at seat 0 vs Random's 0.57), giving back 5-6
 pts, which suggests its wild-holding rule is miscalibrated (not checked). A
 causal test (a ruleset scoring exhaustion differently) was not run.
 
@@ -794,7 +858,11 @@ Kept because they show where this kind of analysis goes wrong.
 | the step 8.7 wild/duplicate sizing rows | deal probabilities with duplicate cards were wrong (sizes stand, R vs R moved ≤ 0.4 pts) |
 | split pairs: "3 games in 5 on `TOY` are decided before anyone moves" | independent games already split 39-50 %; the deal adds 13-29 pts, and 4 % of worlds have a result no play changes (step 9) |
 | "N games for a 3-point edge at 3σ" read as a budget | that N has 50 % power; 1.64x for 80 % (step 9) |
-| "on full UNO neither pairing trick helps; AIVAT is the only way" | measured between Heuristic and Random only; near-identical policies and draw coupling untested (step 9) |
+| "on full UNO neither pairing trick helps; AIVAT is the only way" | true between Heuristic and Random; near-identical variants on a shared rng stream: 77-85 % removed, tickets another 3-20 % (step 9) |
+| "the voluntary draw shrinks the Nash seat gap"; "with three ranks a real alternative to a bad play" | holds on the three-rank toys under every scoring of exhaustion (-4.4 / -5.2 / -0.6 pts), but on the 2-card-pile `TOY_FULL` the sign changes with the scoring (-6.6 / +6.1 / -11.0); every draw changes pile parity; mechanism untested (step 9) |
+| "exhaustion is less of a distortion than feared" | no scoring is neutral: Nash seat gap moves up to 13 pts on forced toys, the alternatives distort free play (step 9) |
+| BR L1(random) filled with Nash measures the free-play separation | the Nash fill is not the least exploitable, and on `TOY_FULL` worse than the solver's at seat 1; least exploitable 2.83 / 1.14 (step 9) |
+| (step 9 review) "on `TOY` hidden information favours seat 0" generalised | `TOY` only; on `TOY2` and `TOY2_SKIP` seeing everything helps seat 0 |
 
 ## 8. Dead ends and things deliberately not done
 
@@ -816,7 +884,7 @@ Kept because they show where this kind of analysis goes wrong.
 - **Pairs as a training signal**: explicitly not; mirrored scores are an
   evaluation metric, never a PPO reward.
 
-## 9. Next: step 9 (review follow-ups), 9.5 (AIVAT and sampled methods) and beyond
+## 9. Next: step 9.5 (AIVAT and sampled methods) and beyond
 
 ### Build order
 
@@ -833,8 +901,8 @@ Kept because they show where this kind of analysis goes wrong.
 | 8.7 | TOY2 family sized and solved, DCFR / PCFR+, validation | done |
 | 8.8 | review, methodology fixes M1-M4 | done |
 | 8.9 | duplicate-card deal fix, rng-name check, cache version, full rerun | done |
-| **9** | **review follow-ups** (`docs/results/09-review.md`): split share, test power, exhaustion sensitivity, equilibrium choice, fill-in, pairing on full UNO, where the skill is | **next** |
-| 9.5 | sampled methods validated against exact values on the toys: AIVAT, PIMC / MCTS | |
+| 9 | review follow-ups (`docs/results/09-review.md`, `09-results.md`): split share, test power, exhaustion scorings, two-sided values, equilibrium choice, fill-in, deal model, pairing on full UNO, ticket draws, speed-ups; the review's section D (where the skill is, memory ceiling, metrics) is still to discuss | done |
+| **9.5** | **sampled methods validated against exact values on the toys: AIVAT, PIMC / MCTS** | **next** |
 | 10 | formalise the toy results: figures and tables that RL relies on | |
 | 11 | RL | |
 
@@ -906,7 +974,9 @@ Planned design and checks (from the plan and step 8.9):
 - Python 3.14, `uv sync`; experiments run as `uv run uno <experiment> [args]`
   (`uv run uno list`): `census`, `ladder`, `mirror`, `cfr`, `transfer`,
   `symmetry`, `sizing`, `loop_cost`, `cfr_variants`, `toy2`, `toy2_columns`,
-  `validate`. Tests: `uv run pytest` (~4 min). Everything:
+  `validate`, and since step 9 `robustness` (exhaustion scorings, two-sided
+  values, equilibrium choice, fill-in, deal model) and `pairing` (ticket draws,
+  near-identical policies on full UNO). Tests: `uv run pytest` (~4 min). Everything:
   `bash scripts/rerun_all.sh` (~2 h, logs in `logs/rerun-*/report.txt`).
 - `.cache/` holds compiled trees and CFR strategies (`TOY2_FULL` trees are
   1.9-3.0 GB each and 2-5 GB in RAM; about 8 GB total). Bump

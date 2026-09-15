@@ -134,3 +134,20 @@ class BySeat:
 
     def policy(self, obs: Observation, legal: tuple[int, ...]) -> Policy:
         return self.seats[obs.seat].policy(obs, legal)
+
+
+class Mixture:
+    """`(1 - eps) * agent + eps * other` at every decision, over the legal actions in
+    their order: a near-identical variant of `agent`, for the step 9 pairing checks.
+    Symmetric when both agents are. `stream` (see `uno.eval.play.stream_name`) lets
+    it share `agent`'s action rng, as two checkpoints of one policy would."""
+
+    def __init__(self, agent: Agent, other: Agent, eps: float, name: str | None = None, stream: str | None = None) -> None:
+        self.agent, self.other, self.eps = agent, other, eps
+        self.name = name or f"{agent.name}+{eps:g}{other.name}"
+        self.stream = stream
+
+    def policy(self, obs: Observation, legal: tuple[int, ...]) -> Policy:
+        p, q = self.agent.policy(obs, legal), self.other.policy(obs, legal)
+        mix = {a: (1.0 - self.eps) * p.get(a, 0.0) + self.eps * q.get(a, 0.0) for a in legal}
+        return {a: x for a, x in mix.items() if x > 0}

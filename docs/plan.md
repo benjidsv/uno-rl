@@ -20,8 +20,8 @@ rules in [spec.md](spec.md).
 | 8.7 | `TOY2` family sized and solved, DCFR / PCFR+, validation | done | [08.7](results/08.7-toy2.md) |
 | 8.8 | review, restructure, methodology fixes | done | [08.8](results/08.8-review.md), [re-runs](results/08.8-results.md) |
 | 8.9 | fixes before AIVAT: deal probabilities with duplicate cards, rng names, cache version | done | [08.9](results/08.9-fixes.md) |
-| 9 | review follow-ups: split share, test power, exhaustion sensitivity, equilibrium choice, fill-in, pairing on full UNO, where the skill is | next | [09 review](results/09-review.md) |
-| 9.5 | sampled methods validated on the toys: AIVAT, PIMC / MCTS | | |
+| 9 | review follow-ups: split share, test power, exhaustion scorings, two-sided values, equilibrium choice, fill-in, deal model, pairing on full UNO, ticket draws, speed-ups | done | [09 review](results/09-review.md), [results](results/09-results.md) |
+| 9.5 | sampled methods validated on the toys: AIVAT, PIMC / MCTS | next | |
 | 10 | formalise the toy results for RL: a performance range with ceilings, an edge-by-decision diagnostic tool, figures and tables | | |
 | 11 | RL | | |
 
@@ -90,7 +90,7 @@ Three information levels:
 Key clarification (this was the source of my confusion): the three levels are **not the same kind of object**.
 
 - **L1 is the only level where "optimal" can mean a Nash equilibrium**, because both players have hidden info. Nash L1 is computed with CFR (Counterfactual Regret Minimization: iterate over the game tree, accumulate regret per information set, average strategy converges to Nash in 2p zero-sum games). Only L1 is symmetric, so only L1 has an "OPT vs OPT" cell.
-- **L2 and L3 "optimal" only exist as a best response to a fixed, known opponent policy.** Once the opponent's policy is known and their hand is visible there is nothing hidden:
+- **One-sided L2 and L3 "optimal" only exist as a best response to a fixed, known opponent policy** (step 9: the *two-sided* games, where both players see both hands or everything, do have minimax values, `two_sided`). Once the opponent's policy is known and their hand is visible there is nothing hidden:
   - L3 = plain minimax/expectimax over a deterministic game (the opponent's randomness is just weights in the search).
   - L2 = expectimax where the only unknown is the draw order.
 - The "vs Random" and "vs Heuristic" cells at L1 are also best responses, not Nash. "Best response to random" and "Nash" give different numbers. So the columns of the ladder are "best response to the row agent at level Lx", plus a separate Nash L1 row.

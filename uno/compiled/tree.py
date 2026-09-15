@@ -50,7 +50,7 @@ from __future__ import annotations
 
 import time
 from array import array
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Hashable
 
@@ -359,6 +359,28 @@ class CompiledTree:
 
     def seat_util(self, seat: int) -> np.ndarray:
         return self.util[self.terminals] * (1.0 if seat == 0 else -1.0)
+
+    def rescored(self, exhaustion: str = "hand") -> CompiledTree:
+        """The same tree under another scoring of exhaustion endings (docs/spec.md
+        section 9): "hand" is the ruleset's own (fewer cards wins); "draw" scores
+        every exhaustion ending as a draw (on a free-play ruleset a trailing player
+        then stalls into a draw: drawing the pile empty and claiming is always
+        available); "stuck" makes the player who had to draw from the empty pile
+        lose (a claim becomes a loss). Arrays and keyings are shared and only `util`
+        changes, so every solver runs unchanged on the result (step 9)."""
+        if exhaustion == "hand":
+            return self
+        exh = self.end == END_KINDS.index("exhaustion")
+        if exhaustion == "draw":
+            return replace(self, util=np.where(exh, 0.0, self.util))
+        if exhaustion != "stuck":
+            raise ValueError(f"unknown exhaustion scoring {exhaustion!r}")
+        parent_arc = np.zeros(self.n, dtype=np.int64)
+        parent_arc[self.edge_child] = self.edge_arc
+        arc = parent_arc
+        # a Draw arc exhausts its own player; a play exhausts the opponent through a penalty draw
+        drawer = np.where(self.arc_action[arc] == self.rs.draw_action, self.arc_player[arc], 1 - self.arc_player[arc])
+        return replace(self, util=np.where(exh, np.where(drawer == 1, 1.0, -1.0), self.util))
 
 
 # -- build --------------------------------------------------------------------

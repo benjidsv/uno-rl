@@ -41,6 +41,8 @@ class BestResponse:
     sigma: np.ndarray
     seconds: float
     unreached: int = 0  # responder sets with zero counterfactual reach: their action is a fill-in, not a choice
+    ties: int = 0  # reached responder sets where 2+ action orbits share the best value (relative 1e-9): the choice is a tie-break
+    unreached_sets: np.ndarray | None = None  # (n_info,) bool, the sets counted in `unreached`
 
     @property
     def score(self) -> float:
@@ -77,6 +79,7 @@ def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: in
     av = np.zeros(tree.m)
     v[tree.terminals] = tree.seat_util(seat)
     choice = np.zeros(k.n_ia)
+    ties = 0
     for L in reversed(tree.levels):
         if L.a1 == L.a0:
             continue
@@ -97,6 +100,9 @@ def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: in
             local_info = k.orbit_info[o0:o1] - i0
             mx = np.maximum.reduceat(qo, k.info_orbit_start[i0:i1] - o0)
             is_max = qo == mx[local_info]
+            near = np.abs(qo - mx[local_info]) <= 1e-9 * np.abs(mx[local_info])
+            n_best = np.bincount(local_info[near], minlength=i1 - i0)
+            ties += int(((n_best > 1) & ~unreached[i0:i1] & (k.info_player[i0:i1] == seat)).sum())
             first = np.full(i1 - i0, o1 - o0, dtype=np.int64)
             np.minimum.at(first, local_info[is_max], np.nonzero(is_max)[0])
             chosen = np.zeros(o1 - o0)
@@ -113,7 +119,7 @@ def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: in
             raise ValueError("completion must be a strategy over the responder's keying")
         fill = unreached[k.ia_info]
         choice[fill] = completion[fill]
-    return BestResponse(seat=seat, level=level, value=float(v[0]), sigma=choice, seconds=time.perf_counter() - t0, unreached=int(unreached.sum()))
+    return BestResponse(seat=seat, level=level, value=float(v[0]), sigma=choice, seconds=time.perf_counter() - t0, unreached=int(unreached.sum()), ties=ties, unreached_sets=unreached)
 
 
 def best_response_perfect(tree: CompiledTree, opponent: Strategy, seat: int) -> BestResponse:
@@ -182,6 +188,63 @@ class Exploitability:
     def bracket(self) -> tuple[float, float]:
         """The Nash seat-0 score lies in [1 - score(BR seat 1), score(BR seat 0)]."""
         return (1.0 - self.br[1].score, self.br[0].score)
+
+
+@dataclass
+class TwoSided:
+    """The game's value when both players see what the tree's nodes hold (`two_sided`)."""
+
+    value: float  # seat-0 return when seat 0 maximises and seat 1 minimises everywhere
+    node: np.ndarray  # (n,) that value at every node
+    decided: float | None = None  # world tree only: mass of the worlds whose result no play by either side changes
+    outcome: tuple[float, float, float] | None = None  # world tree only: P(seat 0 wins, draw, seat 1 wins) under that play
+
+    @property
+    def score(self) -> float:
+        return (self.value + 1.0) / 2.0
+
+
+def extremal_values(tree: CompiledTree, util: np.ndarray, mode: str) -> np.ndarray:
+    """Backward pass where every decision node takes the max of its arc values
+    (`"max"`), the min (`"min"`), or the max at seat 0's nodes and the min at seat
+    1's (`"minimax"`); chance edges are averaged. `util` in `terminals` order."""
+    v = np.zeros(tree.n)
+    v[tree.terminals] = util
+    for L in reversed(tree.levels):
+        if L.a1 == L.a0:
+            continue
+        x = tree.edge_prob[L.e0 : L.e1] * v[tree.edge_child[L.e0 : L.e1]]
+        av = np.add.reduceat(x, tree.arc_edge_start[L.a0 : L.a1] - L.e0)
+        starts = tree.node_arc_start[L.n0 : L.nd] - L.a0
+        hi, lo = np.maximum.reduceat(av, starts), np.minimum.reduceat(av, starts)
+        if mode == "max":
+            v[L.n0 : L.nd] = hi
+        elif mode == "min":
+            v[L.n0 : L.nd] = lo
+        elif mode == "minimax":
+            v[L.n0 : L.nd] = np.where(tree.player[L.n0 : L.nd] == 1, lo, hi)
+        else:
+            raise ValueError(f"unknown mode {mode!r}")
+    return v
+
+
+def two_sided(tree: CompiledTree) -> TwoSided:
+    """The two-sided game on the tree's own information (step 9). On a lazy tree
+    every node holds both hands and the pile is chance: both players see both
+    hands, expectiminimax (the two-sided L2 game). On a world tree the node is the
+    whole state: both see everything, minimax per world (L3), plus the mass of
+    the worlds whose result is the same under every pair of strategies (the max
+    over all play equals the min) and the outcome shares under minimax play. Both
+    games are invariant under the symmetry group, so the quotient tree gives the
+    full game's values. Unlike one-sided L2 / L3 (a best response to a fixed
+    opponent) these are values of games in which both sides play optimally."""
+    u = tree.seat_util(0)
+    v = extremal_values(tree, u, "minimax")
+    if tree.roots_level is not Level.L3:
+        return TwoSided(float(v[0]), v)
+    r, p = tree.roots, tree.root_prob
+    hi, lo, mm = extremal_values(tree, u, "max")[r], extremal_values(tree, u, "min")[r], v[r]
+    return TwoSided(float(v[0]), v, decided=float(p @ (hi == lo)), outcome=(float(p @ (mm > 0)), float(p @ (mm == 0)), float(p @ (mm < 0))))
 
 
 def exploitability(tree: CompiledTree, level: Level, sigma: np.ndarray) -> Exploitability:

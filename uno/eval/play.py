@@ -42,6 +42,15 @@ def stable_hash(obj: object) -> int:
     return int.from_bytes(hashlib.blake2b(repr(obj).encode(), digest_size=8).digest(), "little")
 
 
+def stream_name(agent: Agent) -> str:
+    """The name that keys an agent's action rng: its `stream` attribute when set, its
+    `name` otherwise. Two agents on one stream draw the same random numbers in the
+    same information state. `uno.eval.estimate.compare` wants that for two variants
+    of one policy (two checkpoints, step 9); the two agents of a mirrored pair must
+    never have it (`play_pairs` raises)."""
+    return getattr(agent, "stream", None) or getattr(agent, "name", "?")
+
+
 @dataclass(frozen=True, slots=True)
 class Step:
     state: State
@@ -77,7 +86,7 @@ def play_from(s: State, seed: int, agents: tuple[Agent, Agent], levels: tuple[Le
         obs = observe(s, p, levels[p])
         legal = legal_actions(s)
         probs = agents[p].policy(obs, legal)
-        rng = random.Random(stable_hash((seed, getattr(agents[p], "name", "?"), obs.info_state)))
+        rng = random.Random(stable_hash((seed, stream_name(agents[p]), obs.info_state)))
         a = sample(probs, rng)
         steps.append(Step(s, obs, probs, a))
         s = step(s, a)

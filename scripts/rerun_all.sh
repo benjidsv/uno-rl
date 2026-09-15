@@ -10,7 +10,8 @@
 # and for the whole run:
 #   summary.txt  start, exit code and duration of every step, as they happen
 #   report.txt   at the end (or on Ctrl-C): every step with its exit code, duration and expected
-#                duration, its timed loops indented below it, and the failed checks of each validate
+#                duration, its timed loops indented below it, and the failed checks of each
+#                validate, robustness and pairing step
 #
 # On a terminal a status line shows the step, its elapsed and expected time, the time left for the
 # run and the latest progress bar. A step's expected time is its last successful duration in
@@ -46,6 +47,12 @@ validate_TOY         8  uv run uno validate TOY
 validate_TOY2       12  uv run uno validate TOY2
 validate_TOY2_SKIP  15  uv run uno validate TOY2_SKIP
 validate_TOY2_FULL  20  uv run uno validate TOY2_FULL 4000 light
+robustness_TOY       1  uv run uno robustness TOY
+robustness_TOY_FULL  9  uv run uno robustness TOY_FULL
+robustness_TOY2      5  uv run uno robustness TOY2
+robustness_TOY2_SKIP 16  uv run uno robustness TOY2_SKIP
+robustness_TOY2_FULL 71  uv run uno robustness TOY2_FULL 150 light
+pairing             14  uv run uno pairing
 "
 
 names=()
@@ -93,9 +100,10 @@ report() {  # report <how the run ended>
             t="$out/$(tag "$j").timings"
             [ -s "$t" ] && sed 's/^\[[0-9:]*\] /      /' "$t"
         done
-        if ls "$out"/*validate*.log > /dev/null 2>&1; then
+        checks=$(ls "$out"/*validate*.log "$out"/*robustness*.log "$out"/*pairing*.log 2> /dev/null)
+        if [ -n "$checks" ]; then
             echo
-            grep -H "failed checks" "$out"/*validate*.log | sed "s|$out/||"
+            grep -H "failed checks" $checks | sed "s|$out/||"
         fi
     } > "$report_file"
     echo

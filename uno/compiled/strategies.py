@@ -53,3 +53,33 @@ def br_row(tree: CompiledTree, opponent: Strategy, completion: np.ndarray | None
     brs = (best_response(tree, level, opponent, 0, completion), best_response(tree, level, opponent, 1, completion))
     k = tree.keyings[level]
     return (level, np.where(k.info_player[k.ia_info] == 0, brs[0].sigma, brs[1].sigma)), brs
+
+
+def transfer(src: CompiledTree, dst: CompiledTree, level: Level, sigma: np.ndarray) -> np.ndarray:
+    """A strategy over `src`'s keying at `level`, rewritten over `dst`'s keying of the
+    same level by matching the sets' keys (step 9). The lazy tree and the world tree of
+    a ruleset have the same L1 sets numbered differently, so a strategy tabulated or
+    solved on one moves to the other without asking any agent again. Raises unless
+    every set of `dst` is in `src` with the same actions."""
+    ks, kd = src.keyings[level], dst.keyings[level]
+    if len(sigma) != ks.n_ia:
+        raise ValueError("sigma is not a strategy over the source keying")
+    n = kd.n_info
+    ids = np.fromiter(kd.keys.values(), dtype=np.int64, count=n)
+    try:
+        src_ids = np.fromiter((ks.keys[kb] for kb in kd.keys), dtype=np.int64, count=n)
+    except KeyError:
+        raise ValueError("a set of the destination keying is missing from the source keying") from None
+    d0 = kd.info_start[ids]
+    cnt = kd.info_start[ids + 1] - d0
+    s0 = ks.info_start[src_ids]
+    if not np.array_equal(ks.info_start[src_ids + 1] - s0, cnt):
+        raise ValueError("matched sets have different numbers of actions")
+    within = np.arange(int(cnt.sum())) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+    dst_ia = np.repeat(d0, cnt) + within
+    src_ia = np.repeat(s0, cnt) + within
+    if not np.array_equal(ks.ia_action[src_ia], kd.ia_action[dst_ia]):
+        raise ValueError("matched sets list different actions")
+    out = np.zeros(kd.n_ia)
+    out[dst_ia] = sigma[src_ia]
+    return out

@@ -34,7 +34,7 @@ either side can change (0 % on `TOY_FULL`). Status: corrected in `context.md`
 section 5.4, step 7 reading 2 and the `estimate.py` comment. The correlation is
 the luck readout, or the split share next to its independence baseline.
 
-### A2. The free-play results depend on the exhaustion rule (open)
+### A2. The free-play results depend on the exhaustion rule (measured: [09-results](09-results.md) section 2)
 
 *Scratch*: same compiled tree, exhaustion scored as a draw instead of on hand
 size, everything re-solved.
@@ -57,9 +57,23 @@ claim test removed only the empty-pile claim.
 
 Proposal: keep the rule; scope the voluntary-draw and seat-gap readings to it;
 use a second terminal utility as a free robustness axis when validating the
-sampled methods (same tree, utility swap).
+sampled methods (same tree, utility swap). **Agreed.**
 
-### A3. "Draw with a play in hand = 60 % of full-UNO decisions" counts availability (to fix)
+*Correction found while building the check:* exhaustion = draw is degenerate on
+free-play toys. The trailing player can always draw the pile empty and claim, so
+on `TOY_FULL` the Nash value, both two-sided values and minimax play coincide at
+0.6429 (seat 0 forces a win in 29 % of worlds, every other world is drawn). The
+sign flip above is that stalling, not evidence about the voluntary draw. The
+robustness axis got a third scoring, "stuck" (the player who must draw from the
+empty pile loses, so a claim is a loss). It degenerates on free play too: the
+endgame becomes drawing the pile down so the opponent is stuck, and on `TOY_FULL`
+Random is 41 / 47 points exploitable. No scoring of exhaustion is neutral: even on
+forced play the Nash seat gap moves 1-13 points with it. The three scorings stay
+as three exact games on one tree for validating the sampled methods (the forced
+toys being the non-degenerate ones), and seat-gap / exploitability / voluntary-draw
+readings are scoped to the rule ([09-results](09-results.md) section 2).
+
+### A3. "Draw with a play in hand = 60 % of full-UNO decisions" counts availability (fixed in `context.md`)
 
 `transfer.py` counts a decision under that kind whenever a card plays and
 `Draw` is legal, i.e. almost every full-UNO decision with a play. How often the
@@ -74,7 +88,7 @@ needs (3 + 0.84)^2 / 9 = 1.64x that, 95 % needs 2.4x. The intro's ~2,400
 becomes ~3,900; full UNO's ~9,000 ~15,000. Status: noted in `context.md`,
 `plan.md`, steps 7 and 8.5; the code is unchanged.
 
-### A5. "Pairing does not help on full UNO" was measured on dissimilar policies (to measure)
+### A5. "Pairing does not help on full UNO" was measured on dissimilar policies (measured: [09-results](09-results.md) section 6)
 
 Step 8.5 measured Heuristic against Random, which diverge on the first move.
 Checkpoint against checkpoint is untested on full UNO. A draw coupling that
@@ -83,7 +97,7 @@ gets an independent random ticket for "seat s's k-th draw", the lowest ticket
 in the pile is drawn; same distribution as the top of a shuffled pile, and it
 also gives full UNO a reshuffle chance model for AIVAT).
 
-### A6. Two-sided L2 / L3 games have values (to add)
+### A6. Two-sided L2 / L3 games have values (added: `two_sided`)
 
 "Optimal at L2 / L3 only exists as a best response" holds for one-sided
 information. When both players see both hands (L2) or everything (L3) the game
@@ -94,30 +108,30 @@ has a minimax value, one max / min backward pass. *Scratch* seat-0 scores:
 | `TOY` | 0.6196 | 0.6075 | 0.6099 |
 | `TOY_FULL` | 0.5866 | 0.5885 | 0.6337 |
 
-On `TOY` hidden information favours seat 0.
+On `TOY` hidden information favours seat 0. *(Step 9 results: on `TOY` only; on `TOY2` seeing everything helps seat 0, section 2 of [09-results](09-results.md).)*
 
 ## B. Assumed, not verified
 
-- **B1. Choice of equilibrium** (to do on `TOY2` / `TOY2_FULL`). Nash-dependent
+- **B1. Choice of equilibrium** (done: [09-results](09-results.md) section 3). Nash-dependent
   cells for three CFR variants, *scratch*: on `TOY` (1000 its) everything within
   0.1 point. On `TOY_FULL` (400 its) the Nash row moves up to 0.4 point (nash vs
   random seat 1 0.5123 / 0.5167 / 0.5129 for CFR+ / DCFR / PCFR+), BR L2 vs Nash
   0.1 point, and the NashConv of BR L1(random) filled with that Nash is 5.50 /
   6.13 / 5.59 points. `TOY2_FULL` (NashConv 0.005, 150 its) unchecked.
-- **B2. Fill-in** (to do). Minimal-exploitability fill-in = CFR on the unreached
+- **B2. Fill-in** (done: section 4; ties at reached sets counted, not freed). Minimal-exploitability fill-in = CFR on the unreached
   sets with the reached sets frozen, which gives a lower bound instead of one
   arbitrary fill; also count exact ties at reached sets (lowest action id).
 - **B3. Heuristic threshold** (no action). `low_threshold=2` only matters for
   action cards, i.e. `TOY2_SKIP`. A rulebot tuned on the toy (genetic) is
   optional, not a goal.
-- **B4. On-seeds checks cannot see the deal model** (to do). `scores_on_seeds`
+- **B4. On-seeds checks cannot see the deal model** (done: section 5). `scores_on_seeds`
   starts from each seed's real state, so a wrong deal probability passes every
   validation (the step 8.9 bug did). Standalone check: the mean of on-seeds exact
   values over many seeds against the global exact value, z on the deal variance.
   AIVAT against the global value will be the first sampled check sensitive to it.
 - **B5. The thesis is tested on proxies** (step 9.5). Full-UNO ceiling and
   sampled methods come with 9.5.
-- **B6. Stale numbers in `context.md`** (to fix): 6.8 quotes the step 4
+- **B6. Stale numbers in `context.md`** (fixed): 6.8 quotes the step 4
   Heuristic's exhaustion figures (0.44, 5-6 points); 6.4 "BR to Random transfers
   within 0.8-1.4" is the step 7 Heuristic; "Nash gives up ~1-2 vs the Heuristic"
   is 0.5 / 2.2.

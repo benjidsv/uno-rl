@@ -5,7 +5,9 @@ Files live in `CACHE` (the repo's `.cache/`, or `$UNO_CACHE`), git-ignored:
 - `tree_<name>_<levels>[W]_<sym|full>.npz`: a compiled tree (`CompiledTree.save`),
   `W` for world roots without an L3 keying;
 - `cfr_<name>_L1_<sym|full>[_<variant>].npz`: a CFR result (`CFRResult.save`), no
-  suffix for CFR+, `+` spelled `p` otherwise (`_dcfr`, `_pcfrp`).
+  suffix for CFR+, `+` spelled `p` otherwise (`_dcfr`, `_pcfrp`);
+- `tab_<name>_<D|W>_<sym|full>_<level>_<agent>.npz`: an agent tabulated over a
+  keying (`load_or_tabulate`), `D` for deal roots, `W` for world roots.
 
 `<name>` is the ruleset's name in `uno.game.rules.NAMED`, or a hash of its repr.
 Every experiment loads trees and Nash strategies through here.
@@ -34,7 +36,8 @@ if TYPE_CHECKING:
 CACHE = Path(os.environ.get("UNO_CACHE", Path(__file__).resolve().parent.parent / ".cache"))
 
 # Bump whenever a change to the engine, the chance model, the keys, the symmetry or the
-# tree layout changes what a compile (or a CFR run on it) produces.
+# tree layout changes what a compile (or a CFR run on it) produces, or a baseline agent's
+# policy changes (its tabulations are cached by name).
 CACHE_VERSION = 1
 
 
@@ -105,3 +108,38 @@ def load_or_solve_nash(tree: CompiledTree, iterations: int, variant: str = "cfr+
     if verbose:
         print(f"   {variant} {res.iterations} iterations in {res.seconds:.1f}s ({1000 * res.seconds / res.iterations:.1f} ms each), NashConv {100 * res.final.nashconv:.3f} pts, saved to {path.name}")
     return res
+
+
+def tabulation_path(tree: CompiledTree, level: Level, name: str, cache: str | Path = CACHE) -> Path:
+    """`W` for a world tree, `D` for a lazy one: the L1 numbering depends on the roots,
+    not on which other keyings a tree carries."""
+    roots = "W" if tree.roots_level is Level.L3 else "D"
+    return Path(cache) / f"tab_{ruleset_name(tree.rs)}_{roots}_{'sym' if tree.symmetric else 'full'}_{level.name}_{name}.npz"
+
+
+def keying_fingerprint(tree: CompiledTree, level: Level) -> str:
+    k = tree.keyings[level]
+    h = hashlib.blake2b(digest_size=8)
+    h.update(k.info_start.tobytes())
+    h.update(k.ia_action.tobytes())
+    return h.hexdigest()
+
+
+def load_or_tabulate(tree: CompiledTree, level: Level, agent, cache: str | Path = CACHE) -> np.ndarray:
+    """`uno.compiled.strategies.tabulate` through the cache (step 9): a Python call per
+    set costs ~50 s per agent on TOY2_FULL. Keyed on the agent's name (a name
+    identifies a policy, docs/spec.md section 13) and on a fingerprint of the keying; a
+    file of another `CACHE_VERSION` or keying is tabulated again and overwritten. Meant
+    for the fixed baseline agents: bump `CACHE_VERSION` when one of their policies changes."""
+    from uno.compiled.strategies import tabulate
+
+    path = tabulation_path(tree, level, agent.name, cache)
+    fp = keying_fingerprint(tree, level)
+    if is_current(path):
+        with np.load(path) as z:
+            if str(z["fingerprint"]) == fp and len(z["sigma"]) == tree.keyings[level].n_ia:
+                return z["sigma"].copy()
+    sigma = tabulate(tree, level, agent)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(path, version=np.array(CACHE_VERSION), fingerprint=np.array(fp), sigma=sigma)
+    return sigma

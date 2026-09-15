@@ -7,10 +7,11 @@ import time
 
 import numpy as np
 
+from uno import store
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.compiled.cfr import CFRResult
 from uno.compiled.solvers import best_response, evaluate
-from uno.compiled.strategies import br_row, tabulate
+from uno.compiled.strategies import br_row, transfer
 from uno.compiled.tree import CompiledTree
 from uno.game.observe import Level
 
@@ -39,7 +40,8 @@ def columns(lazy: CompiledTree, world: CompiledTree, label: str) -> dict:
     print(f"\n   {label}: best-response columns (score of the responder)")
     print(f"   {'opponent':10s} {'seat':4s} {'BR L1':>7s} {'BR L2':>7s} {'BR L3':>7s} {'L2-L1':>6s} {'L3-L2':>6s} {'sec':>5s}")
     for opp in (PlayFirstRandom(rs), Heuristic(rs)):
-        sl, sw = (Level.L1, tabulate(lazy, Level.L1, opp)), (Level.L1, tabulate(world, Level.L1, opp))
+        sl = (Level.L1, store.load_or_tabulate(lazy, Level.L1, opp))
+        sw = (Level.L1, transfer(lazy, world, Level.L1, sl[1]))  # same L1 sets, numbered differently
         for seat in (0, 1):
             t0 = time.perf_counter()
             l1 = best_response(lazy, Level.L1, sl, seat)
@@ -53,7 +55,7 @@ def columns(lazy: CompiledTree, world: CompiledTree, label: str) -> dict:
 def matchups(tree: CompiledTree, label: str) -> dict:
     rs = tree.rs
     rnd, heu = PlayFirstRandom(rs), Heuristic(rs)
-    r, h = (Level.L1, tabulate(tree, Level.L1, rnd)), (Level.L1, tabulate(tree, Level.L1, heu))
+    r, h = (Level.L1, store.load_or_tabulate(tree, Level.L1, rnd)), (Level.L1, store.load_or_tabulate(tree, Level.L1, heu))
     out = {}
     print(f"\n   {label}: row matchups (score of the first-named, seat 0 / seat 1)")
     for name, a, b in (("random vs random", r, r), ("heuristic vs random", h, r), ("heuristic vs heuristic", h, h)):
@@ -69,7 +71,7 @@ def exploitability_rows(tree: CompiledTree, res: CFRResult, cols: dict) -> dict:
     Nash agent, per seat; then the Nash row and column. Returns {(row, seat): points}."""
     rs = tree.rs
     k = tree.keyings[Level.L1]
-    rows = {a.name: (Level.L1, tabulate(tree, Level.L1, a)) for a in (PlayFirstRandom(rs), Heuristic(rs))}
+    rows = {a.name: (Level.L1, store.load_or_tabulate(tree, Level.L1, a)) for a in (PlayFirstRandom(rs), Heuristic(rs))}
     rows["br_l1(random)"] = by_seat(tree, [cols[("random", seat)][0] for seat in (0, 1)])
     rows["br_l1(random)+nash"], filled = br_row(tree, rows["random"], completion=res.avg)
     rows["nash_l1"] = (Level.L1, res.avg)
@@ -115,8 +117,8 @@ def residual_ties(tree: CompiledTree) -> float:
     """Reach-weighted share of the Heuristic's decisions (against Random) with more than one action in its support."""
     rs = tree.rs
     k = tree.keyings[Level.L1]
-    h = (Level.L1, tabulate(tree, Level.L1, Heuristic(rs)))
-    r = (Level.L1, tabulate(tree, Level.L1, PlayFirstRandom(rs)))
+    h = (Level.L1, store.load_or_tabulate(tree, Level.L1, Heuristic(rs)))
+    r = (Level.L1, store.load_or_tabulate(tree, Level.L1, PlayFirstRandom(rs)))
     total = ties = 0.0
     for seat in (0, 1):
         prof = (h, r) if seat == 0 else (r, h)

@@ -18,8 +18,14 @@ this page has the current value.
   the Nash score of the responder's seat, in points.
 - **BR L1(random) as a row** is undetermined at the information sets Random
   never reaches. Its exploitability is shown as solved (first action orbit
-  there) and, in brackets, with those sets filled with the Nash strategy
-  ([step 8.8](08.8-review.md)).
+  there), in brackets with those sets filled with the Nash strategy
+  ([step 8.8](08.8-review.md)), and in square brackets with the least
+  exploitable fill-in (CFR with the reached sets fixed, [step 9](09-results.md);
+  an upper bound, tied reached sets are not freed).
+- Seat gaps, exploitability and voluntary-draw numbers are under the exhaustion
+  rule (fewer cards wins). Scoring exhaustion as a draw or as a loss for the stuck
+  player moves them by up to 13 points on the forced toys and distorts free play
+  ([step 9](09-results.md)).
 - **Nash**: the CFR average strategy on the quotient tree; its NashConv (score
   points) goes with every number that uses it.
 - The **Heuristic** is the symmetric one of [step 8.6](08.6-symmetry.md). Steps
@@ -79,13 +85,13 @@ Against the Nash agent on `TOY` (the quotient CFR+ strategy, `uv run uno cfr TOY
 
 ## Exploitability of the row agents (points, row at seat 0 / seat 1)
 
-| ruleset | random | heuristic | BR L1(random): solved (Nash-filled) |
-|---------|--------|-----------|-------------------------------------|
-| `TOY` | 17.1 / 17.4 | 5.6 / 11.8 | 1.6 / 0.4 (1.4 / 0.3) |
-| `TOY_FULL` | 17.5 / 21.5 | 6.0 / 15.8 | 4.6 / 1.3 (3.1 / 2.4) |
-| `TOY2` | 14.8 / 15.2 | 7.2 / 11.8 | 1.7 / 2.2 (1.4 / 1.7) |
-| `TOY2_SKIP` | 16.7 / 16.8 | 11.0 / 11.9 | 1.3 / 1.7 (1.1 / 1.1) |
-| `TOY2_FULL` | 17.3 / 19.1 | 9.4 / 15.5 | 6.3 / 4.9 (3.4 / 3.3) |
+| ruleset | random | heuristic | BR L1(random): solved (Nash-filled) [least exploitable] |
+|---------|--------|-----------|---------------------------------------------------------|
+| `TOY` | 17.1 / 17.4 | 5.6 / 11.8 | 1.6 / 0.4 (1.4 / 0.3) [1.2 / 0.2] |
+| `TOY_FULL` | 17.5 / 21.5 | 6.0 / 15.8 | 4.6 / 1.3 (3.1 / 2.4) [2.8 / 1.1] |
+| `TOY2` | 14.8 / 15.2 | 7.2 / 11.8 | 1.7 / 2.2 (1.4 / 1.7) [1.4 / 1.6] |
+| `TOY2_SKIP` | 16.7 / 16.8 | 11.0 / 11.9 | 1.3 / 1.7 (1.1 / 1.1) [1.0 / 1.0] |
+| `TOY2_FULL` | 17.3 / 19.1 | 9.4 / 15.5 | 6.3 / 4.9 (3.4 / 3.3) [3.1 / 2.6] |
 
 `uv run uno symmetry`, `uno toy2` and `uno validate` print both rows ([step 8.8](08.8-review.md)).
 
@@ -117,3 +123,5 @@ game by exhaustion).
 | `TOY` | -0.30 exact | 0.70 exact | 0.47 / 0.49 | [7](07-mirror.md), re-sampled in [8.9](08.9-fixes.md) |
 | `TOY2` | -0.31 exact | 0.69 exact | 0.42 / 0.45 | [8.7](08.7-toy2.md) |
 | `FULL_UNO` | -0.10 sampled | 0.90 sampled | 0.89 / 0.89 | [8.5](08.5-transfer.md), re-sampled in [8.9](08.9-fixes.md) |
+
+Near-identical policies on `FULL_UNO` ([step 9](09-results.md), `uv run uno pairing`, 4000 held-out seeds): the Heuristic minus a variant on the Heuristic's action-rng stream (5 % Random mixed in, or the opponent "low" at 1 card), against the same column, keeps 15-23 % of the unpaired variance with pile draws (1,250-1,800 deals for 3 points at 3 sigma with 80 % power, against ~8,000 unpaired) and 12-20 % with ticket draws; the same mixture on its own stream keeps 49-72 %.

@@ -76,8 +76,8 @@ def deal(ruleset: Ruleset, seed: int) -> tuple[int, ...]:
 def initial_state(ruleset: Ruleset, permutation: tuple[int, ...], seed: int | None = None) -> State:
     if tuple(sorted(permutation)) != ruleset.deck:
         raise ValueError("permutation is not a permutation of the ruleset's deck")
-    if ruleset.reshuffle == "seeded" and seed is None:
-        raise ValueError("seed is required when reshuffle == 'seeded'")
+    if (ruleset.reshuffle == "seeded" or ruleset.draws == "tickets") and seed is None:
+        raise ValueError("seed is required when reshuffle == 'seeded' or draws == 'tickets'")
     h = ruleset.hand_size
     hands = (tuple(sorted(permutation[:h])), tuple(sorted(permutation[h : 2 * h])))
     pile = list(permutation[2 * h :])
@@ -156,6 +156,28 @@ def win_prob(state: State, player: int) -> float:
     return (returns(state)[player] + 1.0) / 2.0
 
 
+def ticket_index(rs: Ruleset, seed: int, player: int, k: int, pile) -> int:
+    """Position in `pile` of the card drawn under `draws == "tickets"` (docs/spec.md
+    section 8). For `player`'s draw number `k` every physical card of the deck gets
+    an independent uniform ticket, seeded by (seed, player, k), the i-th copy of a
+    type holding that type's i-th ticket; the card of the pile with the lowest
+    ticket is drawn. The lowest ticket among the cards present is equally likely to
+    be any of them, so a draw is uniform over the pile, like the top of a shuffled
+    pile. Two games on the same seed give a player the same k-th card unless their
+    piles differ in the card holding the lowest ticket, however their draw counts
+    diverged before."""
+    rng = random.Random(f"{seed}:t{player}:{k}")
+    tickets = [rng.random() for _ in range(rs.deck_size)]
+    seen = [0] * rs.num_types
+    best, where = 2.0, 0
+    for i, c in enumerate(pile):
+        t = tickets[rs.deck_start[c] + seen[c]]
+        seen[c] += 1
+        if t < best:
+            best, where = t, i
+    return where
+
+
 # -- transition -------------------------------------------------------------
 
 
@@ -232,7 +254,15 @@ class _Work:
                 else:
                     self.end_exhaustion()
                     break
-            card = self.pile.pop(0)
+            i = 0
+            if self.rs.draws == "tickets":
+                # the cards skipped at setup sit at the bottom in a public order and are drawn last
+                # (section 4); tickets only choose among the unknown part above them
+                tail = min(len(self.public[0][2]), len(self.pile)) if self.n_reshuffles == 0 else 0
+                unknown = len(self.pile) - tail
+                if unknown:
+                    i = ticket_index(self.rs, self.seed, player, len(self.own_draws[player]), self.pile[:unknown])
+            card = self.pile.pop(i)
             insort(self.hands[player], card)
             self.own_draws[player].append(card)
             drawn += 1

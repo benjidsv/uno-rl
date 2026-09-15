@@ -29,10 +29,11 @@ import time
 
 import numpy as np
 
+from uno import store
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.compiled.cfr import cfr, exploitability_of
 from uno.compiled.solvers import best_response, evaluate, exact_mirrored
-from uno.compiled.strategies import br_row, tabulate
+from uno.compiled.strategies import br_row, transfer
 from uno.compiled.tree import compile_tree
 from uno.eval.estimate import bootstrap_moments, estimate_mirrored, play_pairs
 from uno.eval.play import EVAL_SEEDS
@@ -61,8 +62,8 @@ def main(argv: list[str] | None = None) -> None:
     world = compile_tree(rs, (Level.L1, Level.L3), cache=CACHE)
     print("  ", world)
     t0 = time.perf_counter()
-    sig = {a.name: (Level.L1, tabulate(lazy, Level.L1, a)) for a in (rnd, heu)}
-    sigw = {a.name: (Level.L1, tabulate(world, Level.L1, a)) for a in (rnd, heu)}
+    sig = {a.name: (Level.L1, store.load_or_tabulate(lazy, Level.L1, a)) for a in (rnd, heu)}
+    sigw = {name: (Level.L1, transfer(lazy, world, Level.L1, s)) for name, (_, s) in sig.items()}
     print(f"   tabulating Random and Heuristic on both trees: {time.perf_counter() - t0:.1f}s")
 
     print("\n== speed: compiled vs reference (seconds)")
@@ -120,7 +121,7 @@ def main(argv: list[str] | None = None) -> None:
     sys.stdout.flush()
 
     print(f"\n== Nash row and column: exact values (score of the first-named, seat 0 / seat 1)")
-    nash_w = (Level.L1, tabulate(world, Level.L1, nash))
+    nash_w = (Level.L1, transfer(lazy, world, Level.L1, nash.sigma))
     pairs_exact = {}
     for label, a, b, sa, sb in (
         ("nash vs random", nash, rnd, nash_w, sigw["random"]),

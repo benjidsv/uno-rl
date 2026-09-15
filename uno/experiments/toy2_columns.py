@@ -15,9 +15,10 @@ from __future__ import annotations
 import sys
 import time
 
+from uno import store
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.compiled.solvers import best_response, best_response_perfect
-from uno.compiled.strategies import tabulate
+from uno.compiled.strategies import transfer
 from uno.compiled.tree import compile_tree
 from uno.game import rules
 from uno.game.observe import Level
@@ -35,7 +36,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"   lazy L1 {lazy.n:,} nodes, L2 keying {l2.keyings[Level.L2].n_info:,} sets, loaded in {time.perf_counter() - t0:.0f}s")
     opponents = {"random": PlayFirstRandom(rs), "heuristic": Heuristic(rs)}
     res = load_nash(lazy)
-    sig = {k: (Level.L1, tabulate(lazy, Level.L1, a)) for k, a in opponents.items()}
+    sig = {k: (Level.L1, store.load_or_tabulate(lazy, Level.L1, a)) for k, a in opponents.items()}
     if res is not None:
         sig["nash"] = (Level.L1, res.avg)
         opponents["nash"] = res.agent(lazy)
@@ -48,7 +49,7 @@ def main(argv: list[str] | None = None) -> None:
     t0 = time.perf_counter()
     world = compile_tree(rs, (Level.L1,), True, cache=CACHE, world=True)
     print(f"   world L1 {world.n:,} nodes, loaded in {time.perf_counter() - t0:.0f}s")
-    sigw = {k: (Level.L1, tabulate(world, Level.L1, a)) for k, a in opponents.items()}
+    sigw = {k: (Level.L1, transfer(lazy, world, Level.L1, s)) for k, (_, s) in sig.items()}  # same L1 sets, numbered differently
     for k, s in sigw.items():
         for seat in (0, 1):
             out[(k, seat)].append(best_response_perfect(world, s, seat).score)

@@ -32,6 +32,8 @@ Outcome = tuple[State, float]
 def _check(rs: Ruleset) -> None:
     if rs.reshuffle != "none":
         raise ValueError("the lazy-chance tree needs reshuffle == 'none'")
+    if rs.draws != "pile":
+        raise ValueError("the lazy-chance tree and the worlds need draws == 'pile': they place the drawn card on top")
 
 
 # -- pile decomposition -------------------------------------------------------

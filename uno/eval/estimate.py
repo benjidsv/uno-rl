@@ -34,7 +34,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from uno.agents.baseline import Agent
-from uno.eval.play import Trace, play_from
+from uno.eval.play import Trace, play_from, stream_name
 from uno.game.engine import new_game, returns
 from uno.game.observe import Level
 from uno.game.rules import Ruleset
@@ -88,7 +88,7 @@ def play_pairs(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels: Levels =
     random numbers at the same seat of the two games and couple the pair beyond the
     deal. That raises; self-play passes the same object twice."""
     names = (getattr(agents[0], "name", "?"), getattr(agents[1], "name", "?"))
-    if agents[0] is not agents[1] and names[0] == names[1]:
+    if agents[0] is not agents[1] and (names[0] == names[1] or stream_name(agents[0]) == stream_name(agents[1])):
         raise ValueError(
             f"two different agents named {names[0]!r} would share action rng streams (docs/spec.md section 13): "
             "give them distinct names, or pass the same object twice for self-play"
