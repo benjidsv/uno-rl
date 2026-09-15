@@ -23,7 +23,7 @@
 # that `transfer`, `toy2_columns`, `validate`, `deal_model` (TOY_FULL / TOY2_FULL) and `memory`
 # load. The TOY2_FULL steps come last: each holds 2-5 GB of tree in memory. Trees are compiled on
 # first use into .cache/ (files from before CACHE_VERSION 1 are stale and recompiled). The report's
-# failed-check summary greps every validate, robustness, pairing, edge, memory and deal_model log.
+# failed-check summary greps every validate, robustness, pairing, edge, memory, deal_model and aivat log.
 set -u -o pipefail
 cd "$(dirname "$0")/.."
 export PYTHONUNBUFFERED=1
@@ -69,6 +69,14 @@ deal_model_TOY_FULL   1  uv run uno deal_model TOY_FULL 100000
 deal_model_TOY2       2  uv run uno deal_model TOY2 100000
 deal_model_TOY2_SKIP  2  uv run uno deal_model TOY2_SKIP 100000
 deal_model_TOY2_FULL  2  uv run uno deal_model TOY2_FULL 100000
+aivat_TOY             2  uv run uno aivat TOY
+aivat_TOY_FULL        2  uv run uno aivat TOY_FULL
+aivat_TOY2            2  uv run uno aivat TOY2
+aivat_TOY2_SKIP       2  uv run uno aivat TOY2_SKIP
+aivat_DUPS            4  uv run uno aivat DUPS
+aivat_uno_sweep       2  uv run uno aivat_uno sweep 1000
+aivat_uno            60  uv run uno aivat_uno 4000 10000
+aivat_TOY2_FULL       8  uv run uno aivat TOY2_FULL 0 150 light
 "
 
 names=()
@@ -116,7 +124,7 @@ report() {  # report <how the run ended>
             t="$out/$(tag "$j").timings"
             [ -s "$t" ] && sed 's/^\[[0-9:]*\] /      /' "$t"
         done
-        checks=$(ls "$out"/*validate*.log "$out"/*robustness*.log "$out"/*pairing*.log "$out"/*edge*.log "$out"/*memory*.log "$out"/*deal_model*.log 2> /dev/null)
+        checks=$(ls "$out"/*validate*.log "$out"/*robustness*.log "$out"/*pairing*.log "$out"/*edge*.log "$out"/*memory*.log "$out"/*deal_model*.log "$out"/*aivat*.log 2> /dev/null)
         if [ -n "$checks" ]; then
             echo
             grep -H "failed checks" $checks | sed "s|$out/||"

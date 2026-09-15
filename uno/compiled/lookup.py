@@ -47,7 +47,8 @@ class NodeIndex:
         k = self.tree.keyings[self.level]
         i = k.keys.get(encode_key(self.level, key))
         if i is None:
-            raise KeyError("state's L2 information set is not in this tree (a different ruleset, or an L3-world / ticket-draw game the lazy chance model does not reach)")
+            # ticket-draw games are found: an L1 / L2 key never holds the pile order (step 9.5b)
+            raise KeyError("state's information set is not in this tree (a different ruleset, or a state the tree's chance model does not reach)")
         return int(self.first_node[i]), g
 
     def node(self, state: State) -> int:
@@ -69,15 +70,23 @@ class NodeIndex:
         `k.ia_action` are what stays consistent across every node of a set (they
         are `compile_tree`'s own per-node-canonicalised action ids, used to build
         the keying in the first place), so match on those instead."""
+        return self.arcs(state, (action,))[1][action]
+
+    def arcs(self, state: State, actions) -> tuple[int, dict[int, int]]:
+        """`(self.node(state), {action: self.arc(state, action)})` with one key lookup
+        (step 9.5b: AIVAT reads every action of a decision's support)."""
         node, g = self._lookup(state)
-        canonical_action = action if self.sym is None else int(self.sym.actions[g, action])
         k = self.tree.keyings[self.level]
         a0, a1 = int(self.tree.node_arc_start[node]), int(self.tree.node_arc_start[node + 1])
-        node_canonical_actions = k.ia_action[k.arc_ia[a0:a1]]  # consistent across every node of a set, unlike tree.arc_action
-        pos = np.nonzero(node_canonical_actions == canonical_action)[0]
-        if len(pos) == 0:
-            raise KeyError("action is not legal at this node's canonical representative")
-        return a0 + int(pos[0])
+        node_canonical_actions = k.ia_action[k.arc_ia[a0:a1]].tolist()  # consistent across every node of a set, unlike tree.arc_action
+        out = {}
+        for action in actions:
+            canonical_action = action if self.sym is None else int(self.sym.actions[g, action])
+            try:
+                out[action] = a0 + node_canonical_actions.index(canonical_action)
+            except ValueError:
+                raise KeyError("action is not legal at this node's canonical representative") from None
+        return node, out
 
 
 def build(tree: CompiledTree, level: Level = Level.L2) -> NodeIndex:

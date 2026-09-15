@@ -304,6 +304,32 @@ TOY2_SKIP = Ruleset(
     max_turns=None,
 )
 
+# Step 9.5b (`uv run uno aivat_uno sweep`, docs/results/09.5b-results.md): intermediate rulesets
+# between the toys and full UNO, sampled only, picked by a pre-declared rule on game length
+# (Heuristic vs Random) and on the shares of the skill-carrying decisions against FULL_UNO's.
+# Two candidate rounds: the first had nothing short enough with few enough wilds per card.
+MID_12 = Ruleset(  # 26 cards, 13.7 actions per Heuristic vs Random game
+    colors=3,
+    rank_copies=(1, 2, 2),
+    skip_per_color=1,
+    reverse_per_color=1,
+    draw_two_per_color=1,
+    wild_count=1,
+    wild_draw_four_count=1,
+    hand_size=4,
+)
+
+MID_25 = Ruleset(  # 30 cards, 21.3 actions per Heuristic vs Random game
+    colors=4,
+    rank_copies=(1, 1, 1, 1),
+    skip_per_color=1,
+    reverse_per_color=1,
+    draw_two_per_color=1,
+    wild_count=1,
+    wild_draw_four_count=1,
+    hand_size=4,
+)
+
 # every named ruleset, in the order the cache names are looked up (`uno.store`)
 NAMED: dict[str, Ruleset] = {
     "TOY": TOY,
@@ -313,4 +339,6 @@ NAMED: dict[str, Ruleset] = {
     "TOY2_SKIP": TOY2_SKIP,
     "TOY_CANDIDATE": TOY_CANDIDATE,
     "FULL_UNO": FULL_UNO,
+    "MID_12": MID_12,
+    "MID_25": MID_25,
 }

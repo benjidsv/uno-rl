@@ -35,6 +35,10 @@ from uno.progress import bar
 # picked because it scored well on them.
 DEV_SEEDS = range(4000)
 EVAL_SEEDS = range(1_000_000, 1_004_000)
+# Step 9.5b: games a value function (the AIVAT critic, `uno.eval.critic`) is fitted on. A
+# dev-class range, larger than DEV_SEEDS: nothing is reported on it, and it is disjoint from
+# EVAL_SEEDS and from the fresh ranges earlier checks drew (3,000,000+, 5,000,000+).
+FIT_SEEDS = range(10_000_000, 10_100_000)
 
 
 def stable_hash(obj: object) -> int:

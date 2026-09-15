@@ -3,9 +3,8 @@
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 9.5a, 2026-09-15** (on top of
-commit `7838b5d`, uncommitted); next step is **9.5b, AIVAT and the sampled
-methods**.
+with no access to the repo. State as of **step 9.5b, 2026-09-15** (on top of
+commit `f39d352`, uncommitted); next step is **9.5c, PIMC**.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -47,7 +46,7 @@ Status of the three suspected causes today:
 
 | cause | status |
 |-------|--------|
-| noisy evaluator | **supported.** On the toy a 3-point edge at one seat reaches 3 sigma at 1,700-2,400 raw games (50 % power; 2,800-3,900 for 80 %). On full UNO, pairing Heuristic against Random removed only ~10 % of the variance, so a 3-point comparison reaches 3 sigma at ~9,000 games either way (~15,000 at 80 % power); between near-identical variants on a shared action-rng stream pairing removes 77-85 % (1,250-1,800 deals, step 9). Iterations 1-4 never had that budget. |
+| noisy evaluator | **supported.** On the toy a 3-point edge at one seat reaches 3 sigma at 1,700-2,400 raw games (50 % power; 2,800-3,900 for 80 %). On full UNO, pairing Heuristic against Random removed only ~10 % of the variance, so a 3-point comparison reaches 3 sigma at ~9,000 games either way (~15,000 at 80 % power); between near-identical variants on a shared action-rng stream pairing removes 77-85 % (1,250-1,800 deals, step 9). AIVAT with a plain logistic critic removes 24-29 % between dissimilar policies (~3,900 → ~2,900 deals at 80 % power, step 9.5b). Iterations 1-4 never had that budget. |
 | buggy rules | sidestepped: own engine with a written spec and property tests. Not measured on rlcard itself. |
 | unknown ceiling | **measured on the toys**: the exact best response beats Random by 14-20 points at the same seat, and the rulebot ("Heuristic") leaves 5-14 points on the table. The full-UNO ceiling is still unknown. |
 
@@ -691,6 +690,64 @@ decisions specifically (not hold-vs-spend); on `TOY2_SKIP` the skip-timing
 kind is 24-40 % of the gap at both seats, both a genuine sharpening of the
 qualitative claims in section 6 below, not new claims of their own.
 
+### 5.16 Step 9.5b: AIVAT from the exact toys to full UNO
+
+**Problem:** full UNO's luck is in-game draws, where mirroring and pairing of
+dissimilar policies remove ~10 % (section 6.6). AIVAT (section 9) needed an
+exactly validated implementation, a chance model with reshuffles, and a value
+function that exists where no tree does.
+
+**Techniques** (`docs/spec.md` section 23):
+
+- **The estimator as records.** A value model emits per decision the value at the
+  state, the pre-chance value of every action of the support and the value of the
+  child. Per-game sums then give any subset of corrections (chance, row, column,
+  deal) by subtraction. `stream_pairs` keeps no traces (the 9.5a memory lesson).
+- **Exact moments.** One backward pass carries E[F] and E[F²] of the estimator
+  from each node, for any value function and any subset of corrections, so every
+  sampled variance has an exact target.
+- **The value function is an L2-state value**, never reading the pile order.
+  Otherwise the draws are deterministic given V and only the intractable deal and
+  reshuffle permutations are left as chance. On the toy that is the lazy tree's
+  node value. The brainstorm and plan had "L3 critic"; corrected.
+- **`draw_outcomes`**: the chance model for any ruleset, including seeded
+  reshuffles and tickets. A penalty draw that crosses a reshuffle gets no model and
+  its corrections are skipped (0.004-0.009 % of full-UNO decisions).
+- **A colour-symmetric logistic critic** (numpy IRLS), one per profile, fitted on
+  the new `FIT_SEEDS`. Its played path is tested equal to the tree path, record by
+  record.
+- **The deal term as a deal-model check.** `nu(first state) - E_model nu` needs
+  only a lookup per seed: 5,000,000 seeds in seconds, 3σ ≈ 0.04 points on `TOY`
+  (was 0.24 in step 9.5a).
+- **Intermediate rulesets** `MID_12` (26 cards, 13.7 actions) and `MID_25` (30
+  cards, 21.3), picked by a pre-declared rule on length and decision shares; a
+  second candidate round was needed.
+
+**What went wrong or nearly did:**
+
+- A first 200,000-seed deal-term range gave 12 positive z (up to +2.81); five
+  disjoint ranges of 1,000,000 showed it was that range's deal luck.
+- One toy variance miss (TOY2_SKIP, tickets) was rechecked on ten fresh ranges:
+  chance.
+- A FULL_UNO seat-0 AIVAT − raw miss (z −3.08) was chance. A fresh-seed run gave
+  z +1.02, and a drawn-card uniformity test over ~1.7M draws showed max |z| 2.21 of 44.
+  That test's first version counted both seatings of a seed as independent draws,
+  although they share the pile order, and it flagged the exact TOY2 model at
+  z −3.67.
+
+**What it bought:**
+
+- On the toys every identity holds to 5e-16, and 1 of 1,115 sampled checks
+  missed.
+- On the toys the luck is mostly the deal: 34-95 % of the variance is the deal's
+  value; in-game draws carry 5-33 %.
+- On full UNO a weak critic (R² 0.11) still removes 24-29 %. The ratio stays flat
+  (0.72-0.76) from 14 to 45 decisions while R² falls four-fold: the number of
+  corrected events carries the gain, so the toy R² → ratio curve does not
+  transfer by R².
+- Exact values without the deal correction reach 0.39-0.49 on the toys, so a
+  better full-UNO V has up to twice the gain to collect.
+
 ## 6. Results: what we know
 
 All exact unless marked sampled. Scores of the first-named player, seat 0 /
@@ -939,6 +996,11 @@ Kept because they show where this kind of analysis goes wrong.
 | "exhaustion is less of a distortion than feared" | no scoring is neutral: Nash seat gap moves up to 13 pts on forced toys, the alternatives distort free play (step 9) |
 | BR L1(random) filled with Nash measures the free-play separation | the Nash fill is not the least exploitable, and on `TOY_FULL` worse than the solver's at seat 1; least exploitable 2.83 / 1.14 (step 9) |
 | (step 9 review) "on `TOY` hidden information favours seat 0" generalised | `TOY` only; on `TOY2` and `TOY2_SKIP` seeing everything helps seat 0 |
+| "fitted L3 critic" for AIVAT (brainstorm, plan) | the value function must not read the pile order: an L2-state critic (step 9.5b) |
+| (09.5a results) memory table "score of the responder" | the values are returns (step 9.5b) |
+| (09.5a results) "6.01 / 17.35 ≈ 7.4 / 16.9, `TOY_FULL`'s own row" | 7.4 / 16.9 is `TOY2_FULL`'s row; `TOY_FULL` is not in that table (step 9.5b) |
+| (09.5a results) "a large minority to a majority of decisions are close calls", linked to "48 % of sets at a non-trivial stabilizer" | direction reversed (33-74 % are close calls) and the 48 % is K2's share of L1 sets, not stabilizers (284 of 12,036); mechanisms for the Nash gaps marked as hypotheses (step 9.5b) |
+| (9.5b plan) place the full-UNO critic on the toy R² → variance-ratio curve | the ratio is flat across game lengths while R² falls four-fold: R² does not carry (step 9.5b) |
 | (step 9.5a plan) "one `best_response` pass with `own` fixed gives the same value on the quotient as on the full tree" (K0 / K1 / K2) | only true for `identity_key` (no merging ambiguity); K0/K1/K2 group by whichever canonical L1 representative `compile_tree` picked for each set (history included), not one re-minimised for the coarse key's own fields, so the two trees' partitions can differ and need not agree numerically (step 9.5a) |
 
 ## 8. Dead ends and things deliberately not done
@@ -953,8 +1015,8 @@ Kept because they show where this kind of analysis goes wrong.
 - **DPCFR+** (combined discount + prediction): no gain over either alone.
 - **Mirroring / pairing as the full-UNO evaluator**: gains don't transfer
   (~10 %).
-- **Minimal-exploitability fill-in** of unreached sets: not done (Nash fill-in
-  used).
+- **Minimal-exploitability fill-in** of unreached sets: first skipped (Nash
+  fill-in used), then done in step 9 (`cfr(fixed=...)`, section 5.12).
 - **Exact mirrored moments on `TOY2_FULL`**: not computed (light mode), possible
   from the cached world tree.
 - **Causal test of the exhaustion rule**: not run.
@@ -980,7 +1042,8 @@ Kept because they show where this kind of analysis goes wrong.
 | 8.9 | duplicate-card deal fix, rng-name check, cache version, full rerun | done |
 | 9 | review follow-ups (`docs/results/09-review.md`, `09-results.md`): split share, test power, exhaustion scorings, two-sided values, equilibrium choice, fill-in, deal model, pairing on full UNO, ticket draws, speed-ups; the review's section D (where the skill is, memory ceiling, metrics) is still to discuss | done |
 | 9.5a | exact: memory keys (K0/K1/K2), edge-by-decision decomposition, fixed-opponent metric, deal model at 100k seeds, divergence statistic, node lookup, sampled D2 cross-check; brainstorm and section D verdicts in `docs/results/09.5-brainstorm.md` | done |
-| **9.5b** | **sampled: AIVAT, fitted L3 critic, PIMC on the toys and full UNO, intermediate rulesets (MCTS deferred)** | **next** |
+| 9.5b | AIVAT: exact validation on the toys (exact moments, scorings, tickets, imperfect-V curve, deal term at 5M seeds), chance model with reshuffle, L2-state logistic critic, `MID_12` / `MID_25`, full UNO, transfer curve (`docs/results/09.5b-results.md`) | done |
+| **9.5c** | **PIMC: exact PIMC-∞ on the toy world trees vs BR L1 / L2, PIMC-n, full UNO evaluated with AIVAT; full-UNO D2 with a search Q (MCTS deferred)** | **next** |
 | 10 | formalise the toy results: figures and tables that RL relies on | |
 | 11 | RL | |
 
@@ -1025,8 +1088,10 @@ Planned design and checks (from the plan and step 8.9):
 - **Validation target**: AIVAT removes deal and pile luck, so over a seed range
   it estimates the **global** exact value. Check it against that with its own
   sampled variance, **not** the on-seeds value (the M1 check does not apply).
-- **Open for full UNO**: `uno.game.chance` has no chance model for a
-  reshuffle, which AIVAT's draw corrections will need there.
+- **Closed in step 9.5b**: `uno.game.chance.draw_outcomes` models reshuffles
+  (a penalty draw across a reshuffle is skipped, 0.004-0.009 % of decisions).
+- **As built (step 9.5b)**: all of the checks above hold. On full UNO V is a
+  fitted L2-state logistic critic, not PIMC; PIMC values are a 9.5c candidate.
 - Why it matters: the toy evaluators already work, but full UNO's luck is
   in-game draws where mirroring and pairing fail (§6.6). AIVAT corrects at every
   draw.
@@ -1058,8 +1123,11 @@ Planned design and checks (from the plan and step 8.9):
   values, equilibrium choice, fill-in, deal model) and `pairing` (ticket draws,
   near-identical policies on full UNO), and since step 9.5a `edge` (D2
   edge-by-decision, D4 `br_gap`, the sampled cross-check), `memory` (D3 memory
-  ceilings, K0/K1/K2) and `deal_model` (the deal-model check at 100,000 seeds).
-  Tests: `uv run pytest` (~4-5 min). Everything: `bash scripts/rerun_all.sh`
+  ceilings, K0/K1/K2) and `deal_model` (the deal-model check at 100,000 seeds),
+  and since step 9.5b `aivat` (toys, exact validation) and `aivat_uno` (the
+  intermediate-ruleset sweep, critics, AIVAT on `MID_12` / `MID_25` / full UNO).
+  Tests: `uv run pytest` (145 tests, 6 min 13 s on an idle machine at step 9.5b; the 13
+  AIVAT / critic / chance-model tests add ~12 s of it). Everything: `bash scripts/rerun_all.sh`
   (~2 h, logs in `logs/rerun-*/report.txt`).
 - `.cache/` holds compiled trees and CFR strategies (`TOY2_FULL` trees are
   1.9-3.0 GB each and 2-5 GB in RAM; about 8 GB total). Bump

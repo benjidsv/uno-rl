@@ -18,6 +18,7 @@ the seed again.
 
 from __future__ import annotations
 
+import random
 from collections import Counter
 from dataclasses import replace
 from typing import Callable
@@ -108,6 +109,64 @@ def chance_outcomes(state: State, action: int) -> list[Outcome]:
         rest = sorted((unknown - Counter(seq)).elements())
         pile = (*seq, *from_tail, *rest, *tail_rest)
         out.append((step(replace(state, draw_pile=pile), action, check=False), p))
+    return out
+
+
+def draw_outcomes(state: State, action: int, rng: random.Random | None = None, samples: int = 64, enum_cap: int = 256) -> list[Outcome] | None:
+    """The chance model of any ruleset, for AIVAT (docs/spec.md section 23, step 9.5b):
+    children of `state` under `action` with probabilities summing to 1, the drawn cards
+    uniform over the unknown part of the pile given everything but the pile order (the
+    same for pile and ticket draws, section 8).
+
+    Unlike `chance_outcomes` this handles `reshuffle == "seeded"`: after the first
+    reshuffle the whole pile is unknown, and a voluntary draw on an empty pile draws
+    uniformly from the discard minus its top, the reshuffle being written out by hand
+    (discard down to its top, `n_reshuffles + 1`, `("reshuffle",)` before the draw event,
+    as the engine does). A draw that would empty the pile part-way and then reshuffle (a
+    +2 or +4 on a short pile) returns None: no chance model, the caller skips the
+    corrections that need it. When the ordered draws number more than `enum_cap`, they
+    are sampled `samples` times from `rng` (equal weights; unbiased provided `rng` is
+    independent of the game), or None without an rng. Children are stepped with
+    `draws = "pile"` so that the chosen cards are the ones drawn."""
+    rs = state.ruleset
+    k = draw_count(state, action)
+    if k == 0:
+        return [(step(state, action, check=False), 1.0)]
+    base = state if rs.draws == "pile" else replace(state, ruleset=replace(rs, draws="pile"))
+    pile = state.draw_pile
+    if not pile:
+        if rs.reshuffle == "seeded" and len(state.discard) > 1:
+            if not isinstance(rs.actions[action], Draw):
+                return None  # a penalty draw on an empty pile reshuffles after the play
+            rest = Counter(state.discard[:-1])
+            total = sum(rest.values())
+            out = []
+            for c in sorted(rest):
+                others = sorted((rest - Counter((c,))).elements())
+                s = replace(base, draw_pile=(c, *others), discard=state.discard[-1:], n_reshuffles=state.n_reshuffles + 1, public=(*state.public, ("reshuffle",)))
+                out.append((step(s, action, check=False), rest[c] / total))
+            return out
+        return [(step(base, action, check=False), 1.0)]  # exhaustion
+    if state.n_reshuffles == 0:
+        unknown, tail = pile_split(state)
+    else:
+        unknown, tail = Counter(pile), ()
+    if k > len(pile) and rs.reshuffle == "seeded" and len(state.discard) + (0 if isinstance(rs.actions[action], Draw) else 1) > 1:
+        return None  # the pile runs out part-way through the draw and reshuffles
+    n_u = min(k, sum(unknown.values()))
+    n_t = min(k - n_u, len(tail))
+    from_tail, tail_rest = tail[:n_t], tail[n_t:]
+    if len(unknown) ** n_u <= enum_cap:
+        picks = ordered_picks(dict(unknown), n_u)
+    elif rng is not None:
+        cards = sorted(unknown.elements())
+        picks = [(tuple(rng.sample(cards, n_u)), 1.0 / samples) for _ in range(samples)]
+    else:
+        return None
+    out = []
+    for seq, p in picks:
+        rest = sorted((unknown - Counter(seq)).elements())
+        out.append((step(replace(base, draw_pile=(*seq, *from_tail, *rest, *tail_rest)), action, check=False), p))
     return out
 
 

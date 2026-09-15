@@ -125,3 +125,20 @@ game by exhaustion).
 | `FULL_UNO` | -0.10 sampled | 0.90 sampled | 0.89 / 0.89 | [8.5](08.5-transfer.md), re-sampled in [8.9](08.9-fixes.md) |
 
 Near-identical policies on `FULL_UNO` ([step 9](09-results.md), `uv run uno pairing`, 4000 held-out seeds): the Heuristic minus a variant on the Heuristic's action-rng stream (5 % Random mixed in, or the opponent "low" at 1 card), against the same column, keeps 15-23 % of the unpaired variance with pile draws (1,250-1,800 deals for 3 points at 3 sigma with 80 % power, against ~8,000 unpaired) and 12-20 % with ticket draws; the same mixture on its own stream keeps 49-72 %.
+
+## AIVAT ([step 9.5b](09.5b-results.md))
+
+Variance ratio AIVAT / raw on the same games, score of the row, seat 0 / seat 1.
+
+| ruleset | matchup | value function, corrections | ratio | deals for 3 pts at 3σ, 80 % power (raw → AIVAT) |
+|---|---|---|---|---|
+| `TOY` | heuristic vs random | exact values, chance + both players + deal | 0 / 0 (every game gives the value) | |
+| `TOY` | heuristic vs random | exact values, chance + both players, no deal | 0.42 / 0.49 | |
+| `TOY` | heuristic vs random | fitted critic, no deal | 0.73 / 0.88 | |
+| `MID_12` | heuristic vs random | fitted critic, no deal | 0.76 / 0.75 | |
+| `MID_25` | heuristic vs random | fitted critic, no deal | 0.73 / 0.72 | |
+| `FULL_UNO` | heuristic vs random | fitted critic (R² 0.11), no deal | 0.71 / 0.76 | 3,860 → 2,757 / 3,956 → 2,996 |
+| `FULL_UNO` | heuristic vs heuristic_col | fitted critic (R² 0.14), no deal | 0.75 / 0.72 | 4,096 → 3,090 / 4,096 → 2,941 |
+
+Deal model through AIVAT's deal term, 5,000,000 seeds per profile: every pooled |z| < 1 on `TOY`,
+`TOY2`, `TOY2_SKIP` and `DUPS` (3σ ≈ 0.04-0.05 score points).

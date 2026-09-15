@@ -1007,3 +1007,140 @@ set (the same cost as `tabulate`, section 16); `uno.store.load_or_label`
 caches it the same way `load_or_tabulate` caches an agent's tabulation, keyed
 on a fingerprint of the keying (not an agent's name: labels are a property of
 the tree alone).
+
+## 23. AIVAT (`uno/eval/aivat.py`, `uno/compiled/aivat.py`, `uno/eval/critic.py`)
+
+Step 9.5b. Burch et al. 2016 (arXiv:1612.06915): a fourth estimator on the same
+games as raw, mirrored and paired.
+
+**The estimator.** A value model gives, in seat-0 return units, `nu(h)` at a
+state and, for an action, `alpha(h, a)` = the expectation of `nu` over the
+action's chance outcomes. For one game, with `u` the final return:
+
+```
+X = u - sum_decisions [ chance: nu(child) - alpha(h, a_taken) ]
+      - sum_decisions of corrected players [ alpha(h, a_taken) - sum_a sigma(a|h) alpha(h, a) ]
+      - [ deal: nu(first state) - E_deals nu ]
+```
+
+Each bracket has conditional mean zero given what precedes it, when `alpha` uses
+the true chance model and `sigma` is the policy actually played. So X is
+unbiased for any `nu` and any subset of corrections (`Corrections(chance, row,
+column, deal)`, relative to the first-named agent), provided the subset is chosen
+before the event it corrects. With `nu` the exact values of the profile being
+played and every correction on, the sum telescopes and X equals the root value on
+every game.
+
+**What V may see.** Anything fixed before the chance event it integrates over:
+both hands, the public history, the pile as a multiset. Never the pile order: a V
+that reads it makes every draw deterministic given V's input, which leaves only
+the deal and reshuffle permutations as chance events, with intractable
+expectations. The value function is therefore an **L2-state** value. On a toy
+that is exactly the lazy tree's node value, whose node is an L2 set. (The step 9.5
+brainstorm and context called it an "L3 critic"; corrected here.)
+
+**Records.** A value model (`ValueModel`: `exhaustion`, `deal_mean`,
+`records(trace)`) emits one `StepRecord` per decision: player, probs, action,
+`node`, `alpha` for every action of the support, `child`, and the chance `event`
+(voluntary, penalty or reshuffle draw). `game_terms` folds a game's records into
+`GameTerms` (return, deal, chance, action per seat, chance split by event,
+skipped decisions), from which every subset of corrections is one subtraction.
+`pair_terms(pairs, models)` works over `play_pairs` records; `stream_pairs` plays
+and folds pair by pair and keeps no trace, as full UNO needs (step 9.5a, bug 4).
+`estimate_aivat(terms, c)` returns per-seat AIVAT and raw estimates, the per-game
+difference AIVAT - raw, and the pair (mirrored) AIVAT estimate.
+`rescored_return` / `terminal_return` score a played terminal under the three
+exhaustion scorings of `CompiledTree.rescored`.
+`mirror_regret(records, seat)` = `sum node - sum_a sigma alpha` over a seat's
+decisions: section 21's sampled edge decomposition, which `sampled_mirror` now
+reads off the same records.
+
+**Exact moments** (`uno.compiled.aivat.aivat_moments(tree, seat0, seat1, nu, c,
+seat)`). One backward pass carries the mean and second moment of `F(h)` = the
+estimator from node h on. Along a chance edge, `F = F(child) - (nu(child) -
+alpha(arc))` (the root arc: the deal correction). At a decision, `F = F(arc) -
+(alpha(arc) - sum_arcs w alpha)` for a corrected mover. The mean equals the
+profile's value for any `nu` and any subset. With no correction the variance is
+the outcome variance; with exact `nu` and every correction it is zero.
+
+**Value functions** (all group-invariant, so quotient moments equal the full
+game's):
+
+- `exact_values`: the profile's own values.
+- `noisy(sigma)`: exact plus N(0, sigma²) drawn once per L2 set.
+- `l1_set_values`: the reach-weighted mean over the mover's L1 set.
+- other profiles' values.
+- `critic_values`: a fitted critic evaluated from each node's L2 key.
+
+`outcome_r2` = `1 - E[(u - nu)²] / E[(u - mean u)²]` over visited decisions,
+reach-weighted. The critic's sampled R² over visited states estimates the same
+quantity. `TreeValues(idx, nu, exhaustion)` reads `nu` / `alpha` for played games
+through `NodeIndex.arcs`, and works for ticket-draw games.
+
+**Chance model with reshuffle** (`uno.game.chance.draw_outcomes`). Children of an
+action with probabilities, for any ruleset. The drawn cards are uniform over the
+unknown part of the pile: the pile minus the setup tail before the first
+reshuffle, the whole pile after it. This is the same distribution for pile and
+ticket draws (section 8).
+
+- A voluntary draw on an empty pile with a seeded reshuffle draws from the
+  discard minus its top. The reshuffle is written out as the engine does it:
+  discard down to its top, `n_reshuffles + 1`, `("reshuffle",)` before the draw
+  event.
+- A draw that empties the pile part-way and then reshuffles returns None: no
+  chance model, and the corrections that need it are skipped. Skipping is decided
+  before the event, so it stays unbiased.
+- More than `enum_cap` ordered draws are sampled `samples` times from an rng
+  independent of the game (`f"{seed}:aivat:{decision}"`).
+- On `reshuffle == "none"` the result equals `chance_outcomes`.
+
+Children are stepped with `draws = "pile"`.
+
+**Critic** (`uno.eval.critic`). Features are colour- and rank-symmetric
+functions of the position (`position_features`):
+
+- per hand in the seat-0 frame: size (raw and one-hot), counts by kind, colours
+  held, the largest colour count, playable cards, cards of the current colour;
+- global: the mover, `AFTER_DRAW`, pile size and emptiness, the hand-size
+  difference;
+- the hand blocks multiplied by "seat 0 moves".
+
+The same features come from a `State` or an L2 observation. The model is a
+fractional logistic on the score, fitted by chunked IRLS with ridge
+(`fit_logistic`). The ridge strength is picked by outcome R² on the last fifth of
+the fitting games (`fit_critic`). There is one critic per profile (row, column,
+seat), fitted on **`FIT_SEEDS` = 10,000,000..10,099,999** (`uno.eval.play`: a
+dev-class range, nothing reported on it).
+
+`CriticValues(critic, exhaustion, samples, deal_mean)` is the value model: `alpha`
+by `draw_outcomes`, terminal children by `terminal_return`. `deal_mean` comes from
+the tree on a toy and is None on full UNO, which has no deal correction.
+
+**Intermediate rulesets** (`uno.game.rules.MID_12`, `MID_25`), sampled only,
+chosen by `uv run uno aivat_uno sweep` with a pre-declared rule. Heuristic vs
+Random, 1,000 dev pairs: actions per game within ±20 % of 12 or 25. The shares of
+"draw with a play in hand", "action card among other plays", "wild: hold or
+spend" and "which color" must each be within 0.5-2x of FULL_UNO's. Among the
+qualifying candidates, the smallest largest |log share ratio| wins.
+
+Checks (`tests/eval/test_aivat.py`, `test_critic.py`,
+`tests/game/test_draw_outcomes.py`), on full and quotient trees:
+
+- constant V reproduces raw on every game;
+- exact V with every correction gives the root value on every game, pile and
+  tickets;
+- exact means equal `evaluate` for every subset, and the raw variance equals the
+  outcome variance;
+- a symmetric V gives the same moments on the full and quotient trees;
+- sampled moments match exact ones with an uncorrected stochastic column;
+- `rescored_return` matches the rescored tree;
+- `mirror_regret` reproduces `sampled_mirror`;
+- `draw_outcomes` equals `chance_outcomes` without reshuffle, contains the real
+  child and sums to 1 with reshuffles and tickets, and its chance corrections of an
+  arbitrary fixed V have mean zero, reshuffle draws included;
+- IRLS recovers coefficients, features are symmetric and agree between state and
+  L2 observation, and the critic's played path (`CriticValues`) equals the tree
+  path (`critic_values` + `TreeValues`) record by record.
+
+Experiments: `uv run uno aivat <ruleset>` on the toys, `uv run uno aivat_uno` on
+the intermediates and full UNO.

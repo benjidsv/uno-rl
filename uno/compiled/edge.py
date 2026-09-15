@@ -248,13 +248,18 @@ def sampled_mirror(tree: CompiledTree, idx: NodeIndex, row_agent, opp_agent, ref
     """See `SampledMirror`. `idx`: a `uno.compiled.lookup.NodeIndex` built on `tree`
     (needs the L2 keying)."""
     from uno import store
+    from uno.compiled.aivat import TreeValues, exact_values
+    from uno.eval.aivat import mirror_regret
     from uno.eval.decisions import NODE_KINDS, node_kind
     from uno.eval.estimate import estimate
     from uno.eval.play import play_game
     from uno.game.engine import legal_actions
 
+    # step 9.5b: the per-decision term is read off AIVAT's step records under the (ref, opponent)
+    # values: V(h) - sum_a sigma_row(a|h) alpha(h, a), in seat-0 units (negated for seat 1)
     opp_sigma = (Level.L1, store.load_or_tabulate(tree, Level.L1, opp_agent))
-    v_ref, av_ref, _ = _values(tree, seat, ref, opp_sigma)
+    model = TreeValues(idx, exact_values(tree, *_profile(seat, ref, opp_sigma)))
+    sign = 1.0 if seat == 0 else -1.0
     agents = (row_agent, opp_agent) if seat == 0 else (opp_agent, row_agent)
     totals: list[float] = []
     by_kind_totals: dict[str, list[float]] = {k: [] for k in NODE_KINDS}
@@ -265,20 +270,12 @@ def sampled_mirror(tree: CompiledTree, idx: NodeIndex, row_agent, opp_agent, ref
             continue
         total = 0.0
         kind_totals = {k: 0.0 for k in NODE_KINDS}
-        for st in t.steps:
+        for st, rec in zip(t.steps, model.records(t)):
             if st.state.player != seat:
                 continue
-            legal = legal_actions(st.state)
-            kind = node_kind(tree.rs, st.obs, legal)
-            node = idx.node(st.state)
-            term = 0.0
-            for a, p in st.probs.items():
-                if p == 0.0:
-                    continue
-                arc = idx.arc(st.state, a)
-                term += p * (v_ref[node] - av_ref[arc])
+            term = sign * mirror_regret([rec], seat)
             total += term
-            kind_totals[kind] += term
+            kind_totals[node_kind(tree.rs, st.obs, legal_actions(st.state))] += term
         totals.append(total)
         for k in NODE_KINDS:
             by_kind_totals[k].append(kind_totals[k])
