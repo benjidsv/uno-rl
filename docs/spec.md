@@ -354,7 +354,7 @@ responder, coincide across levels on a ruleset with no draw pile, and the simula
 Play once, estimate many ways. `play_pairs(rs, agents, seeds, levels)` plays
 every seed from both seats (the first-named agent at seat 0, then at seat 1,
 same deal and pile order) and keeps the traces (two different agents with the same name raise, section 13). Every estimator is a pure
-function of those records, so AIVAT (step 9) reads the same games. The score
+function of those records, so AIVAT (step 9.5) reads the same games. The score
 of a game is the first-named agent's `(return + 1) / 2`.
 
 - `estimate_mirrored(pairs)`: the seat-0 and seat-1 means (n games each,

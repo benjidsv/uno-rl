@@ -179,7 +179,7 @@ class Mirrored:
     raw: Estimate
     mirrored: Estimate
     corr: float  # sample correlation between the two seats' scores on the same deal
-    splits: float  # share of pairs scoring exactly 1/2 (decided by the deal, or both drawn)
+    splits: float  # share of pairs scoring exactly 1/2; independent games split too, compare with that baseline (step 9)
 
     @property
     def var_ratio(self) -> float:

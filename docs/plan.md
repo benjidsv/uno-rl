@@ -20,8 +20,9 @@ rules in [spec.md](spec.md).
 | 8.7 | `TOY2` family sized and solved, DCFR / PCFR+, validation | done | [08.7](results/08.7-toy2.md) |
 | 8.8 | review, restructure, methodology fixes | done | [08.8](results/08.8-review.md), [re-runs](results/08.8-results.md) |
 | 8.9 | fixes before AIVAT: deal probabilities with duplicate cards, rng names, cache version | done | [08.9](results/08.9-fixes.md) |
-| 9 | AIVAT | next | |
-| 10 | skill check on the toy: is there something to learn? | | |
+| 9 | review follow-ups: split share, test power, exhaustion sensitivity, equilibrium choice, fill-in, pairing on full UNO, where the skill is | next | [09 review](results/09-review.md) |
+| 9.5 | sampled methods validated on the toys: AIVAT, PIMC / MCTS | | |
+| 10 | formalise the toy results for RL: a performance range with ceilings, an edge-by-decision diagnostic tool, figures and tables | | |
 | 11 | RL | | |
 
 Current headline numbers per toy: [results/index.md](results/index.md).
@@ -38,7 +39,7 @@ Failures:
 - no meaningful improvement from PPO agents, even with self-play etc.
 
 Suspected causes (to be tested, not assumed):
-- the evaluator was too noisy to see small improvements (a 3-point edge near 60 % is one sigma at ~270 games and three sigma at ~2400; we never ran a fixed budget)
+- the evaluator was too noisy to see small improvements (a 3-point edge near 60 % is one sigma at ~270 games and three sigma at ~2400, where a 3-sigma test still misses a real 3-point edge half the time, ~3,900 for 80 % power; we never ran a fixed budget)
 - rlcard's rules are inconsistent with its legal-move function, so the game itself may have had a low or buggy skill ceiling
 - we never knew the ceiling, so "no improvement" could mean "already optimal"
 
