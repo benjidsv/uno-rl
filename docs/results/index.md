@@ -44,9 +44,9 @@ this page has the current value.
 | `TOY2` | 0.5784 | CFR+ 1000, 0.000 pts | 17.5 | 27.7 | 16.1 | 15.7 |
 | `TOY2_SKIP` | 0.5748 | CFR+ 1000, 0.000 pts | 16.8 | 15.3 | 15.1 | 15.0 |
 | `TOY2_FULL` | 0.5564 | DCFR 150, 0.005 pts | 17.5 | 27.7 | 13.2 | 11.3 |
-| `FULL_UNO` (sampled) | | | 0.4 ± 3.1 | 1.6 ± 3.1 | | |
+| `FULL_UNO` (sampled) | | | 0.0 ± 3.1 | 0.9 ± 3.1 | | |
 
-`FULL_UNO`: 4000 held-out games per matchup with the step 4 Heuristic ([step 8.5](08.5-transfer.md)); random self-play seat 0 scores 0.502 ± 0.016, Heuristic self-play 0.508 ± 0.016.
+`FULL_UNO`: 4000 held-out pairs per matchup (`uv run uno transfer`, [step 8.5](08.5-transfer.md); re-run in [step 8.9](08.9-fixes.md) with the step 8.6 Heuristic and action rng); random self-play seat 0 scores 0.5002 ± 0.0155, Heuristic self-play 0.5045 ± 0.0155.
 
 ## Best-response columns (score of the responder)
 
@@ -75,7 +75,7 @@ this page has the current value.
 | | nash | 0 | 0.5565 | 0.6952 | 0.7640 | +13.9 | +6.9 |
 | | nash | 1 | 0.4436 | 0.5528 | 0.6271 | +10.9 | +7.4 |
 
-Against the Nash agent on `TOY` ([step 8](08-cfr.md), full-tree CFR+ strategy): 0.6196 / 0.6630 / 0.6764 from seat 0, 0.3804 / 0.4240 / 0.4311 from seat 1.
+Against the Nash agent on `TOY` (the quotient CFR+ strategy, `uv run uno cfr TOY`): 0.6196 / 0.6624 / 0.6761 from seat 0, 0.3804 / 0.4239 / 0.4311 from seat 1. The full-tree strategy of [step 8](08-cfr.md) is another Nash strategy with the same L1 value and slightly different L2 / L3 columns (0.6630 / 0.6764, 0.4240 / 0.4311).
 
 ## Exploitability of the row agents (points, row at seat 0 / seat 1)
 
@@ -114,6 +114,6 @@ game by exhaustion).
 
 | ruleset | corr(seat 0, seat 1) | var ratio mirrored / raw | paired Heuristic - Random, var ratio | step |
 |---------|----------------------|--------------------------|---------------------------------------|------|
-| `TOY` | -0.30 exact | 0.70 exact | 0.45 | [7](07-mirror.md) |
+| `TOY` | -0.30 exact | 0.70 exact | 0.47 / 0.49 | [7](07-mirror.md), re-sampled in [8.9](08.9-fixes.md) |
 | `TOY2` | -0.31 exact | 0.69 exact | 0.42 / 0.45 | [8.7](08.7-toy2.md) |
-| `FULL_UNO` | -0.09 sampled | 0.91 sampled | 0.91 / 0.88 | [8.5](08.5-transfer.md) |
+| `FULL_UNO` | -0.10 sampled | 0.90 sampled | 0.89 / 0.89 | [8.5](08.5-transfer.md), re-sampled in [8.9](08.9-fixes.md) |
