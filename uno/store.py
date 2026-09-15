@@ -8,6 +8,8 @@ Files live in `CACHE` (the repo's `.cache/`, or `$UNO_CACHE`), git-ignored:
   suffix for CFR+, `+` spelled `p` otherwise (`_dcfr`, `_pcfrp`);
 - `tab_<name>_<D|W>_<sym|full>_<level>_<agent>.npz`: an agent tabulated over a
   keying (`load_or_tabulate`), `D` for deal roots, `W` for world roots.
+- `label_<name>_<D|W>_<sym|full>_<level>.npz`: `uno.eval.decisions.set_labels` for a
+  keying (`load_or_label`, step 9.5a): no agent, a property of the tree alone.
 
 `<name>` is the ruleset's name in `uno.game.rules.NAMED`, or a hash of its repr.
 Every experiment loads trees and Nash strategies through here.
@@ -143,3 +145,27 @@ def load_or_tabulate(tree: CompiledTree, level: Level, agent, cache: str | Path 
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(path, version=np.array(CACHE_VERSION), fingerprint=np.array(fp), sigma=sigma)
     return sigma
+
+
+def label_path(tree: CompiledTree, level: Level, cache: str | Path = CACHE) -> Path:
+    roots = "W" if tree.roots_level is Level.L3 else "D"
+    return Path(cache) / f"label_{ruleset_name(tree.rs)}_{roots}_{'sym' if tree.symmetric else 'full'}_{level.name}.npz"
+
+
+def load_or_label(tree: CompiledTree, level: Level = Level.L1, cache: str | Path = CACHE) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """`uno.eval.decisions.set_labels` through the cache (step 9.5a): a Python call per
+    set, the same cost as `load_or_tabulate`. Keyed only on a fingerprint of the
+    keying (labels are a property of the tree, not of any agent); a file of another
+    `CACHE_VERSION` or keying is relabelled and overwritten."""
+    from uno.eval.decisions import set_labels
+
+    path = label_path(tree, level, cache)
+    fp = keying_fingerprint(tree, level)
+    if is_current(path):
+        with np.load(path) as z:
+            if str(z["fingerprint"]) == fp:
+                return z["kinds"].astype(str), z["situations"].astype(str), z["actions"].astype(str)
+    kinds, sits, actions = set_labels(tree, level)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(path, version=np.array(CACHE_VERSION), fingerprint=np.array(fp), kinds=kinds, situations=sits, actions=actions)
+    return kinds, sits, actions

@@ -3,8 +3,9 @@
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 9, 2026-09-15** (on top of commit
-`fca5589`); next step is **9.5, AIVAT and the sampled methods**.
+with no access to the repo. State as of **step 9.5a, 2026-09-15** (on top of
+commit `7838b5d`, uncommitted); next step is **9.5b, AIVAT and the sampled
+methods**.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -615,6 +616,81 @@ named toys never take (duplicate cards, +2 / +4 penalty draws) are checked on a
 caveats (section 7); checkpoint comparisons on full UNO turned out affordable
 with pairing on a shared stream. Results: `docs/results/09-results.md`.
 
+### 5.15 Step 9.5a tools: memory ceilings, edge attribution, node lookup
+
+**Problem (step 9 review, section D):** three questions about the toy results
+had no tooling yet: how much of BR L1's edge needs the full history (memory),
+where a checkpoint loses its points against a reference strategy (edge
+attribution), and a state → tree lookup that step 9.5b's AIVAT will also need.
+
+**Techniques**, all exact passes on the compiled tree unless noted:
+
+- **Coarse keys** (`uno.compiled.coarse`): K0 (hand, top, colour, opponent hand
+  size, pile size, phase, drawn card, plus the tree level so a coarse set never
+  spans two levels), K1 (+ discard multiset), K2 (+ a void hint). `coarsen`
+  builds a new `Keying` over a tree's own nodes/arcs by grouping L1 sets under
+  a key function; on a symmetric tree, several L1 sets' own (possibly
+  different) action orbits are combined by their **transitive join**, never
+  asking for less uniformity than any one of them independently requires,
+  which is what keeps the result achievable (never an over-estimate, the
+  section 5.8 bug one level up). `memoryless_response` is an iterated greedy
+  best response with `own` (below) fixed at the current iterate: every step is
+  a real, history-free policy, so the best value seen is a valid lower bound.
+- **`own`** (`best_response(..., own=...)`, spec section 21): the responder's
+  own per-arc reach folded into the set-level weighting. A no-op on a
+  perfect-recall keying (own-reach is a positive constant within every L1/L2/L3
+  set, since every history of one shares the same public history exactly), but
+  meaningful on a coarse keying, where it weights merged histories by how much
+  of a fixed reference policy's reach each carries.
+- **Edge attribution** (`uno.compiled.edge`): the performance-difference lemma
+  gives an *exact* decomposition of the gap between two strategies against a
+  fixed opponent, summed over one side's own decisions, grouped by
+  `uno.eval.decisions.node_kind` / `action_class` / `situation`
+  (`uno.store.load_or_label`). `br_gap` (BR L1's value minus a row's) is the
+  step 9 review's D4 metric for training against a fixed opponent.
+- **Node lookup** (`uno.compiled.lookup.NodeIndex`): a played state's own node
+  and, for an action, its arc, via the L2 keying (one node per set on a full
+  tree, up to `|G|` equal-valued ones on the quotient). Feeds a **sampled
+  cross-check** of the edge decomposition (play the row agent, sum the exact
+  per-node quantity along real games, compare the sampled mean to the exact
+  total) and will feed AIVAT's control variate directly in step 9.5b.
+- **Deal model at 100,000 seeds** (`uno.experiments.deal_model`,
+  `uno.experiments.common.deal_model_check`, shared with `robustness`): 3σ
+  tightens from ~0.5 points (step 9, 20,000 seeds) to ~0.24.
+- **Divergence statistic** (`uno.eval.estimate.compare(..., divergence=True)`):
+  per seat, the share of a pairing's deals whose two rows' own games are
+  byte-identical start to finish (common random numbers), and where the rest
+  first diverge. Quantifies what step 9's pairing gains were actually reading.
+
+**Four bugs, three caught before any number was reported** (all now regression
+tests, or a fix documented alongside the code): a coarse policy read off one L1
+set's own orbits wasn't uniform within the *coarse* set's (joined) orbits,
+reproducing the section 5.8 bug one level up; `best_response`'s per-level
+backward pass silently assumes a level's sets are numbered contiguously (true
+by construction for `compile_tree`'s own keyings, not for a naive key-sorted
+coarse one), caught by comparing an `own`-weighted value against `own=None`'s
+on a perfect-recall keying (they must be identical, and were not); `own` had
+been folded into `best_response`'s `unreached` mask too, silently starving
+sets `own`'s current policy doesn't visit of a real choice even when chance x
+opponent alone can still reach them. The fourth was caught live by the user,
+watching memory climb during `pairing`'s full-UNO section: it held all 20
+`(draws, column, row)` `play_pairs` results, each with a full game trace (~1
+GB for a `FULL_UNO` set of 4000 games), simultaneously before computing any
+statistic -- pre-dating step 9.5a (the traces were always retained, just
+unused before the divergence statistic needed them), it crashed a ~17 GB
+machine on ~20 GB of simultaneous traces. Fixed by computing each comparison
+against `"heuristic"` as soon as both sides are available and immediately
+slimming the trace away, the same pattern `uno.experiments.transfer` already
+used elsewhere.
+
+**What it bought:** `docs/results/09.5a-results.md`. K1 (hand, top, discard
+multiset -- no play-by-play history) already recovers 96-99.8 % of BR L1's edge
+on the forced toys; the void hint (K2) buys almost nothing on top of it. On
+`TOY`, the Heuristic's seat-1 weakness against Random is 71 % wild-colour
+decisions specifically (not hold-vs-spend); on `TOY2_SKIP` the skip-timing
+kind is 24-40 % of the gap at both seats, both a genuine sharpening of the
+qualitative claims in section 6 below, not new claims of their own.
+
 ## 6. Results: what we know
 
 All exact unless marked sampled. Scores of the first-named player, seat 0 /
@@ -863,6 +939,7 @@ Kept because they show where this kind of analysis goes wrong.
 | "exhaustion is less of a distortion than feared" | no scoring is neutral: Nash seat gap moves up to 13 pts on forced toys, the alternatives distort free play (step 9) |
 | BR L1(random) filled with Nash measures the free-play separation | the Nash fill is not the least exploitable, and on `TOY_FULL` worse than the solver's at seat 1; least exploitable 2.83 / 1.14 (step 9) |
 | (step 9 review) "on `TOY` hidden information favours seat 0" generalised | `TOY` only; on `TOY2` and `TOY2_SKIP` seeing everything helps seat 0 |
+| (step 9.5a plan) "one `best_response` pass with `own` fixed gives the same value on the quotient as on the full tree" (K0 / K1 / K2) | only true for `identity_key` (no merging ambiguity); K0/K1/K2 group by whichever canonical L1 representative `compile_tree` picked for each set (history included), not one re-minimised for the coarse key's own fields, so the two trees' partitions can differ and need not agree numerically (step 9.5a) |
 
 ## 8. Dead ends and things deliberately not done
 
@@ -902,7 +979,8 @@ Kept because they show where this kind of analysis goes wrong.
 | 8.8 | review, methodology fixes M1-M4 | done |
 | 8.9 | duplicate-card deal fix, rng-name check, cache version, full rerun | done |
 | 9 | review follow-ups (`docs/results/09-review.md`, `09-results.md`): split share, test power, exhaustion scorings, two-sided values, equilibrium choice, fill-in, deal model, pairing on full UNO, ticket draws, speed-ups; the review's section D (where the skill is, memory ceiling, metrics) is still to discuss | done |
-| **9.5** | **9.5a exact (memory keys, edge-by-decision, metric, deal model 100k, divergence stat), then 9.5b sampled (AIVAT, L3 critic, PIMC, intermediate rulesets; MCTS deferred); brainstorm and section D verdicts in `docs/results/09.5-brainstorm.md`** | **next** |
+| 9.5a | exact: memory keys (K0/K1/K2), edge-by-decision decomposition, fixed-opponent metric, deal model at 100k seeds, divergence statistic, node lookup, sampled D2 cross-check; brainstorm and section D verdicts in `docs/results/09.5-brainstorm.md` | done |
+| **9.5b** | **sampled: AIVAT, fitted L3 critic, PIMC on the toys and full UNO, intermediate rulesets (MCTS deferred)** | **next** |
 | 10 | formalise the toy results: figures and tables that RL relies on | |
 | 11 | RL | |
 
@@ -931,14 +1009,16 @@ Planned design and checks (from the plan and step 8.9):
   known on the toy; with corrections only at chance + evaluated agent, a
   stochastic opponent's noise stays in); empirical variance reduction > 1 on
   held-out seeds, with V never fitted on the eval seeds.
-- **Lookup**: on the full `TOY` tree the L2 keying has exactly one node per set
-  (876,848 each), so the L2 key of a played state *is* its node; V is the node
-  value, and the expectations are arc values (decision: Σ_a π(a)·value(a); draw:
-  the draw arc's value over its chance edges). On the **quotient** up to 6 nodes
-  share a canonical L2 set (values agree to 1e-16 for a symmetric profile), and
-  an arc must be found through its set-action, because a quotient node's action
-  labels are in its own frame. **Using the full `TOY` tree avoids that for a
-  first implementation.**
+- **Lookup**: built in step 9.5a (`uno.compiled.lookup.NodeIndex`, spec section
+  21). On the full `TOY` tree the L2 keying has exactly one node per set, so the
+  L2 key of a played state *is* its node; on the **quotient** up to `|G|` nodes
+  share a canonical L2 set (equal values for a symmetric profile), and
+  `NodeIndex` picks the tree's lowest-numbered one as the representative. An
+  arc is found through the set-action (`k.arc_ia` / `k.ia_action`, not
+  `tree.arc_action`, which is in each node's own frame, not the set's shared
+  canonical one): found the hard way, by a test that compared the looked-up
+  node's exact value to an independent reference. Works directly on the
+  quotient; no need to fall back to the full tree.
 - **Data**: the `play_pairs` traces already hold every acting player's
   probabilities, so AIVAT is a fourth pure estimator over existing games (raw,
   mirrored, paired, AIVAT).
@@ -974,10 +1054,13 @@ Planned design and checks (from the plan and step 8.9):
 - Python 3.14, `uv sync`; experiments run as `uv run uno <experiment> [args]`
   (`uv run uno list`): `census`, `ladder`, `mirror`, `cfr`, `transfer`,
   `symmetry`, `sizing`, `loop_cost`, `cfr_variants`, `toy2`, `toy2_columns`,
-  `validate`, and since step 9 `robustness` (exhaustion scorings, two-sided
+  `validate`, since step 9 `robustness` (exhaustion scorings, two-sided
   values, equilibrium choice, fill-in, deal model) and `pairing` (ticket draws,
-  near-identical policies on full UNO). Tests: `uv run pytest` (~4 min). Everything:
-  `bash scripts/rerun_all.sh` (~2 h, logs in `logs/rerun-*/report.txt`).
+  near-identical policies on full UNO), and since step 9.5a `edge` (D2
+  edge-by-decision, D4 `br_gap`, the sampled cross-check), `memory` (D3 memory
+  ceilings, K0/K1/K2) and `deal_model` (the deal-model check at 100,000 seeds).
+  Tests: `uv run pytest` (~4-5 min). Everything: `bash scripts/rerun_all.sh`
+  (~2 h, logs in `logs/rerun-*/report.txt`).
 - `.cache/` holds compiled trees and CFR strategies (`TOY2_FULL` trees are
   1.9-3.0 GB each and 2-5 GB in RAM; about 8 GB total). Bump
   `uno.store.CACHE_VERSION` when a compile's output would change.

@@ -298,16 +298,23 @@ class CompiledTree:
 
     # -- strategies to per-arc weights
 
-    def weights(self, level: Level, sigma: np.ndarray, player: int | None = None) -> np.ndarray:
-        """Per-arc weights of a strategy over the `level` keying: the acting player's
-        probability on player arcs (only `player`'s if given), 1 elsewhere."""
-        k = self.keyings[level]
+    def keying_of(self, level: Level | Keying) -> Keying:
+        """`tree.keyings[level]`, or `level` itself when it is already a `Keying` (step 9.5a:
+        a coarse keying built by `uno.compiled.coarse.coarsen`, not stored on the tree).
+        Every method below that takes a `level` accepts either."""
+        return level if isinstance(level, Keying) else self.keyings[level]
+
+    def weights(self, level: Level | Keying, sigma: np.ndarray, player: int | None = None) -> np.ndarray:
+        """Per-arc weights of a strategy over the `level` keying (or an explicit `Keying`,
+        step 9.5a): the acting player's probability on player arcs (only `player`'s if
+        given), 1 elsewhere."""
+        k = self.keying_of(level)
         w = np.ones(self.m)
         arcs = np.nonzero(k.arc_ia >= 0)[0] if player is None else self.arcs_of[player]
         w[arcs] = sigma[k.arc_ia[arcs]]
         return w
 
-    def profile_weights(self, seat0: tuple[Level, np.ndarray], seat1: tuple[Level, np.ndarray]) -> np.ndarray:
+    def profile_weights(self, seat0: tuple[Level | Keying, np.ndarray], seat1: tuple[Level | Keying, np.ndarray]) -> np.ndarray:
         """Per-arc weights of a profile: each seat's strategy on its own arcs."""
         return self.weights(seat0[0], seat0[1], 0) * self.weights(seat1[0], seat1[1], 1)
 
@@ -610,4 +617,4 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,), symmetric
 
 # -- strategies ---------------------------------------------------------------
 
-Strategy = tuple[Level, np.ndarray]  # (keying level, sigma over that keying's ia)
+Strategy = tuple[Level | Keying, np.ndarray]  # (keying level, or an explicit Keying, sigma over that keying's ia)

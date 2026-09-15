@@ -225,24 +225,75 @@ class Comparison:
     unpaired: tuple[Estimate, Estimate]  # same means, variance as if the two agents' games were independent
     mean: Estimate  # seat-averaged paired difference (mean of the two per-deal differences)
     corr: tuple[float, float]  # per seat, correlation of the two agents' scores on the same deal
+    # step 9.5a: how much of the pairing's variance reduction each seed's games actually get, since
+    # under common random numbers the two rows' own games (same seat, same column, same deal) are
+    # identical until the row agents' choices first differ (docs/spec.md section 15). `None` when
+    # `compare` was called with `divergence=False` (no traces to read, e.g. a slimmed-down `Pairs`).
+    identical: tuple[float, float] | None = None  # per seat: share of seeds whose two games have the same action sequence
+    diverge_at: tuple[float, float] | None = None  # per seat: mean index of the first differing action, over the non-identical seeds (nan if none)
+    diverge_frac: tuple[float, float] | None = None  # per seat: diverge_at as a share of the shorter game's length, same seeds
 
     def var_ratio(self, seat: int) -> float:
         return self.seat[seat].var / self.unpaired[seat].var if self.unpaired[seat].var else float("nan")
 
     def __str__(self) -> str:
         return "  ".join(
-            f"seat{s} {self.seat[s]} (unpaired ± {self.unpaired[s].half:.4f}, corr={self.corr[s]:+.3f}, ratio={self.var_ratio(s):.3f})"
+            f"seat{s} {self.seat[s]} (unpaired ± {self.unpaired[s].half:.4f}, corr={self.corr[s]:+.3f}, ratio={self.var_ratio(s):.3f}"
+            + ("" if self.identical is None else f", identical={self.identical[s]:.3f}, diverge@{self.diverge_at[s]:.1f} ({self.diverge_frac[s]:.2f})")
+            + ")"
             for s in (0, 1)
         ) + f"  mean {self.mean}"
 
 
-def compare(a: Pairs, b: Pairs) -> Comparison:
+def _divergence(a: Pairs, b: Pairs, seat: int) -> tuple[float, float, float]:
+    """Share of seeds whose two rows' own games at `seat` play the identical action
+    sequence, and, among the rest, the mean index of the first differing action (an
+    absolute count, and as a share of the shorter of the two traces' length)."""
+    n_same = 0
+    idxs: list[int] = []
+    fracs: list[float] = []
+    for (ga, gb) in ((a.games[i][seat], b.games[i][seat]) for i in range(a.n)):
+        if ga.trace is None or gb.trace is None:
+            raise ValueError(
+                "compare(..., divergence=True) needs traces: pass Pairs from play_pairs directly, "
+                "not a slimmed-down copy (trace=None, e.g. uno.experiments.transfer's Played.pairs); "
+                "use divergence=False to skip this statistic when traces were dropped for memory"
+            )
+        act_a, act_b = ga.trace.actions, gb.trace.actions
+        m = min(len(act_a), len(act_b))
+        i = 0
+        while i < m and act_a[i] == act_b[i]:
+            i += 1
+        if i == len(act_a) == len(act_b):
+            n_same += 1
+        else:
+            idxs.append(i)
+            fracs.append(i / m if m else 0.0)
+    n = a.n
+    same_share = n_same / n if n else float("nan")
+    at = sum(idxs) / len(idxs) if idxs else float("nan")
+    frac = sum(fracs) / len(fracs) if fracs else float("nan")
+    return same_share, at, frac
+
+
+def compare(a: Pairs, b: Pairs, divergence: bool = True) -> Comparison:
     """Paired difference of two row agents that played the same seeds against
     the same column agent. Under common random numbers the column agent plays
-    identically in both matchups until the histories diverge."""
+    identically in both matchups until the histories diverge.
+
+    `divergence` (step 9.5a, default on): also computes, per seat, the share of
+    seeds whose two rows' own games are identical start to finish and, among the
+    rest, where the first differing action falls. This is what "pairing removes
+    77-85 % of the variance between near-identical variants on one rng stream but
+    only ~10 % between dissimilar policies" (docs/results/09-results.md) actually
+    measures: how much of a pair's length the two games spend walking the exact
+    same path. Needs full traces (`play_pairs`'s `Pairs`, not a slimmed-down copy
+    with `trace=None`, e.g. `uno.experiments.transfer`'s `Played.pairs`): pass
+    `divergence=False` there."""
     if a.seeds != b.seeds:
         raise ValueError("compare needs the same seeds in the same order")
     seat, unpaired, corr = [], [], []
+    identical, diverge_at, diverge_frac = [], [], []
     for s in (0, 1):
         xa, xb = a.seat_scores(s), b.seat_scores(s)
         d = estimate([p - q for p, q in zip(xa, xb)])
@@ -250,8 +301,21 @@ def compare(a: Pairs, b: Pairs) -> Comparison:
         seat.append(d)
         unpaired.append(Estimate(a.n, d.mean, ea.var + eb.var))
         corr.append(correlation(xa, xb))
+        if divergence:
+            same, at, frac = _divergence(a, b, s)
+            identical.append(same)
+            diverge_at.append(at)
+            diverge_frac.append(frac)
     both = estimate([p - q for p, q in zip(a.pair_scores(), b.pair_scores())])
-    return Comparison(tuple(seat), tuple(unpaired), both, tuple(corr))
+    return Comparison(
+        tuple(seat),
+        tuple(unpaired),
+        both,
+        tuple(corr),
+        tuple(identical) if divergence else None,
+        tuple(diverge_at) if divergence else None,
+        tuple(diverge_frac) if divergence else None,
+    )
 
 
 # -- exact counterparts (toy only) -----------------------------------------------

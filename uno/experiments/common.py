@@ -1,19 +1,23 @@
 """Helpers shared by the experiments: scores, best-response columns, row matchups,
-exploitability rows, voluntary-draw counts."""
+exploitability rows, voluntary-draw counts, the deal-model check."""
 
 from __future__ import annotations
 
+import math
 import time
+from typing import Callable
 
 import numpy as np
 
 from uno import store
-from uno.agents.baseline import Heuristic, PlayFirstRandom
+from uno.agents.baseline import Agent, Heuristic, PlayFirstRandom
 from uno.compiled.cfr import CFRResult
 from uno.compiled.solvers import best_response, evaluate
 from uno.compiled.strategies import br_row, transfer
-from uno.compiled.tree import CompiledTree
+from uno.compiled.tree import CompiledTree, Strategy
 from uno.game.observe import Level
+from uno.game.rules import Ruleset
+from uno.reference.solve import scores_on_seeds
 
 
 def score(v: float) -> float:
@@ -129,3 +133,33 @@ def residual_ties(tree: CompiledTree) -> float:
         total += reach[nodes].sum()
         ties += reach[nodes][support > 1].sum()
     return ties / total
+
+
+def deal_model_check(
+    rs: Ruleset,
+    lazy: CompiledTree,
+    matchups: list[tuple[str, Agent, Agent]],
+    sl: dict[str, Strategy],
+    n_seeds: int,
+    seed_start: int,
+    check: Callable[[bool, str], str],
+) -> None:
+    """B4 of the step 9 review: mean over `n_seeds` seeds of the exact score on each
+    real deal against the whole-game exact score, z on the deal variance
+    (`uno.reference.solve.scores_on_seeds.z_global`) -- the deal model's own check,
+    which no simulation-vs-exact-on-seeds check can see (`scores_on_seeds` starts
+    from each seed's real state, so a wrong deal model passes those too).
+    `matchups`: (label, agent_a, agent_b), whose tabulated strategies live in `sl`
+    (keyed by `.name`, as `uno.experiments.robustness` / `uno.experiments.memory`
+    build it). `check(ok, what) -> "ok" / "XX"` prints and records failures, as in
+    `uno.experiments.robustness` / `uno.experiments.pairing`. Used by both
+    `robustness` (section 5, 20,000 seeds) and `uno.experiments.deal_model` (step
+    9.5a, 100,000 by default: 3 sigma there is about 0.24 points)."""
+    print(f"\n== deal model: mean over {n_seeds:,} seeds of the exact score on each real deal, against the whole-game exact score (z on the deal variance)")
+    seeds = range(seed_start, seed_start + n_seeds)
+    for label, a, b in matchups:
+        exact = score(evaluate(lazy, sl[a.name], sl[b.name])[0])
+        on = scores_on_seeds(rs, (a, b), seeds)
+        z = on.z_global(exact, 0)
+        ok = check(abs(z) <= 3, f"deal model {label} (z = {z:+.2f})")
+        print(f"   {label:22s} whole game {exact:.4f}, mean on {on.n:,} seeds {on.mean[0]:.4f} (sd over seeds {math.sqrt(on.deal_var[0]):.3f}), z {z:+.2f}  {ok}")

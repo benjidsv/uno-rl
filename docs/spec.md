@@ -395,11 +395,22 @@ of a game is the first-named agent's `(return + 1) / 2`.
   favours seat 0 does so whoever sits there. Per-seat estimates gain nothing
   from pairing and are always reported: the pair score alone pools seats
   (step 3 rule 1).
-- `compare(a, b)`: paired difference per seat, over deals, of two row agents
-  that played the same seeds against the same column, with the unpaired CI
-  alongside. **Common random numbers**: the runner keys the action rng on
-  (seed, information state), so the column agent makes the same choices in
-  both matchups until the public histories diverge.
+- `compare(a, b, divergence=True)`: paired difference per seat, over deals, of
+  two row agents that played the same seeds against the same column, with the
+  unpaired CI alongside. **Common random numbers**: the runner keys the action
+  rng on (seed, information state), so the column agent makes the same choices
+  in both matchups until the public histories diverge. `divergence` (step
+  9.5a): per seat, the share of deals whose two rows' own games play the
+  identical action sequence start to finish, and, among the rest, the mean
+  index (a count, and a share of the shorter game's length) of the first
+  differing action -- what "pairing removes 77-85 % of the variance between
+  near-identical variants on one rng stream but only ~10 % between dissimilar
+  policies" (section 6.6 of `context.md`) actually measures: how much of a
+  pair's length the two games spend walking the exact same path
+  (`uno.experiments.pairing`'s rank correlation of this against the variance
+  ratio). Needs full traces: raises with a clear message if either `Pairs` was
+  slimmed (`trace=None`, e.g. `uno.experiments.transfer`'s `Played.pairs`,
+  which passes `divergence=False` instead).
 - `bootstrap_moments(pairs, reps, level)`: seeded percentile bootstrap CIs over the pairs (resampling seeds; 99.8 % per moment by default, a family-wise 99 % for the five moments of a matchup) for the per-seat variances, the correlation, the split share and the variance ratio, with the definitions of `estimate_mirrored`; `covers(exact)` says which exact moments lie inside.
 - Self-play pairs are degenerate: under common random numbers the two games
   of an A-vs-A pair are the same game, so every pair scores exactly 1/2.
@@ -506,13 +517,20 @@ Kernels:
   per-arc values. Both are a loop over the levels of a few `reduceat` /
   fancy-indexing operations.
 
+**Any keying, not only a tree's own** (step 9.5a): `CompiledTree.keying_of(level)`
+returns `tree.keyings[level]` for a `Level`, or `level` itself unchanged when it
+is already a `Keying` -- `weights`, `profile_weights` and `best_response` all
+accept either, so a `Strategy` is `(Level | Keying, sigma)` throughout. This is
+what lets a **coarse** keying (section 20, not one of `tree.keyings`, built by
+`uno.compiled.coarse.coarsen`) be used with the same exact passes as L1 / L2 / L3.
+
 On top of them: `evaluate` and `outcome_distribution` (the profile's weights
 and the seat-0 return, or the three outcome indicators); `best_response(tree,
 level, opponent, seat)` (counterfactual reach = chance x opponent from
 `reach`, then backward from the deepest level choosing per set the action
 maximising the reach-weighted sum of its histories' arc values; ties to the
 lowest action id, as section 14; on a symmetric tree the choice is an action
-*orbit*, played uniformly, section 18; responder sets with zero counterfactual reach, which the opponent never lets the game reach, do not affect the value and take their first orbit, or `completion`, a strategy over the same keying, when given, and `BestResponse.unreached` counts them. As a row agent a best response also meets other opponents, who can steer the game into those sets, so its exploitability depends on the fill-in: the ladder reports the best response to Random both as solved and with its unreached sets filled with the Nash strategy, `br_row(tree, opponent, completion)`, step 8.8); `exploitability(tree, level, sigma)` = both
+*orbit*, played uniformly, section 18; responder sets with zero counterfactual reach, which the opponent never lets the game reach, do not affect the value and take their first orbit, or `completion`, a strategy over the same keying, when given, and `BestResponse.unreached` counts them. As a row agent a best response also meets other opponents, who can steer the game into those sets, so its exploitability depends on the fill-in: the ladder reports the best response to Random both as solved and with its unreached sets filled with the Nash strategy, `br_row(tree, opponent, completion)`, step 8.8); `own` (step 9.5a, section 20) folds the responder's own per-arc weights into the reach used to combine a set's histories -- a no-op on a perfect-recall keying (L1 / L2 / L3), where it is a positive constant within every set and therefore cannot change which action maximises it (every history of such a set shares the same public history, hence the same own-reach exactly), but meaningful on an imperfect-recall *coarse* keying, where it weights each merged history by how much of a fixed reference policy's own reach it carries. Wherever a set's own-reach under `own` is entirely zero (no constituent history is currently visited under it, though chance x opponent alone can still reach the set), the weighting falls back to chance x opponent alone for that set, never to a degenerate all-zero tie: an earlier version folded `own` into the `unreached` mask too and starved such sets of a real choice, silently losing value (caught because it made `own`-weighted `best_response` disagree with its own `own=None` value on a perfect-recall keying, where they must be identical); `exploitability(tree, level, sigma)` = both
 best responses to a profile, NashConv in return units and in score points
 (`score(BR seat 0) + score(BR seat 1) - 1`), the per-seat gains and the
 bracket `[1 - score(BR seat 1), score(BR seat 0)]` that contains the Nash
@@ -746,3 +764,246 @@ end mass reproduces the compiled tree's exact random-vs-random value and the
 compiled node count; the world tree has the same values and depth; the cap
 stops the walk; `TOY` and `TOY_FULL` sizes and values of step 8.6 are pinned, and so are those of the
 duplicate-card candidate 3c(2,1)+W (step 8.9).
+
+## 20. Coarse keys and the memoryless response (`uno/compiled/coarse.py`)
+
+Step 9.5a, D3 of the step 9 review's section D ("Memory: BR L1 conditions on the
+full history. A backward pass on a coarse, history-free key gives a valid
+policy, a lower bound on the memoryless ceiling: does the RL observation need
+history?"). Three nested keys, each a deterministic function of the L1
+observation rebuilt from a canonical L1 set's key
+(`uno.game.observe.observation_from_key`):
+
+- **K0**: (seat, tree level, hand, top, current color, opponent hand size, pile
+  size, phase, drawn card). The tree level (`2 * len(public) + [phase ==
+  TURN_START]`, section 16) is included so a coarse set never spans two tree
+  levels, which the per-level backward pass of `best_response` needs: a set
+  whose arcs span two levels would have its choice finalised, wrongly, at the
+  first level it is seen. The level also acts as a weak clock, a little memory
+  of how long the game has run.
+- **K1**: K0 + the discard pile as a multiset (order dropped, contents kept).
+- **K2**: K1 + a void hint -- the colors that were current at each of the
+  opponent's draws since their last play (the list clears whenever they play),
+  a coarse proxy for "what they might be avoiding". Counts every draw event
+  once, not once per card of a multi-card penalty draw.
+
+Because K0's fields (hand, top, color, phase, drawn) are exactly what
+determines legality (given the ruleset's static flags: `opp_hand_size` and
+`pile_size` do not affect which of *this* player's actions are legal), two L1
+sets sharing a K0 value are guaranteed to share the same legal actions; K1 and
+K2 only add fields, so the guarantee carries over. `coarsen` asserts it anyway,
+as `compile_tree` does for its own keyings, and raises if it ever fails.
+
+**`coarsen(tree, keyfn, level=Level.L1)`** groups `tree.keyings[level]`'s
+information sets by `keyfn` applied to each set's own canonical observation,
+into a new `Keying` (section 16) over the tree's own nodes and arcs -- usable
+directly with `best_response`, `tree.weights` / `tree.reach` / `tree.values`
+and `evaluate` (`CompiledTree.keying_of`), but with no `.keys` (no
+byte-encoding exists for K0 / K1 / K2 shapes, unlike the L1 / L2 / L3 keys of
+`uno.game.keys`): those functions never touch a keying's `.keys`, so this is
+enough for everything here, but `tabulate` / `CompiledAgent` do not work on a
+coarse keying. Sets are numbered by `(tree level, key)`, not by key alone: a
+plain sort by key value need not group same-level sets together (K0 / K1 / K2
+sort by hand before level, and `identity_key`, section 21's tests, does not
+carry a level field at all), and `best_response`'s per-level loop silently
+assumes sets are numbered contiguously per level, as `compile_tree`'s own
+keyings are by construction ("in order of first appearance"). Numbering by key
+value alone passed every small-ruleset unit test (which never happened to
+interleave two sets from different levels under the wrong id order) and still
+produced a self-consistent-looking `BestResponse` (same value from
+`best_response` and from replaying its own `sigma` through `evaluate`) on
+`SMALL`'s *non*-symmetric tree, and was only caught by comparing an
+`own`-weighted best response's value against its `own=None` value.
+
+**Orbits.** On a symmetric tree, several L1 sets can merge into one coarse
+set, each carrying its own action-orbit partition (section 18) -- possibly a
+*different* one, since a set's orbit structure depends on the stabilizer of
+its whole canonical key (history included), not only on K0 / K1 / K2. A coarse
+policy is one distribution per coarse set, so for it to be valid for every
+merged L1 set at once, it must be uniform within the **transitive join** of
+their orbit partitions (union two actions whenever *any* merged set's own
+orbits group them together): the join is never finer than any single
+constituent's partition (so it never asks for *less* uniformity than a
+constituent independently requires), which is what keeps the resulting
+strategy achievable and never an over-estimate (section 18, "a best response
+above the maximum is not a strategy"). It can force a little *more* uniformity
+than the coarse-optimal strategy strictly needs -- `coarsen` picks the safe
+join rather than search for the tightest valid partition, which only matters
+for `memoryless_response`'s value as a lower bound, never for its validity.
+`project_onto_coarse` (a starting L1-level strategy, e.g. a K0-measurable
+agent's tabulation, restricted to a coarse keying via one representative L1
+set per coarse set) must itself be averaged within these joined orbits before
+use (`Keying.orbit_mean`), for the same reason: skipping it reproduces the
+section 18 bug on the coarse keying.
+
+**Known limitation on a symmetric tree**: K0 / K1 / K2 read their fields off
+whichever canonical L1 representative `compile_tree` happened to pick for each
+L1 set (minimising the *whole* key, history included) -- not a representative
+re-minimised for K0 / K1 / K2's own, smaller field set. The same abstract
+coarse position can therefore land in different coarse groups depending on
+which L1 representative reached it, so the quotient tree's K0 / K1 / K2
+partition can be a *finer* (less merged) one than the "ideal" quotient of the
+abstract K0 / K1 / K2 partition, and `coarsen(quotient_tree, k0)`'s value is
+not expected to numerically match `coarsen(full_tree, k0)`'s (unlike
+`identity_key`, where every group has one member and no such gap can arise:
+`tests/compiled/test_coarse.py` checks this exact contrast). Properly
+re-canonicalising K0 / K1 / K2 under the group would need every constituent's
+action list remapped through its own canonicalising element at the arc level,
+not just the key; not done (this was step 9.5a's plan, which expected the two
+to agree -- a correction logged in `docs/results/09.5a-results.md`). The value
+computed here is still a valid, achievable lower bound on *that tree's* own BR
+L1 either way; only the full/quotient comparison is affected.
+
+**`memoryless_response(tree, coarsening, opponent, seat, start_l1_sigma,
+iterations)`**: an iterated greedy best response. From a starting policy
+projected onto the coarse keying, repeatedly compute the best response to
+`opponent` with `own` fixed at the *current* iterate's weights
+(`best_response(..., own=tree.weights(keying, sigma, seat))`, section 21),
+then evaluate the new policy exactly and keep going. Every iterate is a real
+(history-free) policy, so the best value seen is a valid lower bound on the
+best achievable memoryless policy against `opponent`; `best_response(tree,
+Level.L1, opponent, seat)` (full history) is the upper bound. The iteration
+need not be monotone (a local best response under imperfect recall is not
+guaranteed to improve every step), so the best `(value, sigma)` pair across
+the whole run is kept, not just the last; it stops early when the policy
+repeats an earlier iterate exactly.
+
+Checks (`tests/compiled/test_coarse.py`): the identity coarsening (`identity_key`
+= the full L1 key) reproduces `best_response` L1 exactly, on both the full and
+the quotient tree, and the pinned `TOY` BR-to-random values (0.7934 / 0.5513);
+Random and the Heuristic tabulations are constant within every K0 set; a coarse
+response replays to its value through `evaluate` and never exceeds BR L1, on
+both trees independently; brute force over every pure K0 policy (at most 4,096
+of them, else the example is skipped) bounds `memoryless_response`'s result;
+one `best_response` pass with `own` fixed agrees between the full and the
+quotient tree on `identity_key` (not on K0 / K1 / K2, the known limitation
+above).
+
+## 21. Edge attribution and the sampled cross-check (`uno/compiled/edge.py`, `uno/compiled/lookup.py`)
+
+Step 9.5a, D2 and D4 of the step 9 review's section D ("An edge-by-decision
+tool: for a checkpoint against a reference strategy... where it loses its
+points, by decision kind and by situation"; "Metric for agents trained against
+a fixed opponent: the gap to BR L1 against that opponent").
+
+**The identity** (performance-difference lemma, Kakade & Langford 2002,
+adapted to a fixed-opponent extensive-form game). For two row strategies A
+("row"), B ("ref") against the same fixed opponent O, both playing `seat`:
+
+```
+V^B - V^A = sum_h rho^A(h) * sum_a sigma_A(a|h) * [V^B(h) - Q^B(h,a)]     (mirror)
+          = sum_h rho^B(h) * sum_a sigma_B(a|h) * [Q^A(h,a) - V^A(h)]     (forward)
+```
+
+summed over A's (resp. B's) own decision nodes h. `rho^X(h)` is the **full**
+reach probability of h under (X, O, chance) -- unlike a best response's
+counterfactual reach, it includes the row player's own action probabilities
+along the path, since it is a state-visitation frequency, not a best-response
+weight (`uno.compiled.edge._reach`). `V^X`, `Q^X` are node and arc values under
+(X, O): well-defined at *every* node of the tree, not only the ones X actually
+reaches, because `CompiledTree.values` is a backward pass over the whole tree
+regardless of which weights reach a node. Both identities are exact and,
+summed over all of A's (B's) own arcs, equal `V^B - V^A` to numerical
+precision; the two need not agree term-by-term, since they group the same
+total differently (by A's decisions or by B's).
+
+When B is a best response to O, **every mirror term is non-negative**: B
+maximises the reach-weighted sum of continuation values at every information
+set (section 16), and A's own reach is a positive common factor within a
+perfect-recall set (section 14), so grouping mirror terms by set never changes
+sign (`tests/compiled/test_edge.py`).
+
+**`br_gap(tree, row, opponent, seat)`**: BR L1's return minus `row`'s, at
+`seat` (the D4 metric: the exact, luck-free gap to the ceiling against a
+*fixed* training opponent). **`mirror_terms`** / **`forward_terms`** return
+the per-arc decomposition, labelled by `uno.eval.decisions.node_kind` /
+`action_class` / `situation` (`uno.store.load_or_label`, section 22) for
+grouping.
+
+**Stakes and the wild split** are separate, always-defined diagnostics, not
+terms of the identity above:
+
+- `stakes(tree, row, ref, opponent, seat)`: `max_a Q^ref(h,a) - min_a Q^ref(h,a)`
+  at every `seat`-owned decision node, weighted by `rho^row(h)` -- how much a
+  decision could possibly be worth under the reference's own values, always
+  >= 0 by construction (a max minus a min).
+- `wild_split(tree, row, ref, opponent, seat, kinds)`: at wild-kind decisions
+  only, splits the reference's values into a "spend" part (the best action
+  overall minus the best wild) and a "color" part (the best wild minus the
+  worst wild), both >= 0 by construction. Fully vectorized (a small
+  `(num_actions,)` lookup broadcast through `k.ia_action`, then
+  `np.maximum.at` / `np.minimum.at` scatters per node), so it stays cheap even
+  on `TOY2_FULL`'s ~8M set-actions.
+
+**`uno.compiled.lookup.NodeIndex`** maps a *played* game's states to a compiled
+tree's own nodes and arcs, via the **L2** keying, the finest one available
+where "on the full `TOY` tree the L2 keying has exactly one node per set...
+the L2 key of a played state *is* its node" (section 16); on a symmetric tree,
+up to `|G|` nodes share one canonical L2 set, with equal values for a
+symmetric profile, and `NodeIndex` picks the tree's own lowest-numbered node
+of that set as the representative. `node(state)` finds it; `arc(state,
+action)` finds the arc there for `action`. Because `tree.arc_action` is in
+*each node's own* frame (`compile_tree` canonicalises a node's *key*, not its
+underlying `State`, so a symmetric tree's nodes below a canonical deal are
+real, un-relabelled states), matching `action` (mapped through the node's own
+canonicalising element) against `tree.arc_action` directly is only correct at
+the one node whose search happened to produce that element -- not in general
+at `NodeIndex`'s chosen representative, which may be a *different* node of the
+same set with its own, different canonicalising element. What stays consistent
+across every node of a set is `k.arc_ia` / `k.ia_action`, `compile_tree`'s own
+per-node-canonicalised action ids (used to build the keying in the first
+place): `arc` matches on those instead. `build(tree, level=Level.L2)` needs an
+L2 keying on the tree: cached for `TOY`, `TOY_FULL`, `TOY2` and `TOY2_SKIP`;
+skipped for `TOY2_FULL`, whose L2 keying alone is ~3 GB.
+
+**The sampled D2 check** (`uno.compiled.edge.sampled_mirror`): plays `row`
+against `opponent` and, at each of `row`'s own decisions, sums `sigma_row(a|h)
+* [V^ref(h) - Q^ref(h,a)]` from the tree's own node / arc values under (ref,
+opponent), read off via `NodeIndex` -- exactly the per-node quantity
+`mirror_terms` sums exactly. A played game samples decision nodes with
+probability exactly `rho^row`, so the per-game total's sample mean over many
+games is an unbiased estimator of the exact mirror total; `uno.experiments.edge`
+checks it (and each `node_kind` sub-total) against the exact value with a
+z-score on the sampled standard error, |z| <= 3.
+
+Checks (`tests/compiled/test_edge.py`, `test_lookup.py`): both identities equal
+the exact value gap on random profiles and vanish (at the per-node level, not
+per arc: individual arc terms of a self-comparison need not be zero, only each
+node's own terms summed, since `values`' backward pass makes a node's value
+the weighted average of its arcs') when A = B; `br_gap` matches BR L1 minus a
+row's value; mirror terms are non-negative when the reference is a best
+response; grouped totals by `node_kind` agree between the full and the
+quotient tree for symmetric agents; `stakes` and `wild_split` are non-negative
+on a ruleset with a wild. `NodeIndex` finds every state along random games,
+with matching legal actions; the looked-up node's value matches an
+independent reference (`uno.reference.solve.evaluate` from that state with
+lazy chance); the looked-up arc's value matches the reference Q-value
+including chance-branching actions (a draw with several outcomes); on the
+quotient, every node of one L2 set shares its value to 1e-12.
+
+## 22. Decision labels (`uno/eval/decisions.py`, `uno.store.load_or_label`)
+
+Step 9.5a. Classifiers of a decision, as functions of an observation and legal
+actions (not a `State`), so they apply equally to played games (`observe`) and
+to a compiled tree's information sets (`uno.game.observe.observation_from_key`):
+
+- `node_kind(rs, obs, legal)`: one label per decision **node** (a partition,
+  unlike `classify` below): `"single"` (one legal action), `"drawn"` (after a
+  voluntary draw), `"wild"` (a wild among the legal plays), `"action"` (an
+  action card among 2+ plays), `"color"` (plays in 2+ colors), else
+  `"other"` (a single-color choice, or a draw against one kind of play).
+- `action_class(rs, obs, legal, a)`: one label per (node, action): `"draw with
+  a play in hand"`, `"forced draw"`, `"pass"`, `"play drawn card"`, `"wild
+  with a colored play available"`, `"wild when only wilds play"`, `"action
+  card"`, `"number"`.
+- `situation(obs)`: `(seat, opponent hand size bucket, pile size bucket)`.
+- `classify(rs, obs, legal)`: the step 8.5 decision-kind census of section 6.7
+  of `context.md` (moved here unchanged from `uno.experiments.transfer`; its
+  categories overlap, unlike `node_kind`'s partition).
+
+`set_labels(tree, level=Level.L1)` computes `node_kind` / `situation` /
+`action_class` for every set of a keying, one `observation_from_key` call per
+set (the same cost as `tabulate`, section 16); `uno.store.load_or_label`
+caches it the same way `load_or_tabulate` caches an agent's tabulation, keyed
+on a fingerprint of the keying (not an agent's name: labels are a property of
+the tree alone).

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from uno.compiled.tree import CompiledTree, Strategy
+from uno.compiled.tree import CompiledTree, Keying, Strategy
 from uno.game.observe import Level
 
 # -- exact computations --------------------------------------------------------
@@ -49,32 +49,83 @@ class BestResponse:
         return (self.value + 1.0) / 2.0
 
 
-def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: int, completion: np.ndarray | None = None) -> BestResponse:
-    """Best response of `seat` at information level `level` (a keying of the tree)
-    to a fixed opponent strategy. One forward pass for the counterfactual reach
-    (chance x opponent), one backward pass choosing per information set, from
-    the deepest level up, the action maximising the reach-weighted sum of its
-    histories' continuation values. Ties: the lowest action id, as `uno.reference.solve`.
-    On a symmetric tree the choice is an *orbit* of actions under the set's
-    stabilizer, played uniformly (docs/spec.md section 18): the value equals the
-    full game's best-response value against a symmetric opponent, and the
-    strategy is symmetric.
+def best_response(
+    tree: CompiledTree,
+    level: Level | Keying,
+    opponent: Strategy,
+    seat: int,
+    completion: np.ndarray | None = None,
+    own: np.ndarray | None = None,
+) -> BestResponse:
+    """Best response of `seat` at information level `level` (a keying of the tree, or
+    an explicit `Keying`, step 9.5a) to a fixed opponent strategy. One forward pass
+    for the counterfactual reach (chance x opponent), one backward pass choosing per
+    information set, from the deepest level up, the action maximising the
+    reach-weighted sum of its histories' continuation values. Ties: the lowest action
+    id, as `uno.reference.solve`. On a symmetric tree the choice is an *orbit* of
+    actions under the set's stabilizer, played uniformly (docs/spec.md section 18):
+    the value equals the full game's best-response value against a symmetric
+    opponent, and the strategy is symmetric.
 
     Responder sets with zero counterfactual reach (the opponent never lets the
     game get there) do not affect the value and get no real choice: they take
     their first orbit, or `completion` (a strategy over the same keying, e.g. the
     Nash strategy) when given. What is played there still matters when another
     opponent steers the game there, i.e. for the exploitability of the best
-    response as a row agent (docs/spec.md section 16)."""
+    response as a row agent (docs/spec.md section 16).
+
+    `own` (step 9.5a, `uno.compiled.coarse`): the responder's own per-arc weights
+    (e.g. `tree.weights(level, sigma_t, seat)`), folded into the reach used to
+    combine a set's histories. On a *perfect-recall* keying (L1, L2, L3) this is a
+    common factor within every set and never changes the argmax, so the default
+    `None` (equivalent to all-ones weights, since a constant per-arc weight along a
+    player's own arcs makes that player's reach column identically 1 at every node)
+    reproduces the ordinary best response exactly. On an *imperfect-recall* coarse
+    keying it weights the set's histories by how likely the *other* (fixed, at
+    sigma_t) responder decisions on their path were, which is what makes the local
+    choice meaningful: `uno.compiled.coarse.memoryless_response` iterates this."""
     t0 = time.perf_counter()
-    k = tree.keyings[level]
+    k = tree.keying_of(level)
     opp = seat ^ 1
     w_opp = tree.weights(opponent[0], opponent[1], opp)
     ones = np.ones(tree.m)
-    r = tree.reach(w_opp if opp == 0 else ones, w_opp if opp == 1 else ones)
-    cf = r[:, 2] * r[:, opp]
+    r0 = tree.reach(w_opp if opp == 0 else ones, w_opp if opp == 1 else ones)
+    cf0 = r0[:, 2] * r0[:, opp]  # chance x opponent only: never own, see below
     dec = np.nonzero(tree.player == seat)[0]
-    unreached = (np.bincount(k.node_info[dec], weights=cf[dec], minlength=k.n_info) <= 0) & (k.info_player == seat)
+    if own is not None:
+        w0 = w_opp if opp == 0 else own
+        w1 = w_opp if opp == 1 else own
+        r = tree.reach(w0, w1)
+        own_reach = r[:, seat]
+        # `own` reweights a set's *member histories* by how much of sigma_t's own
+        # reach each carries, relative to the set's total -- a convex combination,
+        # not a raw multiplicative factor on cf0: a raw factor goes to exactly zero,
+        # and hence degenerate/arbitrary, for any set none of whose histories sigma_t
+        # currently visits, even though such a set is still reached by chance x
+        # opponent (cf0 > 0) and the strategy this call is about to choose is free to
+        # visit it (that is the whole point of best-responding: `own` is only a
+        # belief about what *other* decisions do, section 21). Where a set's total
+        # own-reach is zero, this falls back to cf0 alone (uniform weight, 1.0) for
+        # that set, so it still gets a real argmax there, never a degenerate tie.
+        own_sum = np.bincount(k.node_info[dec], weights=own_reach[dec], minlength=k.n_info)
+        own_sum_at_node = np.where(k.node_info >= 0, own_sum[np.maximum(k.node_info, 0)], 0.0)
+        cf = cf0 * np.where(own_sum_at_node > 0, own_reach / np.where(own_sum_at_node > 0, own_sum_at_node, 1.0), 1.0)
+    else:
+        cf = cf0
+    # `unreached` must stay based on chance x opponent reach alone (cf0), never on
+    # `own`: a set `own`'s *current* policy happens not to visit can still be
+    # visited by the strategy this call is about to choose (which is free to
+    # differ from `own` at every set, that is the whole point of best-responding),
+    # so it is not "unreached" in the sense that matters here. Folding `own` into
+    # the reach used for `unreached` too (an earlier version of this function did)
+    # silently starved such sets of a real choice, falling back to `completion` /
+    # the first orbit there instead, and lost real value: caught because it made
+    # `own`-weighted `best_response` disagree with the `own=None` value on a
+    # perfect-recall keying, where `own` is a positive constant within every set
+    # (every history of an L1/L2/L3 set shares the seat's own past reach exactly,
+    # tests/compiled/test_coarse.py) and therefore *cannot* change which action
+    # maximises a set's reach-weighted value -- only whether it looks reached.
+    unreached = (np.bincount(k.node_info[dec], weights=cf0[dec], minlength=k.n_info) <= 0) & (k.info_player == seat)
     v = np.zeros(tree.n)
     av = np.zeros(tree.m)
     v[tree.terminals] = tree.seat_util(seat)
@@ -119,7 +170,7 @@ def best_response(tree: CompiledTree, level: Level, opponent: Strategy, seat: in
             raise ValueError("completion must be a strategy over the responder's keying")
         fill = unreached[k.ia_info]
         choice[fill] = completion[fill]
-    return BestResponse(seat=seat, level=level, value=float(v[0]), sigma=choice, seconds=time.perf_counter() - t0, unreached=int(unreached.sum()), ties=ties, unreached_sets=unreached)
+    return BestResponse(seat=seat, level=k.level, value=float(v[0]), sigma=choice, seconds=time.perf_counter() - t0, unreached=int(unreached.sum()), ties=ties, unreached_sets=unreached)
 
 
 def best_response_perfect(tree: CompiledTree, opponent: Strategy, seat: int) -> BestResponse:

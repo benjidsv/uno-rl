@@ -33,48 +33,17 @@ from uno.compiled.cfr import cfr
 from uno.compiled.solvers import best_response, evaluate
 from uno.compiled.strategies import tabulate
 from uno.compiled.tree import END_KINDS, compile_tree
+from uno.eval.decisions import CATEGORIES, classify
 from uno.eval.estimate import Pairs, compare, estimate_mirrored, games_needed, play_pairs
 from uno.eval.play import EVAL_SEEDS
 from uno.game import rules
-from uno.game.engine import Phase, State, legal_actions
+from uno.game.engine import legal_actions
 from uno.game.observe import Level
-from uno.game.rules import Kind, Play, Ruleset
+from uno.game.rules import Ruleset
 from uno.store import CACHE, load_nash
 
 EDGE = 0.03  # score points
 RULESETS = ("TOY", "FULL_UNO")
-CATEGORIES = (
-    "any choice",
-    "which color: plays in 2+ colors",
-    "wild: hold or spend",
-    "wild: pick a color",
-    "action card among other plays",
-    "draw with a play in hand",
-    "play or keep the drawn card",
-)
-
-
-def classify(rs: Ruleset, s: State) -> set[str]:
-    """Skill-carrying decision kinds at a decision node (see docs/plan.md, "Which decisions carry skill")."""
-    types = rs.card_types
-    legal = legal_actions(s)
-    plays = {rs.actions[a].card for a in legal if isinstance(rs.actions[a], Play)}
-    cats = {"any choice"} if len(legal) > 1 else set()
-    if s.phase is Phase.AFTER_DRAW:
-        return cats | {"play or keep the drawn card"}
-    colored = {c for c in plays if not types[c].is_wild}
-    wild = len(plays) > len(colored)
-    if len({types[c].color for c in colored}) > 1:
-        cats.add("which color: plays in 2+ colors")
-    if wild:
-        cats.add("wild: pick a color")
-        if colored:
-            cats.add("wild: hold or spend")
-    if len(plays) > 1 and any(types[c].kind not in (Kind.NUMBER, Kind.WILD) for c in plays):
-        cats.add("action card among other plays")
-    if plays and rs.draw_action in legal:
-        cats.add("draw with a play in hand")
-    return cats
 
 
 @dataclass
@@ -99,7 +68,7 @@ def play(rs: Ruleset, agents, seeds, census: bool) -> Played:
             if census:
                 n_dec += len(g.trace.steps)
                 for st in g.trace.steps:
-                    decisions.update(classify(rs, st.state))
+                    decisions.update(classify(rs, st.obs, legal_actions(st.state)))
     slim = replace(pairs, games=tuple((replace(a, trace=None), replace(b, trace=None)) for a, b in pairs.games))
     return Played(slim, ends, ties, turns / (2 * pairs.n), decisions, n_dec)
 
@@ -142,7 +111,7 @@ def part1(games: int) -> None:
     print("\n== 1c. skill proxy: heuristic - random, both against random, paired on the same deals")
     print(f"   {'ruleset':9s} {'seat':4s} {'paired diff':>17s} {'unpaired ±':>10s} {'corr':>7s} {'var ratio':>9s} {'games for 3 pts, unpaired / paired':>36s}")
     for name, res in results.items():
-        c = compare(res["heuristic vs random"].pairs, res["random vs random"].pairs)
+        c = compare(res["heuristic vs random"].pairs, res["random vs random"].pairs, divergence=False)  # traces dropped in `play` above
         for seat in (0, 1):
             d, u = c.seat[seat], c.unpaired[seat]
             g = f"{games_needed(EDGE, 2 * u.var):.0f} / {games_needed(EDGE, 2 * d.var):.0f}"

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
+import pytest
 from hypothesis import assume, given, settings
 
 from tests.strategies import SMALL, rulesets, seeds
@@ -157,6 +159,50 @@ def test_compare_is_exact_for_deterministic_agents_and_pairs_help():
     for seat in (0, 1):
         assert c.corr[seat] > 0.3 and c.var_ratio(seat) < 0.7
         assert c.seat[seat].mean > 0
+
+
+def test_compare_divergence_stat():
+    """`compare(..., divergence=True)` (step 9.5a): comparing a row against itself
+    gives identical games at every seed; comparing two distinct rows against a
+    stochastic column, the first differing action index matches a direct replay
+    comparison, and `divergence=False` (or traces dropped) skips the fields."""
+    rs = TOY
+    heu, rnd = Heuristic(rs), PlayFirstRandom(rs)
+    seeds_ = range(300)
+    a = play_pairs(rs, (heu, rnd), seeds_)
+    c_self = compare(a, a)
+    assert c_self.identical == (1.0, 1.0)
+    for seat in (0, 1):
+        assert math.isnan(c_self.diverge_at[seat])
+
+    b = play_pairs(rs, (rnd, rnd), seeds_)
+    c = compare(a, b)
+    for seat in (0, 1):
+        # direct check: the first differing action index, over the non-identical seeds
+        idxs = []
+        n_same = 0
+        for pa, pb in zip(a.games, b.games):
+            act_a, act_b = pa[seat].trace.actions, pb[seat].trace.actions
+            m = min(len(act_a), len(act_b))
+            i = 0
+            while i < m and act_a[i] == act_b[i]:
+                i += 1
+            if i == len(act_a) == len(act_b):
+                n_same += 1
+            else:
+                idxs.append(i)
+        assert math.isclose(c.identical[seat], n_same / len(seeds_))
+        if idxs:
+            assert math.isclose(c.diverge_at[seat], sum(idxs) / len(idxs))
+        assert 0.0 <= c.identical[seat] <= 1.0
+
+    c_no_div = compare(a, b, divergence=False)
+    assert c_no_div.identical is None and c_no_div.diverge_at is None and c_no_div.diverge_frac is None
+
+    slim = replace(a, games=tuple((replace(g0, trace=None), replace(g1, trace=None)) for g0, g1 in a.games))
+    with pytest.raises(ValueError, match="divergence"):
+        compare(slim, b)
+    compare(slim, b, divergence=False)  # no traces needed when divergence is off
 
 
 def test_bootstrap_moments():

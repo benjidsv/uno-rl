@@ -34,7 +34,6 @@ the failures.
 
 from __future__ import annotations
 
-import math
 import sys
 from itertools import pairwise
 
@@ -50,10 +49,9 @@ from uno.compiled.solvers import (
 )
 from uno.compiled.strategies import br_row, transfer
 from uno.compiled.tree import CompiledTree, compile_tree
-from uno.experiments.common import by_seat, score
+from uno.experiments.common import by_seat, deal_model_check, score
 from uno.game import rules
 from uno.game.observe import Level
-from uno.reference.solve import scores_on_seeds
 from uno.store import CACHE
 
 L1, L2, L3 = Level.L1, Level.L2, Level.L3
@@ -204,14 +202,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"   row at seat {seat}: {br.unreached:,} of {n:,} sets unreached, {br.ties:,} reached sets with tied orbits | as solved {solved:.2f}, Nash-filled {with_nash:.2f}, least exploitable {least[-1]:.2f} (t = {', '.join(map(str, marks))}: {', '.join(f'{x:.2f}' for x in least)})  {ok}")
         sys.stdout.flush()
 
-    print(f"\n== 5. deal model: mean over {n_seeds:,} seeds of the exact score on each real deal, against the whole-game exact score (z on the deal variance)")
-    seeds = range(2_000_000, 2_000_000 + n_seeds)
-    for label, a, b in (("random vs random", rnd, rnd), ("heuristic vs random", heu, rnd)):
-        exact = score(evaluate(lazy, sl[a.name], sl[b.name])[0])
-        on = scores_on_seeds(rs, (a, b), seeds)
-        z = on.z_global(exact, 0)
-        ok = check(abs(z) <= 3, f"deal model {label} (z = {z:+.2f})")
-        print(f"   {label:22s} whole game {exact:.4f}, mean on {on.n:,} seeds {on.mean[0]:.4f} (sd over seeds {math.sqrt(on.deal_var[0]):.3f}), z {z:+.2f}  {ok}")
+    deal_model_check(rs, lazy, [("random vs random", rnd, rnd), ("heuristic vs random", heu, rnd)], sl, n_seeds, 2_000_000, check)
 
     print(f"\n== {len(FAILS)} failed checks" + (": " + "; ".join(FAILS) if FAILS else ""))
 

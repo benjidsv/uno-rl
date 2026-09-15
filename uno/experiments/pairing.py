@@ -34,7 +34,7 @@ from uno.agents.baseline import Heuristic, Mixture, PlayFirstRandom, UniformLega
 from uno.compiled.solvers import evaluate
 from uno.compiled.strategies import tabulate
 from uno.compiled.tree import compile_tree
-from uno.eval.estimate import compare, estimate, estimate_mirrored, play_pairs
+from uno.eval.estimate import Comparison, Pairs, compare, correlation, estimate, estimate_mirrored, play_pairs
 from uno.eval.play import EVAL_SEEDS, match
 from uno.experiments.common import score
 from uno.game import rules
@@ -85,9 +85,31 @@ def same_game(n_seeds: int, games: int) -> None:
                 sys.stdout.flush()
 
 
+def _slim(p: Pairs) -> Pairs:
+    """`p` with every game's trace dropped (`uno.experiments.transfer`'s
+    `Played.pairs` pattern): a `FULL_UNO` pair set of games holds ~1 GB of
+    `State`s in its traces, which only the step 9.5a divergence statistic
+    (`compare(..., divergence=True)`) needs -- section 2a / 2b read only
+    scores, already unaffected by slimming."""
+    return replace(p, games=tuple((replace(a, trace=None), replace(b, trace=None)) for a, b in p.games))
+
+
 def full_uno(games: int) -> None:
+    """Collects `played` (2 draws x 2 columns x 5 rows = 20 `(row, column)` pairs)
+    incrementally, one `(draws, cname)` group of 5 rows at a time, and slims each
+    Pairs to scores-only (`_slim`) as soon as its traces are no longer needed:
+    holding all 20 groups' full traces at once needs on the order of 20 GB (a
+    `FULL_UNO` pair set is ~1 GB), which crashed a machine with ~17 GB of RAM once
+    step 9.5a's divergence statistic (section 2c below) started actually reading
+    them, though the traces were already being built and retained by `play_pairs`
+    even before that, unused, by every earlier version of this function. Within one
+    group, "heuristic" (collected first: `rows`' own iteration order) keeps its
+    traces until every other row's comparison against it is computed and stored in
+    `comparisons`, so at most two unslimmed Pairs (heuristic's, and whichever row is
+    currently being compared) exist at once."""
     seeds = range(EVAL_SEEDS.start, EVAL_SEEDS.start + games)
-    played = {}
+    played: dict[tuple[str, str, str], Pairs] = {}
+    comparisons: dict[tuple[str, str, str], Comparison] = {}  # (draws, other, cname) -> Comparison
     for draws in ("pile", "tickets"):
         rs = replace(rules.FULL_UNO, draws=draws)
         rnd, heu = PlayFirstRandom(rs), Heuristic(rs)
@@ -103,9 +125,17 @@ def full_uno(games: int) -> None:
             "random": rnd,
         }
         for cname, col in (("random", rnd), ("heuristic", col_heu)):
+            heu_pairs: Pairs | None = None
             for rname, row in rows.items():
-                played[(draws, rname, cname)] = play_pairs(rs, (row, col), seeds)
+                p = play_pairs(rs, (row, col), seeds)
+                if rname == "heuristic":
+                    heu_pairs = p  # kept unslimmed until every other row of this group has been compared to it
+                    continue
+                comparisons[(draws, rname, cname)] = compare(heu_pairs, p)
+                played[(draws, rname, cname)] = _slim(p)
                 sys.stdout.flush()
+            played[(draws, "heuristic", cname)] = _slim(heu_pairs)
+            sys.stdout.flush()
 
     print(f"\n== 2a. FULL_UNO, {games} held-out seeds: per-seat score of the row agent, draws from the pile / tickets (z of the per-seed difference: both rules deal the same hands, so the two estimates are correlated)")
     for (draws, rname, cname), p in played.items():
@@ -126,16 +156,32 @@ def full_uno(games: int) -> None:
         print(f"   {rname + ' vs ' + cname:34s} corr {mp.corr:+.3f} / {mt.corr:+.3f}  splits {mp.splits:.3f} / {mt.splits:.3f}  var ratio {mp.var_ratio:.3f} / {mt.var_ratio:.3f}")
 
     print(f"\n== 2c. paired comparisons, heuristic minus a variant against the same column: paired difference, var ratio paired / unpaired, deals for {100 * EDGE:.0f} pts at 3 sigma with 80 % power (paired / unpaired)")
+    print("   step 9.5a: 'identical' is the share of deals whose two games play the exact same action sequence (common random numbers coupling them beyond the shared deal), 'diverge' the mean point (as a share of the shorter game's length) where the rest first differ")
+    ratios: list[float] = []
+    identicals: list[float] = []
     for cname in ("random", "heuristic"):
         for other in ("heuristic_t1", "heuristic_eps05", "heuristic_eps05_own", "random"):
             for draws in ("pile", "tickets"):
-                c = compare(played[(draws, "heuristic", cname)], played[(draws, other, cname)])
+                c = comparisons[(draws, other, cname)]  # computed in full_uno, while both sides still had traces
                 cells = [
-                    f"seat {s}: {c.seat[s].mean:+.4f} ± {c.seat[s].half:.4f} ratio {c.var_ratio(s):.3f} deals {Z80**2 * c.seat[s].var / EDGE**2:6.0f} / {Z80**2 * c.unpaired[s].var / EDGE**2:6.0f}"
+                    f"seat {s}: {c.seat[s].mean:+.4f} ± {c.seat[s].half:.4f} ratio {c.var_ratio(s):.3f} deals {Z80**2 * c.seat[s].var / EDGE**2:6.0f} / {Z80**2 * c.unpaired[s].var / EDGE**2:6.0f} identical {c.identical[s]:.3f} diverge {c.diverge_frac[s]:.2f}"
                     for s in (0, 1)
                 ]
                 print(f"   vs {cname:9s} heuristic - {other:20s} {draws:7s} " + "   ".join(cells))
+                for s in (0, 1):
+                    ratios.append(c.var_ratio(s))
+                    identicals.append(c.identical[s])
         sys.stdout.flush()
+
+    def rank(xs: list[float]) -> list[float]:
+        order = sorted(range(len(xs)), key=lambda i: xs[i])
+        out = [0.0] * len(xs)
+        for r, i in enumerate(order):
+            out[i] = float(r)
+        return out
+
+    rank_corr = correlation(rank(ratios), rank(identicals))
+    print(f"\n   rank correlation of the variance ratio with the identical-games share, over the {len(ratios)} (comparison, seat) cells above: {rank_corr:+.3f}")
 
 
 def main(argv: list[str] | None = None) -> None:
