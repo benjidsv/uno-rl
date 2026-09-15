@@ -1,12 +1,23 @@
 [project]
 name = "uno-v5"
 version = "0.1.0"
-description = "Add your description here"
+description = "UNO engine, exact solvers and evaluators: measure skill vs luck before RL"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "numpy>=2.5.3",
 ]
+
+[project.scripts]
+uno = "uno.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "uno"
+module-root = ""
 
 [dependency-groups]
 dev = [
@@ -16,4 +27,3 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
