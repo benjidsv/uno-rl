@@ -9,6 +9,10 @@ Files live in `CACHE` (the repo's `.cache/`, or `$UNO_CACHE`), git-ignored:
 
 `<name>` is the ruleset's name in `uno.game.rules.NAMED`, or a hash of its repr.
 Every experiment loads trees and Nash strategies through here.
+
+Every file carries `CACHE_VERSION`; a file with another version (or none, before
+step 8.9) is stale: trees are recompiled and CFR results solved again, and the
+new file overwrites it.
 """
 
 from __future__ import annotations
@@ -18,6 +22,8 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from uno.game.observe import Level
 from uno.game.rules import NAMED, Ruleset
 
@@ -26,6 +32,19 @@ if TYPE_CHECKING:
     from uno.compiled.tree import CompiledTree
 
 CACHE = Path(os.environ.get("UNO_CACHE", Path(__file__).resolve().parent.parent / ".cache"))
+
+# Bump whenever a change to the engine, the chance model, the keys, the symmetry or the
+# tree layout changes what a compile (or a CFR run on it) produces.
+CACHE_VERSION = 1
+
+
+def is_current(path: str | Path) -> bool:
+    """Whether a cached file exists and was written under the current `CACHE_VERSION`."""
+    path = Path(path)
+    if not path.exists():
+        return False
+    with np.load(path) as z:
+        return "version" in z.files and int(z["version"]) == CACHE_VERSION
 
 
 def ruleset_name(rs: Ruleset) -> str:
@@ -41,7 +60,7 @@ def cache_name(rs: Ruleset, levels: tuple[Level, ...], symmetric: bool, world: b
 
 
 def load_or_compile(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,), symmetric: bool = True, world: bool | None = None, cache: str | Path = CACHE) -> CompiledTree:
-    """The compiled tree from the cache, compiled and saved there if missing."""
+    """The compiled tree from the cache, compiled and saved there if missing or stale."""
     from uno.compiled.tree import compile_tree
 
     return compile_tree(rs, levels, symmetric, cache=cache, world=world)
@@ -54,15 +73,15 @@ def cfr_path(tree: CompiledTree, variant: str = "cfr+", cache: str | Path = CACH
 
 def load_nash(tree: CompiledTree, variant: str | None = None, min_iterations: int = 0, cache: str | Path = CACHE) -> CFRResult | None:
     """A cached CFR result on the tree's L1 keying: of `variant`, or of any variant
-    (CFR+ first, then the others by file name) when None. Only a result with at
-    least `min_iterations` iterations over the same keying counts; None otherwise."""
+    (CFR+ first, then the others by file name) when None. Only a current result with
+    at least `min_iterations` iterations over the same keying counts; None otherwise."""
     from uno.compiled.cfr import CFRResult
 
     base = cfr_path(tree, "cfr+", cache)
     paths = [cfr_path(tree, variant, cache)] if variant is not None else [base, *sorted(Path(cache).glob(base.stem + "_*.npz"))]
     n_ia = tree.keyings[Level.L1].n_ia
     for path in paths:
-        if path.exists():
+        if is_current(path):
             res = CFRResult.load(path)
             if res.iterations >= min_iterations and len(res.avg) == n_ia:
                 return res

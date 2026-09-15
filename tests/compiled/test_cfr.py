@@ -59,6 +59,9 @@ def test_cfr_plus_converges_and_agrees_with_reference(tmp_path):
 
     # save / load round trip
     res.save(tmp_path / "cfr.npz")
+    from uno.store import is_current
+
+    assert is_current(tmp_path / "cfr.npz")
     back = CFRResult.load(tmp_path / "cfr.npz")
     assert np.array_equal(back.avg, res.avg) and back.iterations == res.iterations and len(back.log) == len(res.log)
     assert back.final.nashconv == res.final.nashconv

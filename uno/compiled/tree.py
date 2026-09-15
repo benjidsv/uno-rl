@@ -251,8 +251,12 @@ class CompiledTree:
     # -- persistence
 
     def save(self, path: str | Path) -> None:
-        """Everything except the Symmetry (rebuilt on load). `np.savez` (uncompressed) for load speed."""
-        arrays = {f: getattr(self, f) for f in ("player", "level", "util", "end", "arc_node", "arc_action", "arc_player", "node_arc_start", "edge_arc", "edge_child", "edge_prob", "arc_edge_start")}
+        """Everything except the Symmetry (rebuilt on load), stamped with `uno.store.CACHE_VERSION`.
+        `np.savez` (uncompressed) for load speed."""
+        from uno import store
+
+        arrays = {"version": np.array(store.CACHE_VERSION)}
+        arrays |= {f: getattr(self, f) for f in ("player", "level", "util", "end", "arc_node", "arc_action", "arc_player", "node_arc_start", "edge_arc", "edge_child", "edge_prob", "arc_edge_start")}
         arrays["levels"] = np.array([(L.level, L.n0, L.nd, L.n1, L.a0, L.a1, L.e0, L.e1) for L in self.levels], dtype=np.int64)
         arrays["meta"] = np.array([repr(self.rs), self.roots_level.name, str(self.symmetric), repr(self.seconds)])
         arrays["keying_levels"] = np.array([lv.value for lv in self.keyings], dtype=np.int64)
@@ -367,7 +371,8 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,), symmetric
     `symmetric`: one root per color / rank orbit and canonical keys (docs/spec.md
     section 18); exact for symmetric policies only. `cache`: a directory; the
     tree is loaded from it if a file for this (ruleset, levels, symmetric,
-    world) exists there, saved to it otherwise.
+    world) exists there under the current `uno.store.CACHE_VERSION`, compiled
+    and saved to it (overwriting a stale file) otherwise.
 
     Two compiles of the same (ruleset, symmetric, world) walk the same nodes in
     the same order whatever the keyings, so a keying from one can be attached
@@ -380,7 +385,9 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,), symmetric
 
         cache = Path(cache)
         path = cache / f"tree_{cache_name(rs, levels, symmetric, world)}.npz"
-        if path.exists():
+        from uno.store import is_current
+
+        if is_current(path):
             return CompiledTree.load(path, rs)
         tree = compile_tree(rs, levels, symmetric, world=world)
         cache.mkdir(parents=True, exist_ok=True)

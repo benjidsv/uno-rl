@@ -116,34 +116,32 @@ def children(state: State) -> dict[int, list[Outcome]]:
 # -- initial deal -------------------------------------------------------------
 
 
-def _multisets(counts: dict[int, int], n: int, lo: int = 0) -> list[tuple[tuple[int, ...], float]]:
-    """All multisets of n cards (as non-decreasing tuples) with P(drawing that multiset)."""
-    if n == 0:
-        return [((), 1.0)]
-    total = sum(counts.values())
-    out = []
-    for t in sorted(counts):
-        if t < lo:
-            continue
-        c = counts[t]
-        if c == 0:
-            continue
-        counts[t] -= 1
-        for rest, p in _multisets(counts, n - 1, t):
-            # p is P(one specific ordering of rest); multiply by the number of
-            # orderings of the whole multiset at the end, see _perms.
-            out.append(((t, *rest), p * c / total))
-        counts[t] += 1
-    return [(ms, p * _perms(ms)) for ms, p in out]
+def _multisets(counts: dict[int, int], n: int) -> list[tuple[tuple[int, ...], float]]:
+    """All multisets of n cards (as non-decreasing tuples, in lexicographic order) with
+    P(n cards dealt from `counts` form that multiset), the multivariate hypergeometric
+    prod_t C(counts[t], m_t) / C(total, n).
 
+    Step 8.9: this used to multiply by the number of orderings at every level of a
+    recursion instead of once, which is wrong for n >= 3 with duplicate cards (every
+    named toy has one copy per card, so no solved number changed)."""
+    from math import comb
 
-def _perms(ms: tuple[int, ...]) -> int:
-    from math import factorial
+    types = sorted(t for t, c in counts.items() if c > 0)
+    total = comb(sum(counts.values()), n)
+    out: list[tuple[tuple[int, ...], float]] = []
 
-    n = factorial(len(ms))
-    for m in Counter(ms).values():
-        n //= factorial(m)
-    return n
+    def rec(i: int, left: int, cards: tuple[int, ...], ways: int) -> None:
+        if left == 0:
+            out.append((cards, ways / total))
+            return
+        if i == len(types):
+            return
+        t = types[i]
+        for m in range(min(counts[t], left), -1, -1):  # more copies of the lower type first: lexicographic order
+            rec(i + 1, left - m, cards + (t,) * m, ways * comb(counts[t], m))
+
+    rec(0, n, (), 1)
+    return out
 
 
 def initial_deals(rs: Ruleset, symmetric: bool = False) -> list[Outcome]:

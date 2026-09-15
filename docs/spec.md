@@ -55,6 +55,14 @@ The only chance event is the **seed**.
   permutation of the deck multiset, so a census can enumerate deals directly.
   `seed` is required when `reshuffle == "seeded"`.
 
+The exact walkers (`uno.game.chance`) do not enumerate permutations: the deal
+is a chance node over (hand multisets, setup prefix), and n cards dealt from a
+multiset with counts `c_t` (N cards) form the multiset `m` with probability
+`prod_t C(c_t, m_t) / C(N, n)` (multivariate hypergeometric). Checked against
+every permutation of 7-card decks with duplicate cards, at any hand size
+(`tests/reference/test_census.py`). Before step 8.9 this was wrong for hands of
+3 or more cards from a deck with duplicates; no named toy has duplicates.
+
 ## 4. Setup
 
 1. Block deal from the top: player 0 takes cards `0..hand_size-1`, player 1
@@ -278,7 +286,12 @@ situation across games and opponents (common random numbers). The agent name
 is part of the key so that two different stochastic agents never share a
 stream: in a mirrored pair (section 15) they sit at the same seat in the two
 games and would otherwise make the same random choices in the same
-information states, coupling the games beyond the shared deal.
+information states, coupling the games beyond the shared deal. So a name must
+identify a policy: `play_pairs` raises when two different agent objects share a
+name, and self-play passes the same object twice (step 8.9). The stream is keyed
+on the name rather than on the object so that runs reproduce across processes
+and the same policy built twice (two experiments, two loads of a checkpoint)
+still gets common random numbers.
 
 - `UniformLegal`: uniform over every legal action, including `Draw` with a play
   in hand and `Pass` after a playable draw. Sanity opponent only.
@@ -340,7 +353,7 @@ responder, coincide across levels on a ruleset with no draw pile, and the simula
 
 Play once, estimate many ways. `play_pairs(rs, agents, seeds, levels)` plays
 every seed from both seats (the first-named agent at seat 0, then at seat 1,
-same deal and pile order) and keeps the traces. Every estimator is a pure
+same deal and pile order) and keeps the traces (two different agents with the same name raise, section 13). Every estimator is a pure
 function of those records, so AIVAT (step 9) reads the same games. The score
 of a game is the first-named agent's `(return + 1) / 2`.
 
@@ -401,8 +414,10 @@ By default (`symmetric=True`, step 8.6) the tree is the **quotient** under
 the color / rank symmetry of section 18: one root per orbit of deals (or of
 worlds) carrying the orbit's probability, and one information set per orbit
 of keys. `symmetric=False` builds the full tree. `cache=<directory>` loads
-the tree from `tree_<ruleset>_<levels>_<sym|full>.npz` if present and saves
-it there otherwise (`CompiledTree.save` / `load`; the file holds every array
+the tree from `tree_<ruleset>_<levels>_<sym|full>.npz` if present and written under the current `uno.store.CACHE_VERSION`, and
+compiles and saves it there otherwise, overwriting a stale file; bump the
+version whenever the engine, the chance model, the keys, the symmetry or the
+layout change what a compile produces (step 8.9) (`CompiledTree.save` / `load`; the file holds every array
 and the encoded keys, the `Symmetry` is rebuilt).
 
 **One keying at a time** (step 8.7, for trees whose keys do not all fit in
@@ -548,7 +563,8 @@ average strategy (sets never reached by their owner are uniform), the
 regrets, and a log of exploitability (section 16) at chosen iterations, whose
 last entry (iteration count and NashConv) goes next to every ladder cell that
 uses the strategy. `CFRResult.save` / `load` persist it (`.cache/`, not
-committed).
+committed), stamped with `CACHE_VERSION` like the trees; `uno.store.load_nash`
+ignores a stale result.
 
 Checks (`tests/compiled/test_cfr.py`): on the 7-card ruleset CFR+ reaches NashConv
 under 0.2 score points in 60 iterations and the log decreases; the profile's
@@ -628,7 +644,7 @@ for every pair of baseline agents, the full tree's best-response values at
 L1 / L2 / L3 against each of them (with symmetric strategies that replay to
 their value on the quotient and through the engine in the real game, no
 misses) and the same exploitability of the uniform profile; `tabulate` rejects an asymmetric agent on `TOY`; `Symmetrized` commutes with the group on random games and leaves the Heuristic unchanged, and a wrapped asymmetric agent tabulates on the quotient with the value it has on the full tree and through the engine; a tree survives save / load and the
-cache; on the quotient of `TOY` the twelve step 5-6 / 8.6 best-response
+cache, and a cached file of another `CACHE_VERSION` is recompiled; on the quotient of `TOY` the twelve step 5-6 / 8.6 best-response
 values and the Nash value 0.6196 are reproduced.
 
 ## 19. Sizing by position (`uno/reference/sizing.py`)
@@ -664,4 +680,5 @@ Checks (`tests/reference/test_sizing.py`): on small rulesets, full and quotient,
 count and the UniformLegal end mass equal the census's; the PlayFirstRandom
 end mass reproduces the compiled tree's exact random-vs-random value and the
 compiled node count; the world tree has the same values and depth; the cap
-stops the walk; `TOY` and `TOY_FULL` sizes and values of step 8.6 are pinned.
+stops the walk; `TOY` and `TOY_FULL` sizes and values of step 8.6 are pinned, and so are those of the
+duplicate-card candidate 3c(2,1)+W (step 8.9).

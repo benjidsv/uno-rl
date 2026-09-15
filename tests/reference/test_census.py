@@ -8,10 +8,11 @@ import random
 from collections import Counter
 
 from hypothesis import HealthCheck, assume, given, settings
+from hypothesis import strategies as st
 
 from tests.strategies import lazy_rulesets, seeds, small_lazy_rulesets
 from uno import Ruleset, initial_state, legal_actions, new_game, step
-from uno.game.chance import chance_outcomes, draw_count, initial_deals, pile_split
+from uno.game.chance import _multisets, chance_outcomes, draw_count, initial_deals, pile_split
 from uno.game.observe import info_state
 from uno.reference.census import census
 
@@ -130,6 +131,65 @@ def test_brute_force_with_action_cards():
     )  # fmt: skip
     assert rs.deck_size == 6
     check_against_brute_force(rs)
+
+
+@given(counts=st.lists(st.integers(1, 3), min_size=1, max_size=5), n=st.integers(0, 4))
+@settings(deadline=None, max_examples=60)
+def test_multisets_are_hypergeometric(counts, n):
+    """`_multisets` against every n-subset of the deck with copies told apart (step 8.9:
+    the old recursion was wrong from n = 3 on with duplicates)."""
+    counts = dict(enumerate(counts))
+    deck = [t for t, c in counts.items() for _ in range(c)]
+    assume(n <= len(deck))
+    got = _multisets(counts, n)
+    subsets = Counter(tuple(sorted(s)) for s in itertools.combinations(deck, n))
+    assert [ms for ms, _ in got] == sorted(subsets), "every multiset once, in lexicographic order"
+    for ms, p in got:
+        assert math.isclose(p, subsets[ms] / math.comb(len(deck), n), abs_tol=1e-12), ms
+    assert math.isclose(sum(p for _, p in got), 1.0)
+
+
+def deals_by_permutation(rs: Ruleset) -> dict:
+    """P(hands, setup event) over every permutation of the deck with copies told apart, given a valid deal."""
+    out: Counter = Counter()
+    n = 0
+    for perm in itertools.permutations(rs.deck):
+        try:
+            s = initial_state(rs, perm)
+        except ValueError:
+            continue
+        out[(s.hands, s.public[0])] += 1
+        n += 1
+    return {k: v / n for k, v in out.items()}
+
+
+def check_deals_against_permutations(rs: Ruleset) -> None:
+    exact = deals_by_permutation(rs)
+    deals = initial_deals(rs)
+    assert len(deals) == len(exact)
+    for s, p in deals:
+        assert math.isclose(p, exact[(s.hands, s.public[0])], abs_tol=1e-12), s
+
+
+def test_initial_deals_with_duplicates_hand_3():
+    """Regression (step 8.9): duplicate cards and a hand of 3, where the deal probabilities were wrong by up to 0.8 points."""
+    for rs in (
+        Ruleset(colors=2, rank_copies=(2, 1), skip_per_color=0, reverse_per_color=0, draw_two_per_color=0,
+                wild_count=1, wild_draw_four_count=0, hand_size=3, forced_play=True, reshuffle="none", max_turns=None),
+        Ruleset(colors=1, rank_copies=(2, 2), skip_per_color=1, reverse_per_color=0, draw_two_per_color=0,
+                wild_count=2, wild_draw_four_count=0, hand_size=3, forced_play=False, reshuffle="none", max_turns=None),
+    ):  # fmt: skip
+        assert len(rs.deck) == 7 and len(set(rs.deck)) < 7
+        check_deals_against_permutations(rs)
+
+
+@given(rs=lazy_rulesets())
+@settings(deadline=None, max_examples=20, suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow])
+def test_initial_deals_match_permutations(rs):
+    """Any hand size, duplicates allowed, decks of at most 7 cards (5040 permutations)."""
+    assume(rs.deck_size <= 7)
+    assume(any(ct.rank is not None for ct in rs.card_types))
+    check_deals_against_permutations(rs)
 
 
 @given(rs=small_lazy_rulesets())

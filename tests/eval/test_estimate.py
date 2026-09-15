@@ -69,7 +69,8 @@ def test_pairs_replay_and_symmetries(rs, seed):
 
 def test_self_play_pairs_are_degenerate():
     rs = TOY
-    m = estimate_mirrored(play_pairs(rs, (PlayFirstRandom(rs), PlayFirstRandom(rs)), range(300)))
+    rnd = PlayFirstRandom(rs)
+    m = estimate_mirrored(play_pairs(rs, (rnd, rnd), range(300)))
     assert m.mirrored.mean == 0.5 and m.mirrored.var == 0.0 and m.splits == 1.0
     assert m.corr == -1.0
     assert math.isclose(m.seat[0].mean, 1.0 - m.seat[1].mean, abs_tol=1e-12)

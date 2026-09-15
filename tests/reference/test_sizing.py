@@ -87,3 +87,15 @@ def test_toy_pinned():
     f = size(rules.TOY_FULL, symmetric=True)
     assert f.histories == 774_007
     assert math.isclose(f.random_p0_score, z.random_p0_score, abs_tol=1e-12)  # Random never draws voluntarily
+
+
+def test_duplicates_pinned():
+    """Regression (step 8.9): 3 colors x ranks (2, 1) + W, hand 3, forced, the step 8.7 candidate with
+    duplicate cards. Its sizes did not change, its values did: random vs random was reported as 0.6602
+    before the deal probabilities of duplicate cards were fixed."""
+    from uno.experiments.sizing import toy
+
+    z = size(toy(colors=3, ranks=(2, 1)), symmetric=True)
+    assert (z.roots, z.histories, z.decision_nodes) == (736, 282_509, 201_597)
+    assert math.isclose(z.random_p0_score, 0.66153, abs_tol=5e-6)
+    assert math.isclose(z.uniform_legal_p0_score, 0.65331, abs_tol=5e-6)

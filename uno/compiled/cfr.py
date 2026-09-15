@@ -108,8 +108,11 @@ class CFRResult:
         return CompiledAgent(tree, self.level, self.avg, name=name)
 
     def save(self, path: str | Path) -> None:
+        from uno import store
+
         np.savez_compressed(
             path,
+            version=np.array(store.CACHE_VERSION),
             avg=self.avg,
             mass=self.mass,
             regrets=self.regrets,

@@ -184,6 +184,23 @@ def test_tabulate_rejects_a_non_symmetric_agent():
         raise AssertionError("an asymmetric agent tabulated on a symmetric tree")
 
 
+def test_stale_cache_is_recompiled(tmp_path, monkeypatch):
+    """A cached tree written under another `CACHE_VERSION`, or with no version (before step 8.9), is rebuilt and overwritten."""
+    from uno import store
+
+    rs = SMALL
+    path = tmp_path / f"tree_{store.cache_name(rs, (Level.L1,), True, False)}.npz"
+    np.savez(path, player=np.zeros(1))  # an unstamped file under the right name
+    assert not store.is_current(path)
+    first = compile_tree(rs, (Level.L1,), cache=tmp_path)
+    assert store.is_current(path) and first.n > 1
+    monkeypatch.setattr(store, "CACHE_VERSION", store.CACHE_VERSION + 1)
+    assert not store.is_current(path)
+    second = compile_tree(rs, (Level.L1,), cache=tmp_path)
+    assert store.is_current(path) and second.seconds != first.seconds  # compiled again, not loaded
+    assert str(second).split(";")[0] == str(first).split(";")[0]
+
+
 def test_cache_round_trip(tmp_path):
     rs = SMALL
     tree = compile_tree(rs, (Level.L1, Level.L3))

@@ -80,7 +80,18 @@ def score_of(trace: Trace, seat: int) -> float:
 
 def play_pairs(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels: Levels = (Level.L1, Level.L1)) -> Pairs:
     """Play every seed twice: `agents[0]` at seat 0, then at seat 1, same deal.
-    Seeds whose deal is invalid are skipped and counted."""
+    Seeds whose deal is invalid are skipped and counted.
+
+    The action rng is keyed on the agent's name (`uno.eval.play`), so a name must
+    identify a policy: two different agents with the same name would draw the same
+    random numbers at the same seat of the two games and couple the pair beyond the
+    deal. That raises; self-play passes the same object twice."""
+    names = (getattr(agents[0], "name", "?"), getattr(agents[1], "name", "?"))
+    if agents[0] is not agents[1] and names[0] == names[1]:
+        raise ValueError(
+            f"two different agents named {names[0]!r} would share action rng streams (docs/spec.md section 13): "
+            "give them distinct names, or pass the same object twice for self-play"
+        )
     swapped, lv_swapped = (agents[1], agents[0]), (levels[1], levels[0])
     games, valid, invalid = [], [], 0
     for seed in seeds:
