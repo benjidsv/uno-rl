@@ -25,6 +25,7 @@ from uno.agents.baseline import Agent, Policy, sample
 from uno.game.engine import State, legal_actions, new_game, returns, step
 from uno.game.observe import Level, Observation, observe
 from uno.game.rules import Ruleset
+from uno.progress import bar
 
 # Seed ranges. Everything is built, tested and (later) tuned on DEV_SEEDS; the
 # ladder's reported numbers come from EVAL_SEEDS, which nothing is ever chosen
@@ -160,7 +161,7 @@ def match(
     pair = (agents[1], agents[0]) if swap else agents
     lv = (levels[1], levels[0]) if swap else levels
     scores, lengths, ends, invalid = [], [], Counter(), 0
-    for seed in seeds:
+    for seed in bar(seeds, desc=f"games {getattr(agents[0], 'name', '?')} vs {getattr(agents[1], 'name', '?')}", unit="games"):
         try:
             s0 = new_game(rs, seed)
         except ValueError:

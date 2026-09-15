@@ -12,6 +12,7 @@ from uno.game.chance import chance_outcomes, initial_deals
 from uno.game.engine import State, legal_actions
 from uno.game.observe import info_state
 from uno.game.rules import Ruleset
+from uno.progress import bar
 
 # -- census -------------------------------------------------------------------
 
@@ -75,9 +76,12 @@ def census(rs: Ruleset, node_cap: int | None = None, symmetric: bool = False) ->
     infosets: tuple[set[int], set[int]] = (set(), set())
     end_mass: dict[tuple[str, int | None], float] = {}
     complete = True
+    progress = bar(total=node_cap, desc="census", unit="histories")
     while stack:
         s, d, reach = stack.pop()
         histories += 1
+        if histories % 100_000 == 0:
+            progress.update(100_000)
         depth_max = max(depth_max, d)
         if s.terminal:
             terminals += 1
@@ -95,6 +99,8 @@ def census(rs: Ruleset, node_cap: int | None = None, symmetric: bool = False) ->
         for a in legal:
             for child, p in chance_outcomes(s, a):
                 stack.append((child, d + 1, w * p))
+    progress.update(histories - progress.n)
+    progress.close()
     return Census(
         ruleset=rs,
         deals=len(deals),

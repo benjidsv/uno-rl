@@ -1,68 +1,161 @@
 #!/usr/bin/env bash
-# Re-run every experiment of docs/results/, in dependency order, one log per step.
+# Re-run every experiment of docs/results/, in dependency order, with a live status line and a final report.
 #
-#   caffeinate -is bash scripts/rerun_all.sh
+#   bash scripts/rerun_all.sh
 #
-# Logs: logs/rerun-<date>-<time>/NN_<step>.log, and summary.txt with the start, exit code and
-# duration of every step. The test suite runs first and stops everything if it fails; any other
-# failing step is recorded and the run goes on.
+# In logs/rerun-<date>-<time>/, per step NN_<step>:
+#   .log       the experiment's own output
+#   .progress  its tqdm bars (uno/progress.py)
+#   .timings   one line per loop of 2 s or more: "<what>: took <s> s for <count> <unit> (<rate>)"
+# and for the whole run:
+#   summary.txt  start, exit code and duration of every step, as they happen
+#   report.txt   at the end (or on Ctrl-C): every step with its exit code, duration and expected
+#                duration, its timed loops indented below it, and the failed checks of each validate
 #
-# Order: `cfr TOY`, `symmetry`, `toy2 <ruleset>` save the Nash strategies that `transfer`,
-# `toy2_columns` and `validate` load, so they come first. Trees are compiled on first use and
-# cached in .cache/ (a file from before CACHE_VERSION 1 is stale and recompiled). The TOY2_FULL
-# steps come last: each holds 2-5 GB of tree in memory.
+# On a terminal a status line shows the step, its elapsed and expected time, the time left for the
+# run and the latest progress bar. A step's expected time is its last successful duration in
+# logs/durations.tsv, or the rough guess below on a first run; the time left is rescaled by how the
+# finished steps compared with their expectation.
+#
+# The test suite runs first and stops everything if it fails; any other failing step is recorded
+# and the run goes on. Order: `cfr TOY`, `symmetry` and `toy2 <ruleset>` save the Nash strategies
+# that `transfer`, `toy2_columns` and `validate` load. The TOY2_FULL steps come last: each holds
+# 2-5 GB of tree in memory. Trees are compiled on first use into .cache/ (files from before
+# CACHE_VERSION 1 are stale and recompiled).
 set -u -o pipefail
 cd "$(dirname "$0")/.."
 export PYTHONUNBUFFERED=1
 
-out="logs/rerun-$(date +%Y%m%d-%H%M%S)"
+# step, expected minutes on a first run (guesses), command
+STEPS="
+pytest               4  uv run pytest -q
+census              10  uv run uno census
+ladder              25  uv run uno ladder TOY
+mirror              25  uv run uno mirror TOY
+cfr_TOY             10  uv run uno cfr TOY 1000
+symmetry            15  uv run uno symmetry 1000
+transfer            15  uv run uno transfer
+sizing              25  uv run uno sizing
+loop_cost            5  uv run uno loop_cost
+toy2_TOY2            8  uv run uno toy2 TOY2 1000
+toy2_TOY2_SKIP      12  uv run uno toy2 TOY2_SKIP 1000
+cfr_variants        10  uv run uno cfr_variants
+toy2_TOY2_FULL      25  uv run uno toy2 TOY2_FULL 150 light dcfr
+toy2_columns        20  uv run uno toy2_columns TOY2_FULL
+validate_TOY         8  uv run uno validate TOY
+validate_TOY2       12  uv run uno validate TOY2
+validate_TOY2_SKIP  15  uv run uno validate TOY2_SKIP
+validate_TOY2_FULL  20  uv run uno validate TOY2_FULL 4000 light
+"
+
+names=()
+guesses=()
+cmds=()
+while read -r name guess cmd; do
+    [ -z "$name" ] && continue
+    names+=("$name")
+    guesses+=("$guess")
+    cmds+=("$cmd")
+done <<< "${RERUN_STEPS:-$STEPS}"
+total=${#names[@]}
+
+out="${RERUN_LOGS:-logs}/rerun-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$out"
 summary="$out/summary.txt"
-n=0
+report_file="$out/report.txt"
+durations="${RERUN_LOGS:-logs}/durations.tsv"
+commit="$(git rev-parse --short HEAD)$(git diff --quiet || echo ' + uncommitted changes')"
 
-run() {  # run <step> <command...>
-    local step=$1
-    shift
-    n=$((n + 1))
-    local log
-    log=$(printf "%s/%02d_%s.log" "$out" "$n" "$step")
-    local t0=$SECONDS
-    echo "[$(date '+%H:%M:%S')] start $step: $*" | tee -a "$summary"
-    "$@" > "$log" 2>&1
-    local rc=$?
-    echo "[$(date '+%H:%M:%S')] end   $step: exit $rc after $(( (SECONDS - t0) / 60 )) min $(( (SECONDS - t0) % 60 )) s" | tee -a "$summary"
-    return $rc
+hms() { printf "%d:%02d:%02d" $(($1 / 3600)) $(($1 % 3600 / 60)) $(($1 % 60)); }
+say() { echo "$1" | tee -a "$summary"; }
+tag() { printf "%02d_%s" $(($1 + 1)) "${names[$1]}"; }
+
+expected=()
+exp_total=0
+for ((i = 0; i < total; i++)); do
+    d=""
+    [ -f "$durations" ] && d=$(awk -F'\t' -v s="${names[$i]}" '$1 == s {d = $2} END {print d}' "$durations")
+    expected+=("${d:-$((guesses[i] * 60))}")
+    exp_total=$((exp_total + expected[i]))
+done
+
+rcs=()
+dts=()
+failed=0
+run_start=$SECONDS
+
+report() {  # report <how the run ended>
+    {
+        echo "rerun $out at $commit: $1 after $(hms $((SECONDS - run_start))), ${#rcs[@]} of $total steps run, $failed failed"
+        echo
+        for ((j = 0; j < ${#rcs[@]}; j++)); do
+            printf "%2d %-20s exit %-3s took %s (expected ~%s)\n" $((j + 1)) "${names[$j]}" "${rcs[$j]}" "$(hms "${dts[$j]}")" "$(hms "${expected[$j]}")"
+            t="$out/$(tag "$j").timings"
+            [ -s "$t" ] && sed 's/^\[[0-9:]*\] /      /' "$t"
+        done
+        if ls "$out"/*validate*.log > /dev/null 2>&1; then
+            echo
+            grep -H "failed checks" "$out"/*validate*.log | sed "s|$out/||"
+        fi
+    } > "$report_file"
+    echo
+    cat "$report_file"
 }
 
-echo "rerun in $out, $(git rev-parse --short HEAD)$(git diff --quiet || echo ' + uncommitted changes')" | tee -a "$summary"
-df -h . | tail -1 | tee -a "$summary"
+say "rerun in $out at $commit: $total steps, expected ~$(hms $exp_total)"
+df -h . | tail -1 >> "$summary"
 
-run pytest uv run pytest -q || { echo "tests failed: stopping (see $out)" | tee -a "$summary"; exit 1; }
+pid=""
+trap '[ -n "$pid" ] && { pkill -TERM -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null; }; printf "\n"; say "interrupted"; report interrupted; exit 130' INT TERM
 
-# steps 3-7: pure-Python reference walkers on TOY
-run census uv run uno census
-run ladder uv run uno ladder TOY
-run mirror uv run uno mirror TOY
+done_exp=0
+done_real=0
+for ((i = 0; i < total; i++)); do
+    name=${names[$i]}
+    cmd=${cmds[$i]}
+    exp=${expected[$i]}
+    log="$out/$(tag "$i").log"
+    prog="$out/$(tag "$i").progress"
+    timings="$out/$(tag "$i").timings"
+    : > "$prog"
+    echo "[$(date '+%H:%M:%S')] start $name: $cmd" >> "$summary"
+    t0=$SECONDS
+    env UNO_PROGRESS_FILE="$prog" UNO_TIMINGS_FILE="$timings" $cmd > "$log" 2>&1 < /dev/null &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ -t 1 ]; then
+            el=$((SECONDS - t0))
+            left=$(awk -v de="$done_exp" -v dr="$done_real" -v rest="$((exp_total - done_exp - exp))" -v e="$exp" -v el="$el" \
+                'BEGIN { s = (de > 0) ? dr / de : 1; cur = e * s - el; if (cur < 0) cur = 0; printf "%d", rest * s + cur }')
+            src=$log
+            [ -s "$prog" ] && [ "$prog" -nt "$log" ] && src=$prog
+            last=$(tail -c 400 "$src" | tr '\r' '\n' | awk 'NF' | tail -1)
+            line="[$((i + 1))/$total] $name $(hms $el) (~$(hms $exp)) | run $(hms $((SECONDS - run_start))), ~$(hms $left) left | $last"
+            cols=$(tput cols 2>/dev/null || echo 120)
+            printf "\r\033[K%s" "${line:0:$((cols - 1))}"
+        fi
+        sleep 2
+    done
+    wait "$pid"
+    rc=$?
+    pid=""
+    dt=$((SECONDS - t0))
+    [ -t 1 ] && printf "\r\033[K"
+    rcs+=("$rc")
+    dts+=("$dt")
+    say "[$(date '+%H:%M:%S')] $(printf '%2d/%d' $((i + 1)) "$total") $name: exit $rc, took $(hms $dt) (expected ~$(hms $exp))"
+    done_exp=$((done_exp + exp))
+    done_real=$((done_real + dt))
+    if [ "$rc" -eq 0 ]; then
+        printf "%s\t%s\t%s\n" "$name" "$dt" "$(date +%Y-%m-%d)" >> "$durations"
+    else
+        failed=$((failed + 1))
+        if [ "$name" = pytest ]; then
+            say "tests failed: stopping, see $log"
+            report "stopped: tests failed"
+            exit 1
+        fi
+    fi
+done
 
-# steps 8-8.6: compiled trees, Nash of TOY and TOY_FULL (saved), transfer
-run cfr_TOY uv run uno cfr TOY 1000
-run symmetry uv run uno symmetry 1000
-run transfer uv run uno transfer
-
-# step 8.7: sizes, loop cost, the TOY2 family (Nash saved), CFR variants
-run sizing uv run uno sizing
-run loop_cost uv run uno loop_cost
-run toy2_TOY2 uv run uno toy2 TOY2 1000
-run toy2_TOY2_SKIP uv run uno toy2 TOY2_SKIP 1000
-run cfr_variants uv run uno cfr_variants
-run toy2_TOY2_FULL uv run uno toy2 TOY2_FULL 150 light dcfr
-run toy2_columns uv run uno toy2_columns TOY2_FULL
-
-# steps 8.7-8.8: validation from the cached trees and Nash strategies
-run validate_TOY uv run uno validate TOY
-run validate_TOY2 uv run uno validate TOY2
-run validate_TOY2_SKIP uv run uno validate TOY2_SKIP
-run validate_TOY2_FULL uv run uno validate TOY2_FULL 4000 light
-
-echo "done: $(grep -c 'exit 0 after' "$summary") of $n steps exited 0; failed checks per validate run:" | tee -a "$summary"
-grep -h "failed checks" "$out"/*validate*.log | tee -a "$summary"
+report finished

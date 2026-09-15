@@ -25,7 +25,7 @@ Every experiment is a module of `uno/experiments/` run through the CLI;
 | what | command | was |
 |------|---------|-----|
 | all tests (102, ~4 min) | `uv run pytest` | |
-| every experiment below, in dependency order, one log per step in `logs/` (hours) | `caffeinate -is bash scripts/rerun_all.sh` | |
+| every experiment below, in dependency order: live status and time left, then `logs/rerun-*/report.txt` with every step's duration and timed loops (hours) | `bash scripts/rerun_all.sh` | |
 | step 3: tree-size census of the toy candidates | `uv run uno census [node_cap=2e6] [games=2000] [letters e.g. S,O]` | `scripts/census.py` |
 | steps 5-6: exact best responses L1/L2/L3 (pure-Python reference solvers) | `uv run uno ladder [ruleset=TOY] [games=4000]` | `scripts/ladder.py` |
 | step 7: mirrored evaluator vs exact values | `uv run uno mirror [ruleset=TOY] [games=4000]` | `scripts/mirror.py` |

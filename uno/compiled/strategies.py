@@ -11,6 +11,7 @@ from uno.compiled.solvers import BestResponse, best_response
 from uno.compiled.tree import CompiledTree, Key, Strategy
 from uno.game.keys import decode_key
 from uno.game.observe import Level, observation_from_key
+from uno.progress import bar
 
 
 def tabulate(tree: CompiledTree, level: Level, agent: Agent) -> np.ndarray:
@@ -18,7 +19,7 @@ def tabulate(tree: CompiledTree, level: Level, agent: Agent) -> np.ndarray:
     from the observation rebuilt out of each set's key."""
     k = tree.keyings[level]
     sigma = np.zeros(k.n_ia)
-    for kb, i in k.keys.items():
+    for kb, i in bar(k.keys.items(), total=len(k.keys), desc=f"tabulate {getattr(agent, 'name', '?')}", unit="sets"):
         start = k.info_start[i]
         legal = k.actions(i)
         probs = agent.policy(observation_from_key(tree.rs, level, decode_key(level, kb)), legal)

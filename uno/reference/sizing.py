@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from uno.game.chance import children, engine_children, initial_deals, pile_split, worlds
 from uno.game.engine import State
 from uno.game.rules import Play, Ruleset
+from uno.progress import bar
 
 # end-mass columns: (end, winner)
 ENDS: tuple[tuple[str, int | None], ...] = (
@@ -111,6 +112,7 @@ def size(rs: Ruleset, symmetric: bool = True, world: bool = False, position_cap:
     zero_mass = [0.0] * n_ends
     # memo: position -> (histories, decisions, terminals, depth, mass_ul, mass_rnd, len_ul, len_rnd)
     memo: dict[tuple, tuple] = {}
+    positions = bar(total=position_cap, desc="sizing positions", unit="positions")
 
     def rec(s: State) -> tuple:
         if s.terminal:
@@ -151,6 +153,8 @@ def size(rs: Ruleset, symmetric: bool = True, world: bool = False, position_cap:
                     l_rnd += q * cl_rnd
         out = (h, d, t, depth, m_ul, m_rnd, l_ul, l_rnd)
         memo[key] = out
+        if len(memo) % 50_000 == 0:
+            positions.update(50_000)
         return out
 
     H = D = T = depth = 0
@@ -160,7 +164,7 @@ def size(rs: Ruleset, symmetric: bool = True, world: bool = False, position_cap:
     old_limit = sys.getrecursionlimit()
     sys.setrecursionlimit(max(old_limit, 10_000))
     try:
-        for s, p in roots:
+        for s, p in bar(roots, desc="sizing roots", unit="roots"):
             try:
                 h, d, t, dep, m_ul, m_rnd, l_ul, l_rnd = rec(s)
             except _Cap:
@@ -177,6 +181,8 @@ def size(rs: Ruleset, symmetric: bool = True, world: bool = False, position_cap:
             length[1] += p * l_rnd
     finally:
         sys.setrecursionlimit(old_limit)
+        positions.update(len(memo) - positions.n)
+        positions.close()
     if not complete:
         # what was summed so far is a lower bound; the masses are meaningless
         mass = [list(zero_mass) for _ in range(N_POLICIES)]

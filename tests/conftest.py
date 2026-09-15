@@ -1,5 +1,7 @@
 import os
 
+os.environ.setdefault("UNO_PROGRESS", "0")  # no progress bars in tests (uno/progress.py)
+
 from hypothesis import settings
 
 settings.register_profile("heavy", max_examples=1000, deadline=None)

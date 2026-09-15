@@ -62,6 +62,7 @@ from uno.game.keys import KEYS, decode_key, encode_key
 from uno.game.observe import Level
 from uno.game.rules import Ruleset
 from uno.game.symmetry import Symmetry
+from uno.progress import bar
 
 Key = Hashable
 CHANCE, TERMINAL = -2, -1
@@ -420,10 +421,15 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,), symmetric
     for s, p in roots:
         e_arc.append(0), e_child.append(-1), e_prob.append(p)
         stack.append((s, len(e_arc) - 1))
+    from uno.store import ruleset_name
+
+    progress = bar(desc=f"compile {ruleset_name(rs)} {'+'.join(lv.name for lv in levels)}{' world' if world else ''}", unit="nodes")
 
     while stack:
         s, e = stack.pop()
         nid = len(n_player)
+        if nid % 100_000 == 0:
+            progress.update(100_000)
         e_child[e] = nid
         if s.terminal:
             n_player.append(TERMINAL)
@@ -468,6 +474,9 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,), symmetric
             for c, pr in ch[a]:
                 e_arc.append(aid), e_child.append(-1), e_prob.append(pr)
                 stack.append((c, len(e_arc) - 1))
+
+    progress.update(len(n_player) - progress.n)
+    progress.close()
 
     # -- to numpy, sorted: nodes by (level, terminal, dfs), arcs by node, edges by arc
     player = np.frombuffer(n_player, dtype=np.int8).copy()

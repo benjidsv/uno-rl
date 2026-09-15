@@ -38,6 +38,7 @@ from uno.eval.play import Trace, play_from
 from uno.game.engine import new_game, returns
 from uno.game.observe import Level
 from uno.game.rules import Ruleset
+from uno.progress import bar
 
 Levels = tuple[Level, Level]
 
@@ -94,7 +95,7 @@ def play_pairs(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels: Levels =
         )
     swapped, lv_swapped = (agents[1], agents[0]), (levels[1], levels[0])
     games, valid, invalid = [], [], 0
-    for seed in seeds:
+    for seed in bar(seeds, desc=f"pairs {names[0]} vs {names[1]}", unit="pairs"):
         try:
             s0 = new_game(rs, seed)
         except ValueError:
@@ -104,7 +105,6 @@ def play_pairs(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels: Levels =
         t1 = play_from(s0, seed, swapped, lv_swapped)
         games.append((Game(seed, 0, score_of(t0, 0), t0), Game(seed, 1, score_of(t1, 1), t1)))
         valid.append(seed)
-    names = (getattr(agents[0], "name", "?"), getattr(agents[1], "name", "?"))
     return Pairs(names, levels, tuple(valid), tuple(games), invalid)
 
 

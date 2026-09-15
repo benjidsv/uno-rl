@@ -50,6 +50,7 @@ from uno.game.engine import State, new_game, returns
 from uno.game.keys import KEYS, Key
 from uno.game.observe import Level, observe
 from uno.game.rules import Ruleset
+from uno.progress import bar
 
 # -- policy evaluation --------------------------------------------------------
 
@@ -77,8 +78,14 @@ def outcome_distribution(
         roots = worlds(rs) if expand is engine_children else initial_deals(rs)
     dist: dict[float, float] = defaultdict(float)
     stack = list(roots)
+    progress, n = None, 0  # a bar only for walks of 100k histories and more: this runs once per seed in `scores_on_seeds`
     while stack:
         s, reach = stack.pop()
+        n += 1
+        if n % 100_000 == 0:
+            if progress is None:  # not `progress or bar(...)`: a tqdm counter without a total has no truth value
+                progress = bar(desc="exact walk", unit="histories")
+            progress.update(100_000)
         if s.terminal:
             dist[returns(s)[0]] += reach
             continue
@@ -88,6 +95,9 @@ def outcome_distribution(
         for a, q in probs.items():
             for c, pc in ch[a]:
                 stack.append((c, reach * q * pc))
+    if progress is not None:
+        progress.update(n - progress.n)
+        progress.close()
     return dict(dist)
 
 
@@ -143,7 +153,7 @@ def scores_on_seeds(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels=(Lev
     mean = [0.0, 0.0]
     var = [0.0, 0.0]
     n = 0
-    for seed in seeds:
+    for seed in bar(seeds, desc="exact on seeds", unit="seeds"):
         try:
             s0 = new_game(rs, seed)
         except ValueError:
@@ -203,9 +213,12 @@ def best_response(rs: Ruleset, opponent: Agent, seat: int, level: Level) -> Best
     members: dict[Key, list[tuple[State, float]]] = defaultdict(list)
     histories = 0
     stack = list(roots)
+    progress = bar(desc=f"BR {level.name} seat {seat} walk", unit="histories")
     while stack:
         s, reach = stack.pop()
         histories += 1
+        if histories % 100_000 == 0:
+            progress.update(100_000)
         if s.terminal:
             continue
         if s in kids:
@@ -226,6 +239,9 @@ def best_response(rs: Ruleset, opponent: Agent, seat: int, level: Level) -> Best
             kids[s] = flat
             for c, w in flat:
                 stack.append((c, reach * w))
+
+    progress.update(histories - progress.n)
+    progress.close()
 
     # pass 2: values, choosing the best action per information set on demand
     memo: dict[State, float] = {}

@@ -9,6 +9,7 @@ from uno.eval.estimate import ExactMirrored, Levels
 from uno.game.chance import engine_children, worlds
 from uno.game.observe import Level
 from uno.game.rules import Ruleset
+from uno.progress import bar
 from uno.reference.solve import outcome_distribution
 
 
@@ -25,7 +26,7 @@ def exact_mirrored(rs: Ruleset, agents: tuple[Agent, Agent], levels: Levels = (L
     q = [0.0, 0.0]
     cross = split = 0.0
     ws = worlds(rs)
-    for w, p in ws:
+    for w, p in bar(ws, desc="exact mirrored", unit="worlds"):
         d0 = _score_dist(rs, agents, levels, w, 0)
         d1 = _score_dist(rs, swapped, lv_swapped, w, 1)
         e = [sum(s * pr for s, pr in d.items()) for d in (d0, d1)]

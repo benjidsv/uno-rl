@@ -56,6 +56,7 @@ from uno.agents.tabular import CompiledAgent
 from uno.compiled.solvers import Exploitability, exploitability
 from uno.compiled.tree import CompiledTree
 from uno.game.observe import Level
+from uno.progress import bar
 
 DEFAULT_LOG_AT = (1, 2, 3, 5, 7, 10, 15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 700, 1000, 1500, 2000, 3000, 5000)
 
@@ -217,7 +218,9 @@ def cfr(
         sigma[mine] = k.normalize(np.maximum(base, 0.0))[mine]
 
     log_at = set(log_at) | {iterations}
+    progress = bar(total=iterations, desc=variant or ("cfr+" if plus else "cfr"), unit="iterations")
     for t in range(1, iterations + 1):
+        progress.update(1)
         weight = float(t) ** gamma
         if alternating:
             for i in (0, 1):
@@ -236,6 +239,7 @@ def cfr(
                 print("  ", entry, flush=True)
             if target is not None and entry.nashconv < target:
                 break
+    progress.close()
     return CFRResult(
         level=level,
         iterations=t,
