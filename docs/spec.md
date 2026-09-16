@@ -1144,3 +1144,82 @@ Checks (`tests/eval/test_aivat.py`, `test_critic.py`,
 
 Experiments: `uv run uno aivat <ruleset>` on the toys, `uv run uno aivat_uno` on
 the intermediates and full UNO.
+
+## 24. PIMC values and the value network (`uno/eval/pimc.py`, `uno/eval/value_net.py`)
+
+Step 9.5c. A better V for AIVAT on rulesets with no tree: Monte Carlo rollouts on determinized
+states (PIMC at L2) as a teacher, a network fitted on their values as the V.
+
+**Determinization.** Given the L2 state (both hands, public history, pile as a multiset) the order of
+the unknown part of the pile is uniform, the setup tail at the bottom until the first reshuffle: the
+chance model of section 23. `determinize(state, rng)` shuffles that part from an rng of its own, sets
+`draws = "pile"` (a uniform order drawn from the top is distributed like tickets, section 8) and gives
+the state a fresh seed, so the engine's reshuffles and the rollout's action choices are independent of
+the real game. The result depends on the state only up to its pile order and seed. Penalty draws across
+a reshuffle are played by the engine: nothing is skipped.
+
+**Rollout values.** `rollout_value(state, agents, n, rng)` is the mean seat-0 return of `n` games from
+`n` determinizations, played by the profile's own policies with actions sampled from `rng`: unbiased
+for the profile's L2 value, variance about `(1 - V²) / n`. `rollout_q` takes an action first: unbiased
+for `alpha(h, a)`. Rngs are keyed on the game's seed and a label naming the value
+(`rollout_rng(seed, label)`), never on anything the game itself uses.
+
+**Why not rollouts as AIVAT's V.** Any V whose noise is independent of the game keeps AIVAT unbiased
+(`RolloutValues`), but with rollout values the corrections telescope, at best, to "n more games from the
+same hands", costing those games; independent noise per value adds about `2 (1 - V²) / n` per
+decision. Rollouts are therefore the **teacher**. `uno pimc_value mc` measures the cost.
+
+**The deal floor.** With the exact L2 values and corrections at chance and both players, AIVAT's
+estimate is `nu(first state)`, so its variance is the variance over deals of the deal's value.
+`deal_floor(rs, agents, seeds, replays)` replays every dealt hand under `replays` determinizations:
+between-deal variance = Var(deal means) - mean within-deal variance / replays (unbiased), share =
+between / (between + within), 95 % bootstrap CI over deals. On a toy it must equal the exact ratio of
+`aivat_moments(exact_values, chance+both)`.
+
+**Teacher targets** (`teacher_targets`). One game per FIT seed; every decision state plus two siblings
+AIVAT also values: the child of one non-taken action of the support and another chance outcome of the
+taken action when it draws (both through a determinization, so from the true chance model). Each gets
+`n` rollouts: target, noise variance, the game's return. Processes over seed chunks; the targets do not
+depend on the number of workers.
+
+**Features** (`position_features`), from a `State` or an L2 observation, in the seat-0 frame:
+
+- one block per colour: counts of number / skip / reverse / +2 cards of the colour in each hand and in
+  the discard, playable cards of the colour per hand, the colour is current, the top card has it, the
+  drawn card has it;
+- a global block: per hand, size, wilds, +4s, playable cards, number cards matching the top card's rank
+  in another colour, action cards matching its kind in another colour, ranks held in 2+ colours, colours
+  held, largest colour count, size 1 and size 2; mover, `AFTER_DRAW`, pile and discard sizes, empty pile,
+  reshuffles (capped at 3); top card's kind; the drawn card's kind; wilds and +4s in the discard; size
+  difference.
+
+A colour renaming permutes the blocks and a rank renaming within a copy class changes no feature.
+
+**Network** (`ValueNet`). DeepSets over colours: a shared MLP on each colour block concatenated with the
+global block, sum and max pooling, an MLP on the pooled vectors and the global block, tanh: the seat-0
+return. Invariant under the symmetry group (section 18) up to float rounding, and independent of the
+number of colours. Inputs standardized with colour-pooled statistics. Fitted by Adam on the squared error
+to the targets (float32), early stopping on the last fifth of the games, best epoch kept. Inference in
+**float64** on CPU, so V is a batch-independent function of the state. It implements the value-model
+interface `CriticValues` and `critic_values` read (`features`, `observation_features`, `values`), as
+`Critic` does.
+
+**Deal correction without a tree.** `E_deals V(first state)` is estimated once over `DEAL_SEEDS`
+(40,000,000+, 250,000 deals), independent of the evaluated games. The deal term then has mean
+`true mean - estimate`: a fixed error, printed as its standard error, that does not shrink with more
+evaluated games.
+
+Checks (`tests/eval/test_pimc.py`, `tests/eval/test_value_net.py`):
+
+- determinization keeps everything but the pile order and the setup tail's place; rollout values and
+  rollout Q are identical when the unknown pile is permuted or the seed changes (pile and ticket draws,
+  reshuffles, full UNO);
+- the child of a drawing action over many determinizations is distributed as `draw_outcomes`,
+  reshuffles and empty-pile draws included;
+- rollout values and Q against the exact node values and arc expectations; the deal floor against the
+  exact ratio;
+- features invariant under the group (as a multiset of colour blocks) and equal from a state and its
+  L2 observation; the network's value invariant; the fit learns; float64 inference batch-independent;
+  save / load; the played path (`CriticValues`) equals the tree path (`critic_values` + `TreeValues`).
+
+Experiment: `uv run uno pimc_value check | floor | pilot | aivat | mc` (module docstring).

@@ -3,8 +3,8 @@
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 9.5b, 2026-09-15** (on top of
-commit `f39d352`, uncommitted); next step is **9.5c, PIMC**.
+with no access to the repo. State as of **step 9.5c, 2026-09-16** (on top of
+commit `092613b`, uncommitted); next step is **9.5d, the PIMC agent**.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -746,7 +746,64 @@ function that exists where no tree does.
   corrected events carries the gain, so the toy R² → ratio curve does not
   transfer by R².
 - Exact values without the deal correction reach 0.39-0.49 on the toys, so a
-  better full-UNO V has up to twice the gain to collect.
+  better full-UNO V has up to twice the gain to collect. (Step 9.5c measured the
+  ceiling: the full-UNO floor is 0.086-0.090, so up to 11x, of which a fitted network
+  takes 2.2x.)
+
+### 5.17 Step 9.5c: PIMC values as a teacher, a network as AIVAT's V
+
+**Problem:** 9.5b's full-UNO V was a logistic critic (outcome R² 0.11) removing 24-29 % of the
+variance, and the step closed on "a better V has up to twice the gain to collect", untested.
+
+**Two measurements settled the design before anything was built:**
+
+- **The deal floor.** With exact L2 values and corrections at chance and both players, AIVAT's estimate
+  *is* the value of the dealt hands, so its residual is the deal's variance. Replaying dealt hands under
+  fresh pile orders measures it without a tree: **0.086 / 0.090 on full UNO** (0.42-0.49 on the toys,
+  0.25 at 14 decisions, 0.17 at 22). The ceiling was 8x lower than the toys suggested, and the deal
+  matters less the longer the game.
+- **Rollouts cannot be the V.** With V a rollout mean of the played profile the corrections telescope
+  towards "n more games from the same hands", at the cost of those games, and the independent noise of
+  ~90 values per full-UNO game swamps the gain: measured ratio 3.99 at n = 16, against 1.0 for no
+  corrections at all.
+
+**So PIMC is the teacher, not the V** (`uno/eval/pimc.py`, `uno/eval/value_net.py`, spec section 24):
+
+- **Determinization at L2**: the unknown pile in a uniform random order, a fresh seed, pile draws. It is
+  `draw_outcomes`' chance model, and it covers what that model skips (penalty draws across a reshuffle).
+  Rollout values are then unbiased estimates of the profile's own L2 values, checked against the exact
+  tree on three toys with pile and ticket draws (48 checks, 0 failures).
+- **Teacher targets**: every decision state plus two siblings AIVAT also values, each with n rollouts.
+- **A symmetric value network**: one block per colour plus a colour-free global block, a shared MLP over
+  the colour blocks pooled by sum and max (DeepSets), so renaming colours or ranks cannot change the
+  value; float64 CPU inference, so V is a deterministic function of the state whatever else is batched.
+- **A Monte Carlo deal mean** over a fresh seed range, which makes the deal correction available where
+  no tree exists. It carries a fixed error (~0.04 score points at 250,000 deals) that more evaluated
+  games do not shrink.
+- The evaluation loop is now parallel over seed chunks (it was the single-core part of the run).
+
+**What it bought:** on full UNO the variance ratio goes **0.71 / 0.76 → 0.46 / 0.47**, i.e. 1,776 deals
+instead of 3,860 raw or 2,757 with the critic, for a 3-point difference at 3σ with 80 % power; with the
+deal correction 0.38 / 0.39 (1,483 deals). On the toys the network is nearly the exact value function
+(0.02-0.06 with every correction). The pre-declared criterion passed at both seats. 7 failed checks of
+648, all of them the critic's and both 9.5b's known events reproduced to the digit.
+
+**What it taught:**
+
+- **Outcome R² is a poor ordering, again.** 0.110 → 0.148 on full UNO for a ratio of 0.71 → 0.46. The
+  network's R² *against the true values* is 0.83-0.84 on every ruleset, yet the ratio is flat at ~0.5
+  from 6 to 45 decisions: AIVAT only sees the *change* of V across a chance event, so a smooth error
+  cancels and only the local error survives.
+- **The flat ratio is the 9.5b phenomenon one level up.** The critic sits at ~0.75 and the network at
+  ~0.5 whatever the game length, while the floor falls with length, so the share of the *reducible*
+  variance captured drops from 96 % (`TOY`) to 59 % (`FULL_UNO`).
+- **AIVAT costs more CPU than it saves when the agents are cheap**: a rulebot pair is 2.6 ms, the
+  corrections 30-90 ms, so 4,000 extra deals beat halving the variance of 4,000. Its gain is in *deals*,
+  so it pays when a deal is expensive or scarce, which is 9.5d's search row.
+- At a fixed rollout budget, **many noisy targets beat few clean ones** (n = 2 on 20,000 games over
+  n = 32 on 1,250), and network width barely matters: the limit is the features.
+
+Results: `docs/results/09.5c-results.md`.
 
 ## 6. Results: what we know
 
@@ -1001,6 +1058,9 @@ Kept because they show where this kind of analysis goes wrong.
 | (09.5a results) "6.01 / 17.35 ≈ 7.4 / 16.9, `TOY_FULL`'s own row" | 7.4 / 16.9 is `TOY2_FULL`'s row; `TOY_FULL` is not in that table (step 9.5b) |
 | (09.5a results) "a large minority to a majority of decisions are close calls", linked to "48 % of sets at a non-trivial stabilizer" | direction reversed (33-74 % are close calls) and the 48 % is K2's share of L1 sets, not stabilizers (284 of 12,036); mechanisms for the Nash gaps marked as hypotheses (step 9.5b) |
 | (9.5b plan) place the full-UNO critic on the toy R² → variance-ratio curve | the ratio is flat across game lengths while R² falls four-fold: R² does not carry (step 9.5b) |
+| (9.5b) "a PIMC value is a candidate V for AIVAT" | a rollout V costs more games than it saves and its noise makes the estimator worse than raw (ratio 3.99 at n = 16); PIMC is the *teacher* of a fitted network (step 9.5c) |
+| (9.5b) "a better full-UNO V has up to twice the gain to collect" | the floor is 0.086-0.090, not ~0.4, so up to 11x; the fitted network takes 2.2x of it (step 9.5c) |
+| (9.5c plan) teacher targets at n = 8 rollouts per state | at a fixed budget, n = 2 on four times as many games fits better (step 9.5c) |
 | (step 9.5a plan) "one `best_response` pass with `own` fixed gives the same value on the quotient as on the full tree" (K0 / K1 / K2) | only true for `identity_key` (no merging ambiguity); K0/K1/K2 group by whichever canonical L1 representative `compile_tree` picked for each set (history included), not one re-minimised for the coarse key's own fields, so the two trees' partitions can differ and need not agree numerically (step 9.5a) |
 
 ## 8. Dead ends and things deliberately not done
@@ -1043,7 +1103,8 @@ Kept because they show where this kind of analysis goes wrong.
 | 9 | review follow-ups (`docs/results/09-review.md`, `09-results.md`): split share, test power, exhaustion scorings, two-sided values, equilibrium choice, fill-in, deal model, pairing on full UNO, ticket draws, speed-ups; the review's section D (where the skill is, memory ceiling, metrics) is still to discuss | done |
 | 9.5a | exact: memory keys (K0/K1/K2), edge-by-decision decomposition, fixed-opponent metric, deal model at 100k seeds, divergence statistic, node lookup, sampled D2 cross-check; brainstorm and section D verdicts in `docs/results/09.5-brainstorm.md` | done |
 | 9.5b | AIVAT: exact validation on the toys (exact moments, scorings, tickets, imperfect-V curve, deal term at 5M seeds), chance model with reshuffle, L2-state logistic critic, `MID_12` / `MID_25`, full UNO, transfer curve (`docs/results/09.5b-results.md`) | done |
-| **9.5c** | **PIMC: exact PIMC-∞ on the toy world trees vs BR L1 / L2, PIMC-n, full UNO evaluated with AIVAT; full-UNO D2 with a search Q (MCTS deferred)** | **next** |
+| 9.5c | PIMC values as a teacher: determinized rollouts against the exact toys, the deal floor, a symmetric value network as AIVAT's V (full UNO 0.71/0.76 → 0.46/0.47), the Monte Carlo deal mean, the cost of rollouts as V (`docs/results/09.5c-results.md`) | done |
+| **9.5d** | **PIMC agent: exact PIMC-∞ on the toy world trees vs BR L1 / L2 (with and without opponent-reach weighting), PIMC-n, the full-UNO PIMC row evaluated with 9.5c's network; full-UNO D2 with a search Q (MCTS deferred)** | **next** |
 | 10 | formalise the toy results: figures and tables that RL relies on | |
 | 11 | RL | |
 
@@ -1091,7 +1152,10 @@ Planned design and checks (from the plan and step 8.9):
 - **Closed in step 9.5b**: `uno.game.chance.draw_outcomes` models reshuffles
   (a penalty draw across a reshuffle is skipped, 0.004-0.009 % of decisions).
 - **As built (step 9.5b)**: all of the checks above hold. On full UNO V is a
-  fitted L2-state logistic critic, not PIMC; PIMC values are a 9.5c candidate.
+  fitted L2-state logistic critic, not PIMC. **Step 9.5c**: rollout (PIMC) values are
+  too noisy and too costly to *be* V (ratio 3.99 at 16 rollouts per value, worse than
+  no corrections); they became the teacher of a fitted network, which reaches
+  0.46 / 0.47 against the critic's 0.71 / 0.76.
 - Why it matters: the toy evaluators already work, but full UNO's luck is
   in-game draws where mirroring and pairing fail (§6.6). AIVAT corrects at every
   draw.
@@ -1125,17 +1189,22 @@ Planned design and checks (from the plan and step 8.9):
   edge-by-decision, D4 `br_gap`, the sampled cross-check), `memory` (D3 memory
   ceilings, K0/K1/K2) and `deal_model` (the deal-model check at 100,000 seeds),
   and since step 9.5b `aivat` (toys, exact validation) and `aivat_uno` (the
-  intermediate-ruleset sweep, critics, AIVAT on `MID_12` / `MID_25` / full UNO).
-  Tests: `uv run pytest` (145 tests, 6 min 13 s on an idle machine at step 9.5b; the 13
-  AIVAT / critic / chance-model tests add ~12 s of it). Everything: `bash scripts/rerun_all.sh`
-  (~2 h, logs in `logs/rerun-*/report.txt`).
+  intermediate-ruleset sweep, critics, AIVAT on `MID_12` / `MID_25` / full UNO), and since step 9.5c
+  `pimc_value` (`check` rollouts against the exact toys, `floor` the deal's share of the variance,
+  `pilot` the teacher/student trade-off, `aivat` the network as V, `mc` the cost of rollouts as V).
+  Tests: `uv run pytest` (154 tests, 6 min 44 s on an idle machine at step 9.5c; the 9 PIMC /
+  value-network tests add ~30 s of it). Everything: `bash scripts/rerun_all.sh`
+  (~8 h 30 by the script's own estimates, of which only the 18 steps of the step-8.9
+  rerun have measured durations, 115 min; everything from `robustness` on is a first-run guess,
+  logs in `logs/rerun-*/report.txt`).
 - `.cache/` holds compiled trees and CFR strategies (`TOY2_FULL` trees are
   1.9-3.0 GB each and 2-5 GB in RAM; about 8 GB total). Bump
   `uno.store.CACHE_VERSION` when a compile's output would change.
 - Code layout: `uno/game` (rules, engine, observe, keys, chance, symmetry),
   `uno/agents` (baseline, tabular, symmetrized), `uno/reference` (slow trusted
   walkers: census, solve, mirrored, sizing), `uno/compiled` (tree, solvers,
-  strategies, cfr), `uno/eval` (play, estimate), `uno/store.py`,
+  strategies, cfr), `uno/eval` (play, estimate, aivat, critic, and since 9.5c pimc, value_net:
+  the value network needs torch, a dependency since 9.5c), `uno/store.py`,
   `uno/experiments/` (one module per step).
 - About the author: comfortable with RL and PPO, newer to game-tree methods
   (minimax, CFR, best response, OpenSpiel); explain those plainly.

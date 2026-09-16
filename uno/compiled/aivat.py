@@ -136,17 +136,17 @@ def outcome_r2(tree: CompiledTree, seat0: Strategy, seat1: Strategy, nu: np.ndar
 
 
 def critic_values(tree: CompiledTree, critic, exhaustion: str = "hand") -> np.ndarray:
-    """A fitted critic (`uno.eval.critic`) as a node vector: its value at every decision node,
-    from the node's L2 key (a function of the state, so the same on every node of a set), the
+    """A fitted value model (`uno.eval.critic.Critic`, `uno.eval.value_net.ValueNet`: anything with
+    `observation_features(rs, obs)` and `values(rows)`) as a node vector: its value at every decision
+    node, from the node's L2 key (a function of the state, so the same on every node of a set), the
     rescored return at the terminals."""
-    from uno.eval.critic import observation_features
     from uno.game.keys import decode_key
     from uno.game.observe import observation_from_key
 
     k = tree.keyings[Level.L2]
     rows = [None] * k.n_info
     for b, i in k.keys.items():
-        rows[i] = observation_features(tree.rs, observation_from_key(tree.rs, Level.L2, decode_key(Level.L2, b)))
+        rows[i] = critic.observation_features(tree.rs, observation_from_key(tree.rs, Level.L2, decode_key(Level.L2, b)))
     per_set = critic.values(rows)
     rt = tree.rescored(exhaustion)
     nu = np.zeros(tree.n)

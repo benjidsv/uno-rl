@@ -126,7 +126,7 @@ game by exhaustion).
 
 Near-identical policies on `FULL_UNO` ([step 9](09-results.md), `uv run uno pairing`, 4000 held-out seeds): the Heuristic minus a variant on the Heuristic's action-rng stream (5 % Random mixed in, or the opponent "low" at 1 card), against the same column, keeps 15-23 % of the unpaired variance with pile draws (1,250-1,800 deals for 3 points at 3 sigma with 80 % power, against ~8,000 unpaired) and 12-20 % with ticket draws; the same mixture on its own stream keeps 49-72 %.
 
-## AIVAT ([step 9.5b](09.5b-results.md))
+## AIVAT ([step 9.5b](09.5b-results.md), [step 9.5c](09.5c-results.md))
 
 Variance ratio AIVAT / raw on the same games, score of the row, seat 0 / seat 1.
 
@@ -139,6 +139,21 @@ Variance ratio AIVAT / raw on the same games, score of the row, seat 0 / seat 1.
 | `MID_25` | heuristic vs random | fitted critic, no deal | 0.73 / 0.72 | |
 | `FULL_UNO` | heuristic vs random | fitted critic (R² 0.11), no deal | 0.71 / 0.76 | 3,860 → 2,757 / 3,956 → 2,996 |
 | `FULL_UNO` | heuristic vs heuristic_col | fitted critic (R² 0.14), no deal | 0.75 / 0.72 | 4,096 → 3,090 / 4,096 → 2,941 |
+| `TOY` | heuristic vs random | fitted network (9.5c), no deal | 0.45 / 0.51 | |
+| `TOY` | heuristic vs random | fitted network, chance + both players + deal | 0.04 / 0.06 | |
+| `MID_12` | heuristic vs random | fitted network, no deal | 0.53 / 0.54 | |
+| `MID_25` | heuristic vs random | fitted network, no deal | 0.51 / 0.50 | |
+| `FULL_UNO` | heuristic vs random | fitted network (R² 0.15), no deal | **0.46 / 0.47** | 3,860 → 1,776 / 3,956 → 1,854 |
+| `FULL_UNO` | heuristic vs random | fitted network, + deal (Monte Carlo deal mean) | 0.38 / 0.39 | 3,860 → 1,483 / 3,956 → 1,558 |
+| `FULL_UNO` | heuristic vs heuristic_col | fitted network (R² 0.19), no deal | 0.51 / 0.52 | |
 
 Deal model through AIVAT's deal term, 5,000,000 seeds per profile: every pooled |z| < 1 on `TOY`,
 `TOY2`, `TOY2_SKIP` and `DUPS` (3σ ≈ 0.04-0.05 score points).
+
+The **deal floor** ([step 9.5c](09.5c-results.md), `uv run uno pimc_value floor`): the share of the
+outcome variance fixed by the dealt hands, which is the ratio AIVAT reaches with the exact L2 values
+and every correction but the deal's. Heuristic vs Random, 2,000 EVAL deals x 32 pile determinizations,
+seat 0 / seat 1: `TOY` 0.42 / 0.47, `TOY2` 0.38 / 0.40, `TOY2_SKIP` 0.46 / 0.40, `MID_12` 0.25 / 0.26,
+`MID_25` 0.17 / 0.16, `FULL_UNO` **0.086 / 0.090**; against heuristic_col it is about twice as high
+(`FULL_UNO` 0.17). The toy values match the exact ratios. So on full UNO an exact L2 value function
+would need ~350 deals where raw needs ~3,900, and the fitted network reaches ~1,800.

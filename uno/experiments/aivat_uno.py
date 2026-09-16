@@ -31,6 +31,7 @@ row on the Heuristic's stream; heuristic vs heuristic_col):
 from __future__ import annotations
 
 import math
+import os
 import sys
 import time
 from collections import Counter
@@ -41,6 +42,7 @@ from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.eval.aivat import Corrections, GameTerms, bootstrap_ratio, bootstrap_var, estimate_aivat, stream_pairs
 from uno.eval.critic import CriticValues, fit
 from uno.eval.decisions import classify
+from uno.eval.pimc import chunks, pmap
 from uno.eval.play import DEV_SEEDS, EVAL_SEEDS, FIT_SEEDS, play_from
 from uno.game import rules
 from uno.game.engine import legal_actions, new_game
@@ -160,38 +162,70 @@ def agents_for(rs: Ruleset) -> dict:
 MATCHUPS = (("heuristic", "random"), ("heuristic_t1", "random"), ("heuristic", "heuristic_col"))
 
 
-def run_matchup(name: str, rs: Ruleset, agents: dict, row: str, col: str, games: int, fit_games: int, curve: list) -> None:
-    t0 = time.perf_counter()
+def fit_critics(rs: Ruleset, agents: dict, row: str, col: str, fit_games: int) -> list:
     critics = []
     for s in (0, 1):
         pair = (agents[row], agents[col]) if s == 0 else (agents[col], agents[row])
         critic, rep = fit(rs, pair, FIT_SEEDS[:fit_games])
         critics.append(critic)
         print(f"   {row} vs {col} seat {s}: critic on {rep.games:,} games / {rep.states:,} states, ridge {rep.lam:g}, holdout R^2 " + ", ".join(f"{k:g}: {v:.4f}" for k, v in rep.holdout_r2.items()))
-    tree = nus = deal = None
-    if name in TOYS:
-        from uno import store
-        from uno.compiled.aivat import arc_expectation, critic_values
-        from uno.compiled.tree import compile_tree
+    return critics
 
-        tree = compile_tree(rs, (Level.L1, Level.L2), True, cache=store.CACHE)
-        nus = [critic_values(tree, c) for c in critics]
-        deal = [float(arc_expectation(tree, nu)[0]) for nu in nus]
+
+def toy_values(name: str, rs: Ruleset, value_fns: list):
+    """(tree, node vectors, deal means) of fitted value functions on a toy's tree; Nones elsewhere."""
+    if name not in TOYS:
+        return None, None, None
+    from uno import store
+    from uno.compiled.aivat import arc_expectation, critic_values
+    from uno.compiled.tree import compile_tree
+
+    tree = compile_tree(rs, (Level.L1, Level.L2), True, cache=store.CACHE)
+    nus = [critic_values(tree, v) for v in value_fns]
+    return tree, nus, [float(arc_expectation(tree, nu)[0]) for nu in nus]
+
+
+def run_matchup(name: str, rs: Ruleset, agents: dict, row: str, col: str, games: int, fit_games: int, curve: list) -> None:
+    t0 = time.perf_counter()
+    critics = fit_critics(rs, agents, row, col, fit_games)
+    tree, nus, deal = toy_values(name, rs, critics)
     models = tuple(CriticValues(critics[s], deal_mean=None if deal is None else deal[s]) for s in (0, 1))
-    fit_seconds = time.perf_counter() - t0
+    evaluate_matchup(name, rs, agents, row, col, games, models, tree, nus, curve, time.perf_counter() - t0)
 
-    t1 = time.perf_counter()
-    terms: tuple[list[GameTerms], list[GameTerms]] = ([], [])
-    sq = [[0.0, 0.0, 0.0, 0] for _ in (0, 1)]  # per seat: sum (u - V)^2, sum u, sum u^2, visits
-    for (g0, g1), (r0, r1) in stream_pairs(rs, (agents[row], agents[col]), EVAL_SEEDS[:games], models):
+
+def _eval_chunk(rs: Ruleset, pair, seeds, models):
+    """One chunk of EVAL seeds: the two games' terms per seed and the sums behind the outcome R^2.
+    A pure function of (seeds, models), so chunking changes nothing (step 9.5c: the evaluation was
+    the single-core part of the run)."""
+    out, sq = [], [[0.0, 0.0, 0.0, 0] for _ in (0, 1)]
+    for (g0, g1), (r0, r1) in stream_pairs(rs, pair, seeds, models):
+        out.append((g0, g1))
         for s, g, recs in ((0, g0, r0), (1, g1, r1)):
-            terms[s].append(g)
             acc = sq[s]
             for r in recs:
                 acc[0] += (g.u - r.node) ** 2
                 acc[1] += g.u
                 acc[2] += g.u * g.u
                 acc[3] += 1
+    return out, sq
+
+
+def evaluate_matchup(name: str, rs: Ruleset, agents: dict, row: str, col: str, games: int, models, tree, nus, curve: list, fit_seconds: float, corrections: dict = CORRECTIONS, tag: str = "", workers: int | None = None) -> tuple:
+    """AIVAT with per-seat value models on `games` EVAL pairs, streamed, with every check (sections
+    2-4 of the module docstring); on a toy (`tree`, `nus` the models' node vectors) the exact moments.
+    `tag` names the value function in the output (step 9.5c). Returns the per-seat terms."""
+    who = f"{name} {row} vs {col}" if not tag else f"{name} [{tag}] {row} vs {col}"
+    t1 = time.perf_counter()
+    terms: tuple[list[GameTerms], list[GameTerms]] = ([], [])
+    sq = [[0.0, 0.0, 0.0, 0] for _ in (0, 1)]  # per seat: sum (u - V)^2, sum u, sum u^2, visits
+    k = (os.cpu_count() or 1) * 8 if workers != 1 else 1
+    for part, part_sq in pmap(_eval_chunk, [(rs, (agents[row], agents[col]), c, models) for c in chunks(EVAL_SEEDS[:games], k)], workers):
+        for g0, g1 in part:
+            terms[0].append(g0)
+            terms[1].append(g1)
+        for s in (0, 1):
+            for i in range(4):
+                sq[s][i] += part_sq[s][i]
     play_seconds = time.perf_counter() - t1
     n = len(terms[0])
     decisions = sum(t.decisions for ts in terms for t in ts)
@@ -201,12 +235,12 @@ def run_matchup(name: str, rs: Ruleset, agents: dict, row: str, col: str, games:
     for s in (0, 1):
         e2, su, su2, k = sq[s]
         r2s.append(1.0 - e2 / (su2 - su * su / k))
-    for label, c in CORRECTIONS.items():
+    for label, c in corrections.items():
         est = estimate_aivat(terms, c)
         for s in (0, 1):
             e, raw, d = est.seat[s], est.raw[s], est.diff[s]
             zd = z_of(d.mean, d.se)
-            ok = check(abs(zd) <= 3, f"{name} {row} vs {col} {label} seat {s}: AIVAT - raw z {zd:+.2f}")
+            ok = check(abs(zd) <= 3, f"{who} {label} seat {s}: AIVAT - raw z {zd:+.2f}")
             lo, hi = bootstrap_ratio(est.scores[s], np.array([(1 if s == 0 else -1) * t.u / 2 + 0.5 for t in terms[s]]))
             print(
                 f"      {label:12s} seat {s}: raw {raw}  AIVAT {e}  diff z {zd:+.2f} {ok}  ratio {est.var_ratio(s):.3f} [{lo:.3f}, {hi:.3f}]  "
@@ -225,11 +259,11 @@ def run_matchup(name: str, rs: Ruleset, agents: dict, row: str, col: str, games:
                     ev = aivat_moments(tree, *prof, exact_values(tree, *prof), c, s).var / 4
                     zm = z_of(e.mean - mean, e.se)
                     blo, bhi = bootstrap_var(est.scores[s])
-                    ok_m = check(abs(zm) <= 3, f"{name} {row} vs {col} seat {s}: critic mean vs exact z {zm:+.2f}")
-                    ok_v = check(blo <= var <= bhi, f"{name} {row} vs {col} seat {s}: critic var {var:.5f} outside [{blo:.5f}, {bhi:.5f}]")
+                    ok_m = check(abs(zm) <= 3, f"{who} seat {s}: critic mean vs exact z {zm:+.2f}")
+                    ok_v = check(blo <= var <= bhi, f"{who} seat {s}: critic var {var:.5f} outside [{blo:.5f}, {bhi:.5f}]")
                     exact_ratio = (var / raw_var, ev / raw_var)
                     print(f"         exact (tree): mean {mean:.4f} (z {zm:+.2f}) {ok_m}  var {var:.5f} in CI [{blo:.5f}, {bhi:.5f}] {ok_v}  exact ratio {var / raw_var:.3f}; exact values, no deal: {ev / raw_var:.3f}")
-                curve.append((name, f"{row} vs {col}", s, sum(t.decisions for t in terms[s]) / n, r2s[s], est.var_ratio(s), exact_ratio))
+                curve.append((name, f"{row} vs {col}" + (f" [{tag}]" if tag else ""), s, sum(t.decisions for t in terms[s]) / n, r2s[s], est.var_ratio(s), exact_ratio))
         print(f"      {label:12s} mirrored (pair) variance {est.mirrored.var:.5f}")
     print("      zero-mean corrections (chance+both), per game sums by event:")
     for s in (0, 1):
@@ -245,9 +279,10 @@ def run_matchup(name: str, rs: Ruleset, agents: dict, row: str, col: str, games:
             m = float(np.mean(xs))
             se = float(np.std(xs, ddof=1) / math.sqrt(len(xs)))
             z = z_of(m, se)
-            cells.append(f"{ev} {m:+.4f} (z {z:+.2f}) {check(abs(z) <= 3, f'{name} {row} vs {col} seat {s} {ev}: mean z {z:+.2f}')}")
+            cells.append(f"{ev} {m:+.4f} (z {z:+.2f}) {check(abs(z) <= 3, f'{who} seat {s} {ev}: mean z {z:+.2f}')}")
         print(f"         seat {s}: " + "  ".join(cells))
     sys.stdout.flush()
+    return terms
 
 
 def main(argv: list[str] | None = None) -> None:

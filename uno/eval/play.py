@@ -39,6 +39,10 @@ EVAL_SEEDS = range(1_000_000, 1_004_000)
 # dev-class range, larger than DEV_SEEDS: nothing is reported on it, and it is disjoint from
 # EVAL_SEEDS and from the fresh ranges earlier checks drew (3,000,000+, 5,000,000+).
 FIT_SEEDS = range(10_000_000, 10_100_000)
+# Step 9.5c: deals over which a fitted value function's mean at the first state is estimated, for
+# AIVAT's deal correction on rulesets with no tree (`uno.experiments.pimc_value`). Disjoint from every
+# range above and from the fresh ranges earlier checks drew (3M+, 5M+, 7M+, 20M-25M, 30M+).
+DEAL_SEEDS = range(40_000_000, 41_000_000)
 
 
 def stable_hash(obj: object) -> int:

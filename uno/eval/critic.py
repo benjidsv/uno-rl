@@ -114,6 +114,14 @@ class Critic:
     def value(self, s: State) -> float:
         return float(self.values([state_features(s)])[0])
 
+    # the value-model interface `CriticValues` and `uno.compiled.aivat.critic_values` read (step 9.5c:
+    # `uno.eval.value_net.ValueNet` implements it too)
+    def features(self, s: State) -> list[float]:
+        return state_features(s)
+
+    def observation_features(self, rs: Ruleset, obs: Observation) -> list[float]:
+        return observation_features(rs, obs)
+
 
 @dataclass(frozen=True)
 class Sample:
@@ -210,7 +218,7 @@ class CriticValues:
         rows: list[list[float]] = []
 
         def row(s: State) -> int:
-            rows.append(state_features(s))
+            rows.append(self.critic.features(s))
             return len(rows) - 1
 
         plans = []

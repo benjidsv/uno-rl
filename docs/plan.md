@@ -23,7 +23,8 @@ rules in [spec.md](spec.md).
 | 9 | review follow-ups: split share, test power, exhaustion scorings, two-sided values, equilibrium choice, fill-in, deal model, pairing on full UNO, ticket draws, speed-ups | done | [09 review](results/09-review.md), [results](results/09-results.md) |
 | 9.5a | exact: nested memory keys (K0/K1/K2, `uno.compiled.coarse`), edge-by-decision decomposition and fixed-opponent metric (`uno.compiled.edge`), deal model at 100k seeds, divergence statistic, node lookup (`uno.compiled.lookup`) and the sampled D2 cross-check | done | [09.5 brainstorm](results/09.5-brainstorm.md), [09.5a results](results/09.5a-results.md) |
 | 9.5b | AIVAT: exact validation on the toys (exact moments, three scorings, tickets, imperfect-V curve), chance model with reshuffle, fitted L2-state critic, intermediate rulesets `MID_12` / `MID_25`, full UNO, transfer curve | done | [09.5b results](results/09.5b-results.md) |
-| 9.5c | PIMC: exact PIMC-∞ on the toy world trees against BR L1 / L2, PIMC-n, full UNO evaluated with AIVAT; full-UNO D2 with a search Q (MCTS deferred) | next | |
+| 9.5c | PIMC values as a teacher: determinized rollouts validated against the exact toys, the deal floor (AIVAT's residual with exact L2 values), a symmetric value network fitted on rollout targets as AIVAT's V on `MID_12` / `MID_25` / full UNO, deal correction with a Monte Carlo deal mean, cost of rollouts used directly | done | [09.5c results](results/09.5c-results.md) |
+| 9.5d | PIMC agent: exact PIMC-∞ on the toy world trees against BR L1 / L2 (with and without opponent-reach weighting), PIMC-n, the full-UNO PIMC rollout player evaluated with the 9.5c value network; full-UNO D2 with a search Q (MCTS deferred) | | |
 | 10 | formalise the toy results for RL: a performance range with ceilings, an edge-by-decision diagnostic tool, figures and tables | | |
 | 11 | RL | | |
 
