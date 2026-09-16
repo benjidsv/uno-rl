@@ -198,6 +198,49 @@ is identically zero, so the gain comes from chance and the opponent only. This i
 pays in: per game on one core a w = 32 search costs ~722 ms against the Heuristic's ~1.3 ms, so the
 corrections are 4-11 % of the cost rather than several times it.
 
+**The continuation rule** ([step 9.5e](09.5e-results.md), `uv run uno pimc sweep 3000 "" "s32x2r,s32x2,heu,s32x3r,s32x4r"`):
+solving each determinized world as a best response to the column's known policy, instead of
+two-sided minimax, is worth **+9.73 +- 1.04 points at seat 0 (z +9.3) and +4.57 +- 1.06 at seat 1
+(z +4.3)** against Random at 32 worlds and depth 2, over 3,000 EVAL deals -- established at both
+seats, the largest lever found on full UNO, and the one the exact toys pointed at. It is also
+*cheaper* (131 against 179 wall-clock ms/game on 8 cores), because expectimax expands only the
+opponent's support. Raw scores at 3,000 deals, with per-seat leaf networks (step 9.5d used the
+seat-0 one at both seats):
+
+| row | vs Random, seat 0 / seat 1 | vs Heuristic, seat 0 / seat 1 |
+|---|---|---|
+| PIMC search w=128 d=2, **response** | **0.7677 / 0.7403** | |
+| PIMC search w=32 d=2, **response** | **0.7567 / 0.7167** | **0.6180 / 0.6010** (1,000 deals) |
+| PIMC search w=32 d=2, two-sided | 0.6593 / 0.6710 | |
+| Heuristic | 0.6163 / 0.6037 | |
+
+So the PIMC row now beats the rulebot at **both** seats, against Random and head to head, where
+step 9.5d's row lost seat 1. The seat asymmetry of that step is gone. AIVAT on the new row: variance
+ratio 0.60-0.68 against the Heuristic row's 0.44-0.49, with the row correction identically zero
+(a deterministic agent), and 0 failed checks. The row is **opponent-specific** -- it uses the
+column's exact policy, so it is a ladder instrument, not a general player. Inference (a posterior
+belief rather than a uniform determinization) is still not implemented and is scheduled as plan row
+9.5f, the particle filter of the original design.
+
+**The budget ladders** (step 9.5e, 3,000 EVAL deals per config, response continuation, paired):
+**more worlds stop paying past 32 and depth never pays.** Worlds at depth 2 climb +5.57 / +3.33
+points from w = 8 to w = 32 and then flatten -- w = 128 is ~+1.1 over w = 32 at z ~ 1.0, and w = 256
+scores *below* w = 128 at both seats. Depth at w = 32 moves nothing (every difference within 1.5
+sigma of zero) for 3.7x the cost at d = 3 and 13.5x at d = 4, which also disposes of 9.5d's
+odd-even-artefact worry. At equal compute worlds beat depth: w = 128 d = 2 (530 ms/game) scores
+0.7677 / 0.7403 against w = 32 d = 4 (1766 ms/game) at 0.7427 / 0.7170. The usable setting is
+**64-128 worlds at depth 2**. Because this held after the continuation rule and the seat networks
+were both fixed, the flattening is **not** an artefact of those approximations, as 9.5d supposed:
+the binding constraint is the off-profile leaf value network (outcome R^2 0.07-0.25 on these games).
+
+| row | seat 0 | seat 1 | ms/game |
+|---|---|---|---|
+| PIMC response w=8 d=2 | 0.7010 | 0.6833 | 35.4 |
+| PIMC response w=32 d=2 | 0.7567 | 0.7167 | 130.5 |
+| PIMC response w=64 d=2 | 0.7573 | 0.7343 | 271.0 |
+| **PIMC response w=128 d=2** | **0.7677** | **0.7403** | 530.0 |
+| PIMC response w=256 d=2 | 0.7660 | 0.7347 | 1060.2 |
+
 **D2 with a search Q** (`d2`, 150 EVAL deals): where the Heuristic's choices differ most from a
 w = 32 search -- **action-card timing 68-73 % and wild handling 25-29 %**, i.e. ~97 % between them,
 nearly seat-symmetric. The control row (the search itself) sits at -3.3 / -2.5 against the

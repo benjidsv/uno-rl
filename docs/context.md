@@ -3,8 +3,8 @@
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 9.5d, 2026-09-16** (on top of
-commit `9cef561`, uncommitted); next step is **10, formalising the toy results for RL**.
+with no access to the repo. State as of **step 9.5e, 2026-09-16** (on top of
+commit `d60d6a6`, uncommitted); next step is **10, formalising the toy results for RL**.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -870,6 +870,72 @@ mildly pessimistic until it is.
 
 Results: `docs/results/09.5d-results.md`.
 
+### 5.19 Step 9.5e: the continuation rule, the largest full-UNO lever so far
+
+**Problem:** 9.5d closed with three untested approximations in the full-UNO PIMC agent and a known
+wiring defect. The toys had already ranked them, so this step spent the budget in that order.
+
+**Techniques** (`docs/spec.md` section 25):
+
+- **The `response` continuation** (`uno.eval.search.response_value`): each determinized world is
+  solved as a perfect-information best response to the column's *real* policy -- max at the agent's
+  nodes, the expectation under the opponent's policy at the opponent's -- instead of two-sided
+  minimax, which assumes the opponent is clairvoyant too. It is the sampled analogue of
+  `best_response_perfect`, i.e. exactly the axis `uno.compiled.pimc` measures on the toys.
+- **Per-seat leaves** (`leaf_for`): 9.5d gave the agent the seat-0 value network at *both* seats.
+  Not the one-line `nets[seat]` that step assumed -- one agent object plays both seatings of a deal
+  (`evaluate_matchup` builds the pair once, `sweep` also plays it reversed), so the leaf must be
+  resolved from `obs.seat` inside the agent.
+
+**What it bought:** **+9.73 +- 1.04 points at seat 0 (z +9.3) and +4.57 +- 1.06 at seat 1
+(z +4.3)** against Random at w = 32, d = 2 over 3,000 EVAL deals, so the lever is established at
+**both** seats (a first 1,000-deal run gave +10.20 / +5.20, seat 1 only indicated at z +2.9). The row goes from losing to the Heuristic at seat
+1 in 9.5d (0.5633 against 0.6433) to **beating it at both seats**, both against Random
+(0.7660 / 0.7180 against 0.6190 / 0.6080) and head to head (0.6180 / 0.6010). The seat asymmetry
+9.5d flagged is gone (two-sided now 0.6640 / 0.6660 where that step had 0.6950 / 0.5600), consistent
+with the per-seat network fix, though that is a comparison across runs rather than a paired test.
+AIVAT still works on the row (ratio 0.60-0.68, row correction identically zero), and 0 failed checks
+across both runs.
+
+**What it taught:**
+
+- **A better continuation rule is *free*, not expensive.** It was scoped as 2-4x slower because
+  expectimax cannot use alpha-beta; measured, it is *cheaper* (128.7 against 188.9 wall-clock
+  ms/game), because expectimax expands only the actions in the opponent's support and both rulebots
+  are far from uniform, so the collapsed branching at opponent nodes more than repays the lost
+  pruning.
+- **A toy check can be vacuous on the very axis it is meant to test.** The first closure test used
+  `TOY`, where the two continuations sit 0.22 / 0.50 score points apart against ~3.2 points of noise
+  at 200 games: it passed, and would have passed with the wrong continuation wired in. `TOY_FULL`
+  separates them by 7-9 points, so the test moved there, and a noise-free test (the two rules, given
+  the same worlds, must choose differently) now pins the axis directly.
+- **The row is opponent-specific**: it needs the column's exact policy, so it is a ladder instrument
+  rather than a general player, and on the toys fitting the belief to one opponent costs
+  exploitability. A general full-UNO PIMC still pays the ~10 points measured here.
+- **The budget is not the constraint; the leaf value function is.** A 7 h 39 m grid at 3,000 deals
+  re-measured both ladders under the new rule. Worlds: the climb to 32 is large (+5.6 / +3.3 over
+  w = 8) and everything past it is flat -- w = 128 is ~+1.1 points over w = 32 at z ~ 1.0, and
+  w = 256 scores *below* w = 128 at both seats. Depth: nothing, at 3.7x (d = 3) and 13.5x (d = 4)
+  the cost, all differences within 1.5 sigma of zero, which also disposes of 9.5d's odd-even
+  artefact worry. At equal compute worlds beat depth (w = 128 d = 2 beats w = 32 d = 4 at both seats
+  for a third of the price), so the setting is 64-128 worlds at depth 2. **This refuted the
+  prediction made when the grid was commissioned**, that 9.5d's flattening was an artefact of its
+  seat-0 leaf and two-sided continuation: both were fixed and it still flattens, which promotes the
+  off-profile leaf network (R^2 0.07-0.25 on these games) from "likeliest reason" to the residual
+  explanation and the top of the remaining list.
+
+**Deferred: inference.** `determinize_l1` still splits the unseen cards uniformly (the `prior`
+belief). The toys put `posterior` over `prior` at 0.0-0.6 points against Random -- the headline
+column -- reaching 2.6 only against the Heuristic, and the belief is not cheaply available: a
+world's likelihood needs the opponent's hand at each past decision, which cannot be reconstructed
+across its draws, so doing it properly means a particle filter over the deal. That is **the
+"particle filter + expectimax" of `plan.md`'s original design for sampled L1/L2, and the only part
+of it still unbuilt**: PIMC was always meant to come with a belief, and 9.5d / 9.5e built it with a
+uniform determinization instead. Scheduled as build-order row **9.5f**, with its exact target
+already on the toys (`uno.compiled.pimc`'s `"posterior"` weighting).
+
+Results: `docs/results/09.5e-results.md`.
+
 ## 6. Results: what we know
 
 All exact unless marked sampled. Scores of the first-named player, seat 0 /
@@ -1133,6 +1199,10 @@ Kept because they show where this kind of analysis goes wrong.
 | (9.5d) "sharing the world-sampling key makes these comparisons tightly paired" | it removes 8 % of the standard error when the configs differ in *depth* and 18-20 % when they differ in *worlds* (where the larger config's first `n` worlds are exactly the smaller one's), not most of it either way: the coupling lasts only until the two agents' games diverge, which on a ~50-decision game is soon, unlike step 9's near-identical policy variants on a shared stream (77-85 %) (step 9.5d) |
 | (9.5c) AIVAT's corrections are cheap next to a search agent | they are 4-11 % of a search game rather than negligible, and for a *deterministic* search agent the row correction is identically zero, so the gain comes from chance and the opponent only (step 9.5d) |
 | (9.5b brainstorm) "PIMC on full UNO is a strong row" | only with enough worlds: at 2 worlds, and as a rollout player at 8, it scores *below* `PlayFirstRandom`, because the argmax of a few noisy per-action estimates is biased towards whichever action's noise came out high (step 9.5d) |
+| (9.5d) fixing the seat networks is "a one-line change" | one agent object plays both seatings, so the seat is unknown at construction and the leaf must be resolved per observation (step 9.5e) |
+| (9.5e scoping) the `response` continuation drops alpha-beta, so expect 2-4x the cost per world | it is *cheaper* (128.7 against 188.9 wall-clock ms/game): expectimax expands only the opponent's support, and the rulebots are far from uniform, so the lost pruning is more than repaid (step 9.5e) |
+| (9.5e scoping) a `TOY` closure test validates the sampled continuation rule | vacuous on that axis: the two rules are 0.2-0.5 points apart there against ~3.2 points of noise at 200 games, so the test would pass with the wrong one wired in. Moved to `TOY_FULL` (7-9 points apart) and backed by a noise-free "the two rules choose differently" test (step 9.5e) |
+| (9.5d) the full-UNO PIMC row loses to the Heuristic at seat 1, and worlds/depth have stopped helping | that row used the two-sided continuation and the seat-0 network at both seats; with the `response` continuation and per-seat leaves it beats the Heuristic at *both* seats, so "the ladder is flat past 32 worlds" was measured under approximations that have since changed and needs re-testing (step 9.5e) |
 
 ## 8. Dead ends and things deliberately not done
 
@@ -1176,6 +1246,8 @@ Kept because they show where this kind of analysis goes wrong.
 | 9.5b | AIVAT: exact validation on the toys (exact moments, scorings, tickets, imperfect-V curve, deal term at 5M seeds), chance model with reshuffle, L2-state logistic critic, `MID_12` / `MID_25`, full UNO, transfer curve (`docs/results/09.5b-results.md`) | done |
 | 9.5c | PIMC values as a teacher: determinized rollouts against the exact toys, the deal floor, a symmetric value network as AIVAT's V (full UNO 0.71/0.76 → 0.46/0.47), the Monte Carlo deal mean, the cost of rollouts as V (`docs/results/09.5c-results.md`) | done |
 | 9.5d | PIMC agent: exact PIMC-∞ on the toy world trees vs BR L1 / L2 (with and without opponent-reach weighting), PIMC-n, the full-UNO PIMC **search** row evaluated with 9.5c's network (the rollout player is a weaker comparator), full-UNO D2 with a search Q, and the worlds-versus-depth budget study (MCTS deferred) (`docs/results/09.5d-results.md`) | done |
+| 9.5e | the `response` continuation (each determinized world solved as a best response to the known column: +10.2 / +5.2 points on full UNO, and *cheaper* than two-sided), per-seat leaf networks (9.5d used the seat-0 one at both seats), AIVAT on the new row; inference deferred to a particle-filter sub-step (`docs/results/09.5e-results.md`) | done |
+| 9.5f | **PIMC inference: particle filter + expectimax**, the one piece of `plan.md`'s original sampled-oracle design still unbuilt. Sample the opponent's initial hand and the pile at the deal, replay the public history weighting particles by the opponent's action probabilities, resample per step, and feed that posterior belief to the search instead of a uniform determinization. Exact target on the toys: `uno.compiled.pimc`'s `"posterior"` weighting (0.0-0.6 points against Random, up to 2.6 against the Heuristic) | deferred at 9.5e |
 | **10** | **formalise the toy results: figures and tables that RL relies on** | **next** |
 | 11 | RL | |
 
@@ -1265,7 +1337,9 @@ Planned design and checks (from the plan and step 8.9):
   `pilot` the teacher/student trade-off, `aivat` the network as V, `mc` the cost of rollouts as V),
   and since step 9.5d `pimc` (`exact` PIMC-infinity on the toy world trees, `pimcn` the finite-world
   curve, `uno` the full-UNO search row under AIVAT, `d2` edge attribution with a search Q, `sweep`
-  the worlds-versus-depth budget study).
+  the worlds-versus-depth budget study). Since step 9.5e `pimc sweep` takes an `s<worlds>x<depth>r`
+  config token and `pimc uno` a trailing `r` argument, both selecting the `response` continuation
+  (each determinized world solved as a best response to the known column).
   Tests: `uv run pytest` (154 tests, 6 min 44 s on an idle machine at step 9.5c; the 9 PIMC /
   value-network tests add ~30 s of it). Everything: `bash scripts/rerun_all.sh`
   (~8 h 30 by the script's own estimates, of which only the 18 steps of the step-8.9

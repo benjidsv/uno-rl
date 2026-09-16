@@ -25,6 +25,8 @@ rules in [spec.md](spec.md).
 | 9.5b | AIVAT: exact validation on the toys (exact moments, three scorings, tickets, imperfect-V curve), chance model with reshuffle, fitted L2-state critic, intermediate rulesets `MID_12` / `MID_25`, full UNO, transfer curve | done | [09.5b results](results/09.5b-results.md) |
 | 9.5c | PIMC values as a teacher: determinized rollouts validated against the exact toys, the deal floor (AIVAT's residual with exact L2 values), a symmetric value network fitted on rollout targets as AIVAT's V on `MID_12` / `MID_25` / full UNO, deal correction with a Monte Carlo deal mean, cost of rollouts used directly | done | [09.5c results](results/09.5c-results.md) |
 | 9.5d | PIMC agent: exact PIMC-∞ on the toy world trees against BR L1 / L2 (with and without opponent-reach weighting), PIMC-n, the full-UNO PIMC **search** row evaluated with the 9.5c value network (the rollout player turned out weaker at equal worlds and is reported as a comparator); full-UNO D2 with a search Q; the worlds-versus-depth budget study (MCTS deferred) | done | [09.5d](results/09.5d-results.md) |
+| 9.5e | PIMC's approximations: the `response` continuation (each determinized world solved as a best response to the known column, +10.2 / +5.2 points on full UNO and *cheaper*), per-seat leaf networks (9.5d used the seat-0 one at both seats), AIVAT on the new row; inference deferred | done | [09.5e](results/09.5e-results.md) |
+| 9.5f | **PIMC inference: particle filter + expectimax** (this plan's original design for sampled L1/L2, below). Sample the opponent's initial hand and the pile at the deal, replay the recorded public history weighting each particle by the opponent's action probabilities, resample per step to avoid degeneracy, and feed the resulting *posterior* belief to the search in place of `determinize_l1`'s uniform split. Exact targets exist: `uno.compiled.pimc`'s `"posterior"` weighting on the toys, worth 0.0-0.6 points against Random and up to 2.6 against the Heuristic | deferred at 9.5e | |
 | 10 | formalise the toy results for RL: a performance range with ceilings, an edge-by-decision diagnostic tool, figures and tables | | |
 | 11 | RL | | |
 
@@ -113,6 +115,8 @@ the same unit.
 - L1 best response = the actual ceiling for the trained agent in that matchup
 
 Full UNO: same definitions, but sampled instead of exact. L3 via search with a depth cutoff, L1/L2 via PIMC (Perfect Information Monte Carlo: sample worlds consistent with the observation, solve each, vote) or particle filter + expectimax.
+
+Status of that last clause: PIMC was built in [9.5d](results/09.5d-results.md) and improved in [9.5e](results/09.5e-results.md), both with a **uniform** determinization, i.e. no inference. The **particle filter** half is still outstanding and is scheduled as row 9.5f above. It is the only part of the original sampled-oracle design not yet built, and the toys already hold its exact target (`uno.compiled.pimc`'s `"posterior"` belief).
 
 Information sets and recall. The L1 information state is (seat, initial hand,
 full public history, own draws in order), [spec section 10](spec.md). It has perfect

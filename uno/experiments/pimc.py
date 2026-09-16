@@ -2,9 +2,14 @@
 
     uv run uno pimc exact  [rulesets=TOY,TOY2,TOY2_SKIP,TOY_FULL]
     uv run uno pimc pimcn  [rulesets=...] [realizations=64] [max_n=64]
-    uv run uno pimc uno    [deals=400] [worlds=8] [depth=2] [workers]
+    uv run uno pimc uno    [deals=400] [worlds=8] [depth=2] [workers] [cont=m|r]
     uv run uno pimc d2     [deals=200] [worlds=8] [depth=2] [workers]
-    uv run uno pimc sweep  [deals=200] [workers] [configs=s2x2,s8x2,...]  (s<worlds>x<depth>, r<worlds>x<rollouts>, heu)
+    uv run uno pimc sweep  [deals=200] [workers] [configs=s2x2,s8x2,...]  (s<worlds>x<depth>[r], r<worlds>x<rollouts>, heu)
+
+A trailing `r` on a search config (`s32x2r`), and the `cont=r` argument of `uno`, select step
+9.5e's **response** continuation: each determinized world is solved as a best response to the
+column's real policy instead of two-sided minimax. Worth +10.2 / +5.2 score points on full UNO at
+w = 32, d = 2, and cheaper, because expectimax expands only the opponent's support.
 
 docs/spec.md section 25. Every check prints ok / XX; the last line counts the failures.
 
@@ -196,24 +201,34 @@ def rs_name(rs) -> str:
     return next(n for n, r in rules.NAMED.items() if r == rs)
 
 
-def uno_section(games: int, worlds: int, depth: int, workers: int | None) -> None:
+def uno_section(games: int, worlds: int, depth: int, workers: int | None, cont: str = "m") -> None:
     rs = rules.FULL_UNO
     nets = [net_for(rs, "heuristic", "random", s) for s in (0, 1)]
     models = tuple(CriticValues(nets[s]) for s in (0, 1))
+    leaves = (nets[0].value, nets[1].value)  # step 9.5e: 9.5d gave the agent nets[0] at both seats
     heu, rnd = Heuristic(rs), PlayFirstRandom(rs)
-    rows = {
-        "pimc": PimcSearch(rs, nets[0].value, worlds=worlds, depth=depth, name="pimc"),
-        "pimc_rollout": PimcRollout(rs, (heu, rnd), worlds=worlds, name="pimc_rollout"),
-        "heuristic": heu,
-    }
-    print(f"\n== FULL_UNO PIMC row: {worlds} worlds per decision, depth {depth}, value network at the leaves.")
+
+    def row_agent(row: str, col: str, column):
+        """The row agent for this column. Under `cont == "r"` the PIMC row solves each world as a
+        best response to the column, so it is a *different policy per column* and must carry a
+        different name: a name identifies a policy (context.md section 3), and two agents sharing
+        one would share an action rng stream."""
+        if row == "pimc":
+            return PimcSearch(rs, leaves, worlds=worlds, depth=depth, name=f"pimc_resp_{col}" if cont == "r" else "pimc", opponent=column if cont == "r" else None)
+        if row == "pimc_rollout":
+            return PimcRollout(rs, (heu, rnd), worlds=worlds, name="pimc_rollout")
+        return heu
+
+    rule = "each world solved as a best response to the column (9.5e)" if cont == "r" else "each world solved two-sided (classic PIMC)"
+    print(f"\n== FULL_UNO PIMC row: {worlds} worlds per decision, depth {depth}, per-seat value network at the leaves; {rule}.")
     print(f"   {games} EVAL deals per matchup, both seatings; AIVAT's V is 9.5c's heuristic-vs-random network (off-profile, still unbiased).")
     curve: list = []
     for row in ("pimc", "pimc_rollout", "heuristic"):
         for col in ("random", "heuristic"):
             if row == col:
                 continue  # self-play pairs are degenerate under common random numbers (context.md 5.4)
-            agents = {row: rows[row], col: rnd if col == "random" else Heuristic(rs)}
+            column = rnd if col == "random" else Heuristic(rs)
+            agents = {row: row_agent(row, col, column), col: column}
             print(f"\n   -- {row} vs {col}")
             t0 = time.perf_counter()
             au.evaluate_matchup("FULL_UNO", rs, agents, row, col, games, models, None, None, curve, 0.0, au.CORRECTIONS, row, workers)
@@ -326,16 +341,24 @@ def _sweep_chunk(rs, pair, seeds) -> list[tuple[float, float]]:
 
 
 def _parse_config(rs, nets, heu, rnd, token: str):
-    """`s32x2` = PimcSearch 32 worlds depth 2; `r8x4` = PimcRollout 8 worlds 4 rollouts; `heu`."""
+    """`s32x2` = PimcSearch 32 worlds depth 2, each world solved two-sided; a trailing `r`
+    (`s32x2r`) solves each world as a best response to the column instead (step 9.5e);
+    `r8x4` = PimcRollout 8 worlds 4 rollouts; `heu`."""
     if token == "heu":
         return "Heuristic", heu, None
     kind, rest = token[0], token[1:]
+    resp = rest.endswith("r")
+    rest = rest[:-1] if resp else rest
     a, b = (int(x) for x in rest.split("x"))
+    leaves = (nets[0].value, nets[1].value)  # step 9.5e: per seat, not nets[0] twice
     if kind == "s":
-        return f"PimcSearch w={a} d={b}", PimcSearch(rs, nets[0].value, worlds=a, depth=b, name="pimc"), ("search", a, b)
+        # the sweep's column is always Random, so that is what a response config best-responds to
+        label = f"PimcSearch w={a} d={b}" + (" resp" if resp else "")
+        agent = PimcSearch(rs, leaves, worlds=a, depth=b, name="pimc_resp_random" if resp else "pimc", opponent=rnd if resp else None)
+        return label, agent, ("search", a, b, "r" if resp else "m")
     if kind == "r":
-        return f"PimcRollout w={a} r={b}", PimcRollout(rs, (heu, rnd), worlds=a, rollouts=b, name="pimc_rollout"), ("rollout", a, b)
-    raise SystemExit(f"bad sweep config {token!r}: s<worlds>x<depth>, r<worlds>x<rollouts>, or heu")
+        return f"PimcRollout w={a} r={b}", PimcRollout(rs, (heu, rnd), worlds=a, rollouts=b, name="pimc_rollout"), ("rollout", a, b, "m")
+    raise SystemExit(f"bad sweep config {token!r}: s<worlds>x<depth>[r], r<worlds>x<rollouts>, or heu")
 
 
 def sweep_section(games: int, workers: int | None, spec: str | None = None) -> None:
@@ -358,8 +381,9 @@ def sweep_section(games: int, workers: int | None, spec: str | None = None) -> N
     print(f"\n== FULL_UNO budget sweep: raw score against Random over {games} EVAL deals per config (both seatings).")
     print("   Every search config shares the world-sampling key, so at a shared information state they draw the")
     print("   *same* worlds. That couples the paired differences below only until the games diverge, which on a")
-    print("   ~50-decision game is soon: measured, the pairing removes 8 % of the standard error between depths and")
-    print("   18-20 % between world counts -- useful, but never step 9's 77-85 % for variants on a shared stream.")
+    print("   ~50-decision game is soon: measured at 3,000 deals under the response rule (step 9.5e), it removes")
+    print("   11-19 % of the standard error on every axis -- worlds, depth and continuation alike, so 9.5d's")
+    print("   '8 % for depth, 18-20 % for worlds' split does not survive a powered run. Never step 9's 77-85 %.")
     print(f"   {'row':30s} {'seat 0':>14s} {'seat 1':>14s} {'ms/game':>8s} {'sec':>6s}")
     scores: dict[str, np.ndarray] = {}
     meta: dict[str, tuple] = {}
@@ -385,26 +409,56 @@ def sweep_section(games: int, workers: int | None, spec: str | None = None) -> N
         print(f"      {label:28s} {cells[0]:>18s} {cells[1]:>18s}")
 
     search = {t: m[1] for t, m in meta.items() if m[1] and m[1][0] == "search"}
-    base = {w: t for t, (_, w, d) in search.items() if d == 2}
-    deep = [(t, w, d) for t, (_, w, d) in search.items() if d > 2]
-    if deep and base:
-        print("\n   paired effect of depth at equal worlds (deeper minus depth 2, score points; negative = deeper is worse).")
-        print("   Measured weak: the two depths diverge from the first decision they disagree on, so this pairing removes ~8 % of the SE.")
+    # The budget ladders are read *within* a continuation: mixing the two would compare different
+    # agents, not different budgets. Step 9.5d's "flat past 32 worlds" and "depth does not help"
+    # were both measured under the two-sided rule with the seat-0 network at both seats, so under
+    # the response rule they are open questions again rather than settled ones.
+    for cont, cname in (("m", "two-sided"), ("r", "response")):
+        base = {w: t for t, (_, w, d, c) in search.items() if d == 2 and c == cont}
+        deep = [(t, w, d) for t, (_, w, d, c) in search.items() if d > 2 and c == cont]
+        if deep and base:
+            print(f"\n   [{cname}] paired effect of depth at equal worlds (deeper minus depth 2, score points; negative = deeper is worse).")
+            print("   The two depths diverge at the first decision they disagree on, so 9.5d expected this pairing to be the")
+            print("   weak one (~8 % of the SE); measured at 3,000 deals (9.5e) it removes 15-19 %, more than the worlds pairing.")
+            print(f"      {'comparison':28s} {'seat 0':>18s} {'seat 1':>18s}")
+            for t, w, d in sorted(deep, key=lambda x: (x[1], x[2])):
+                if w in base:
+                    paired_row(f"w={w}: d={d} - d=2", t, base[w])
+            sys.stdout.flush()
+        if len(base) > 1:
+            least = min(base)
+            print(f"\n   [{cname}] paired effect of worlds at depth 2 (more worlds minus w={least}, score points; positive = more worlds is better).")
+            print(f"   The larger config's first {least} worlds are exactly the smaller one's, so the two agree wherever those")
+            print("   already decided the action. Measured at 3,000 deals (9.5e) this pairing removes ~14 % of the SE --")
+            print("   *less* than the depth pairing, which reverses what 9.5d expected of the two axes.")
+            print(f"      {'comparison':28s} {'seat 0':>18s} {'seat 1':>18s}")
+            for w in sorted(base):
+                if w != least:
+                    paired_row(f"d=2: w={w} - w={least}", base[w], base[least])
+            # Successive doublings: "does the *next* doubling still pay". The rows above cannot
+            # answer it -- they share a baseline, so the standard error of a difference between two
+            # of them needs their covariance and is not recoverable from what they print. Step 9.5e
+            # had to read "flat past 32" off unpaired per-config errors for exactly that reason.
+            ws = sorted(base)
+            if len(ws) > 2:
+                print(f"      {'-- each doubling against the previous one':28s}")
+                for a, b in zip(ws, ws[1:]):
+                    paired_row(f"d=2: w={b} - w={a}", base[b], base[a])
+            sys.stdout.flush()
+
+    # Step 9.5e's headline: the continuation rule, at an otherwise identical budget.
+    resp = {(w, d): t for t, (_, w, d, c) in search.items() if c == "r"}
+    mini = {(w, d): t for t, (_, w, d, c) in search.items() if c == "m"}
+    shared = sorted(set(resp) & set(mini))
+    if shared:
+        print("\n   paired effect of the continuation rule (response minus two-sided, score points; positive = responding is better).")
+        print("   Exact on the toys: solving each world against the opponent's real policy instead of assuming a clairvoyant")
+        print("   one is worth up to 8.8 points there, and most on free play, which full UNO is (09.5d section 1).")
+        print("   The two share a world-sampling key only when they share a name, which they do not (a response agent is a")
+        print("   different policy per column), so read this as unpaired-ish: the coupling here is the deal, not the worlds.")
         print(f"      {'comparison':28s} {'seat 0':>18s} {'seat 1':>18s}")
-        for t, w, d in sorted(deep, key=lambda x: (x[1], x[2])):
-            if w in base:
-                paired_row(f"w={w}: d={d} - d=2", t, base[w])
-        sys.stdout.flush()
-    if len(base) > 1:
-        least = min(base)
-        print(f"\n   paired effect of worlds at depth 2 (more worlds minus w={least}, score points; positive = more worlds is better).")
-        print("   Measured tighter than the depth pairing (18-20 % of the SE removed against 8 %): world counts share an")
-        print(f"   rng prefix, so the larger config's first {least} worlds are exactly the smaller one's, and the two agree")
-        print("   wherever those already decided the action.")
-        print(f"      {'comparison':28s} {'seat 0':>18s} {'seat 1':>18s}")
-        for w in sorted(base):
-            if w != least:
-                paired_row(f"d=2: w={w} - w={least}", base[w], base[least])
+        for w, d in shared:
+            paired_row(f"w={w} d={d}: resp - two-sided", resp[(w, d)], mini[(w, d)])
         sys.stdout.flush()
 
 
@@ -422,7 +476,8 @@ def main(argv: list[str] | None = None) -> None:
             int(args[0]) if args else 400,
             int(args[1]) if len(args) > 1 else 8,
             int(args[2]) if len(args) > 2 else 2,
-            int(args[3]) if len(args) > 3 else None,
+            int(args[3]) if len(args) > 3 and args[3] else None,
+            args[4] if len(args) > 4 else "m",
         )
     elif section == "d2":
         d2_section(

@@ -19,6 +19,19 @@ must not be *inconsistent with the hand*, or a later `observe` of that seat woul
 itself. They are not a reconstruction of what really happened, and no L1/L2 key of the opponent's
 seat should be taken from a determinized state.
 
+**The continuation rule (step 9.5e).** Solving each sampled world two-sided assumes the opponent
+is clairvoyant too, which is classic PIMC and what step 9.5d shipped. `uno.compiled.pimc` measured
+that choice exactly on the toys and it is the **worse** of the two rules by up to 8.8 score points,
+worst on free play -- which full UNO is. So `PimcSearch` takes an optional `opponent`: given one,
+each world is solved as a perfect-information best response to the policy it really follows
+(`response_value`), the sampled analogue of `best_response_perfect`. Every ladder matchup knows its
+column's policy, so this needs no training; it does make the agent opponent-aware, and on the toys
+that *costs* exploitability, so the row must be labelled with the opponent it was built against.
+
+**Leaves are per seat.** Step 9.5c fits one value network per seat and one agent object plays both
+seatings of a deal, so `leaf` may be a `(seat 0, seat 1)` pair resolved per observation
+(`leaf_for`); step 9.5d used the seat-0 network at both seats.
+
 **Why the sampling is keyed, not free.** AIVAT's row correction subtracts
 `sum_a sigma(a|h) alpha(h, a)` using the probabilities the agent reports. An agent that sampled
 worlds afresh and returned a point mass on the winner would be reporting a *deterministic* policy
@@ -41,7 +54,7 @@ from uno.eval.aivat import terminal_return
 from uno.eval.pimc import pile_ruleset, rollout
 from uno.eval.play import stable_hash
 from uno.game.engine import Phase, State, legal_actions, returns, step
-from uno.game.observe import Observation, discard_from_public
+from uno.game.observe import Level, Observation, discard_from_public, observe
 from uno.game.rules import Ruleset
 
 
@@ -100,6 +113,21 @@ def determinize_l1(rs: Ruleset, obs: Observation, rng: random.Random) -> State:
 # -- depth-limited perfect-information search ---------------------------------------------------
 
 Leaf = Callable[[State], float]  # seat-0 return estimate of a non-terminal state
+Leaves = Leaf | tuple[Leaf, Leaf]  # one leaf, or one per seat of the *observer* (step 9.5e)
+
+
+def leaf_for(leaf: Leaves, seat: int) -> Leaf:
+    """The leaf value function an agent sitting at `seat` should use.
+
+    Step 9.5c fits one value network per seat, and a single agent object plays both seatings of
+    a deal (`uno.experiments.aivat_uno.evaluate_matchup` builds `(row, col)` once and
+    `_sweep_chunk` also plays `pair[::-1]`), so the seat is not known at construction and the
+    choice has to be made per observation. Step 9.5d's `uno` and `sweep` sections handed the
+    agent `nets[0]` at *both* seats: both nets return seat-0 values, so it was not a sign error,
+    but at seat 1 the search evaluated its leaves with a network fitted on a different state
+    distribution, and every seat-1 number of that step is mildly pessimistic because of it.
+    """
+    return leaf[seat] if isinstance(leaf, tuple) else leaf
 
 
 def search_value(
@@ -139,9 +167,60 @@ def search_value(
     return best
 
 
-def search_q(s: State, seat: int, depth: int, leaf: Leaf, exhaustion: str = "hand") -> dict[int, float]:
+def response_value(
+    s: State,
+    seat: int,
+    depth: int,
+    leaf: Leaf,
+    opponent,
+    exhaustion: str = "hand",
+    parent: State | None = None,
+    action: int = -1,
+) -> float:
+    """The `"response"` continuation (step 9.5e): the world is solved as a perfect-information
+    best response to the opponent's *actual fixed strategy*, instead of two-sided minimax.
+
+    `search_value` assumes the opponent also sees everything and plays the minimising move. That
+    is classic PIMC, and `uno.compiled.pimc` measured it exactly on the toys as the **worse** of
+    the two rules by up to 8.8 score points, worst on free play -- which full UNO is. Here the
+    opponent's nodes take the expectation under the policy it really follows, which is the
+    sampled analogue of `uno.compiled.solvers.best_response_perfect` (max at the responder's
+    nodes, the opponent's own weights at its nodes). Legitimate wherever the column's policy is
+    known, which is every ladder matchup.
+
+    **The opponent must be memoryless**, or this is only an approximation of its real strategy.
+    The policy is evaluated on the opponent's L1 observation *inside the determinized world*,
+    whose `initial_hands` / `own_draws` for that seat are fabricated (see the module docstring),
+    so a policy reading its own history would be handed a history that never happened. The
+    baseline rulebots read only the current hand and board, so for them this is exact; a
+    memoryful column (a Nash strategy, an RL checkpoint with history features) needs the real
+    information state threaded through instead, which this does not do.
+
+    **No alpha-beta.** Pruning bounds do not propagate through an expectation node, so this
+    walks the whole depth-limited tree. At the depth 2 that step 9.5d found best that is cheap;
+    it is why the pruning path above is kept for the minimax continuation rather than unified.
+    """
+    if s.terminal:
+        u = returns(s)[0] if parent is None else terminal_return(parent, action, s, exhaustion)
+        return u if seat == 0 else -u
+    if depth <= 0:
+        v = leaf(s)
+        return v if seat == 0 else -v
+    legal = legal_actions(s)
+    if s.player == seat:
+        return max(response_value(step(s, a, check=False), seat, depth - 1, leaf, opponent, exhaustion, s, a) for a in legal)
+    probs = opponent.policy(observe(s, s.player, Level.L1), legal)
+    return sum(p * response_value(step(s, a, check=False), seat, depth - 1, leaf, opponent, exhaustion, s, a) for a, p in probs.items() if p > 0)
+
+
+def search_q(s: State, seat: int, depth: int, leaf: Leaf, exhaustion: str = "hand", opponent=None) -> dict[int, float]:
     """The searched value of every legal action at `s`, to `seat`. No pruning across the root:
-    every action's value is wanted, not just the best (step 9.5d part 4 reads them all)."""
+    every action's value is wanted, not just the best (step 9.5d part 4 reads them all).
+
+    With `opponent`, each world is solved as a best response to it (`response_value`) instead of
+    two-sided (step 9.5e)."""
+    if opponent is not None:
+        return {a: response_value(step(s, a, check=False), seat, depth - 1, leaf, opponent, exhaustion, s, a) for a in legal_actions(s)}
     return {a: search_value(step(s, a, check=False), seat, depth - 1, leaf, exhaustion, s, a) for a in legal_actions(s)}
 
 
@@ -157,18 +236,38 @@ class PimcSearch:
     Deterministic given the information state (see the module docstring), so the reported policy
     is honest and AIVAT stays unbiased."""
 
-    def __init__(self, rs: Ruleset, leaf: Leaf, worlds: int = 8, depth: int = 2, name: str = "pimc", seed: int = 0, exhaustion: str = "hand") -> None:
+    def __init__(
+        self,
+        rs: Ruleset,
+        leaf: Leaves,
+        worlds: int = 8,
+        depth: int = 2,
+        name: str = "pimc",
+        seed: int = 0,
+        exhaustion: str = "hand",
+        opponent=None,
+    ) -> None:
         self.rs, self.leaf, self.worlds, self.depth = rs, leaf, worlds, depth
-        self.name, self.seed, self.exhaustion = name, seed, exhaustion
+        self.name, self.seed, self.exhaustion, self.opponent = name, seed, exhaustion, opponent
+
+    @property
+    def continuation(self) -> str:
+        """`"response"` when each world is solved against the known opponent, `"minimax"` when
+        two-sided: the axis `uno.compiled.pimc` measures exactly on the toys."""
+        return "minimax" if self.opponent is None else "response"
 
     def _rng(self, obs: Observation) -> random.Random:
         return random.Random(stable_hash((self.seed, self.name, obs.info_state)))
+
+    def _q(self, obs: Observation, rng: random.Random) -> dict[int, float]:
+        world = determinize_l1(self.rs, obs, rng)
+        return search_q(world, obs.seat, self.depth, leaf_for(self.leaf, obs.seat), self.exhaustion, self.opponent)
 
     def _scores(self, obs: Observation, legal: tuple[int, ...]) -> dict[int, float]:
         rng = self._rng(obs)
         total = dict.fromkeys(legal, 0.0)
         for _ in range(self.worlds):
-            q = search_q(determinize_l1(self.rs, obs, rng), obs.seat, self.depth, self.leaf, self.exhaustion)
+            q = self._q(obs, rng)
             for a in legal:
                 total[a] += q[a]
         return {a: v / self.worlds for a, v in total.items()}
@@ -197,7 +296,7 @@ class PimcSearch:
         rng = self._rng(obs)
         halves: tuple[dict[int, float], dict[int, float]] = (dict.fromkeys(legal, 0.0), dict.fromkeys(legal, 0.0))
         for i in range(2 * k):
-            q = search_q(determinize_l1(self.rs, obs, rng), obs.seat, self.depth, self.leaf, self.exhaustion)
+            q = self._q(obs, rng)
             half = halves[i >= k]
             for a in legal:
                 half[a] += q[a] / k

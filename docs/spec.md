@@ -1328,6 +1328,36 @@ a determinized state.
 value function (step 9.5c's network). With two players a skip or reverse means the same player
 moves again, so the maximising side is read from `s.player`, never from the parity of the depth.
 
+**The continuation rule (step 9.5e).** `search_value` assumes the opponent is clairvoyant too,
+which is classic PIMC and the `"minimax"` continuation above. Given an `opponent`, `PimcSearch`
+instead solves each world with `response_value`: max at its own nodes, the **expectation under the
+policy the opponent really follows** at the opponent's nodes. That is the sampled analogue of
+`best_response_perfect`, i.e. the `"response"` continuation, which the exact toys measure as the
+better rule by up to 8.8 score points and most on free play -- which full UNO is. Every ladder
+matchup knows its column's policy, so it needs no training. Three consequences worth stating:
+
+- **The row is opponent-specific.** A response agent built against Random is a different policy
+  from one built against the Heuristic, so it takes a different name (section 13: a name
+  identifies a policy, and two agents sharing one share an action rng stream). On the toys this
+  belief-fitting also *costs* exploitability, so the row is labelled with its column.
+- **The opponent must be memoryless.** Its policy is evaluated on its L1 observation *inside the
+  determinized world*, whose `initial_hands` / `own_draws` for that seat are fabricated, so a
+  policy reading its own history would be handed a history that never happened. The baseline
+  rulebots read only the current hand and board, so for them this is exact; a memoryful column (a
+  Nash strategy, an RL checkpoint with history features) needs the real information state threaded
+  through, which `response_value` does not do.
+- **No alpha-beta.** Pruning bounds do not propagate through an expectation node, so the response
+  path walks the whole depth-limited tree; the pruned minimax path is kept beside it rather than
+  unified. At the depth 2 step 9.5d found best, that is cheap.
+
+**Leaves are per seat (step 9.5e).** Step 9.5c fits one value network per seat, and a single agent
+object plays both seatings of a deal (`evaluate_matchup` builds the pair once; `sweep` also plays
+it reversed), so the seat is unknown at construction and `leaf` may be a `(seat 0, seat 1)` pair
+resolved per observation (`leaf_for`). Step 9.5d's `uno` and `sweep` sections passed `nets[0]` at
+both seats: both nets return seat-0 values, so it was not a sign error, but at seat 1 the search
+evaluated its leaves with a network fitted on a different state distribution, which is why every
+seat-1 number of that step is mildly pessimistic.
+
 **Two agents.** `PimcSearch` solves each sampled world (PIMC proper: it assumes it will see
 everything from the next decision on -- the strategy fusion the exact toys measure).
 `PimcRollout` instead plays each world out with fixed policies, whose rollout players act on their

@@ -16,7 +16,7 @@ import pytest
 from tests.game.test_draw_outcomes import RESH
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.eval.aivat import terminal_return
-from uno.eval.search import PimcRollout, PimcSearch, determinize_l1, search_q, search_value, unseen_cards
+from uno.eval.search import PimcRollout, PimcSearch, determinize_l1, leaf_for, response_value, search_q, search_value, unseen_cards
 from uno.game import rules
 from uno.game.chance import pile_split
 from uno.game.engine import legal_actions, new_game, returns, step
@@ -161,6 +161,185 @@ def test_the_sampled_agent_reproduces_the_exact_pimc_on_a_toy():
         xs = np.array(scores[seat])
         z = (xs.mean() - exact.score) / (xs.std(ddof=1) / math.sqrt(len(xs)))
         assert abs(z) <= 3.5, f"seat {seat}: sampled {xs.mean():.4f} vs exact {exact.score:.4f}, z {z:+.2f}"
+
+
+def _plain_response(s, seat, depth, opp, parent=None, action=-1):
+    """Reference expectimax: max at the responder's nodes, the opponent's own probabilities at
+    its nodes. Independent of `response_value` only in its recursion, which is what it pins."""
+    if s.terminal:
+        u = returns(s)[0] if parent is None else terminal_return(parent, action, s, "hand")
+        return u if seat == 0 else -u
+    if depth <= 0:
+        return _leaf(s) if seat == 0 else -_leaf(s)
+    legal = legal_actions(s)
+    vals = {a: _plain_response(step(s, a, check=False), seat, depth - 1, opp, s, a) for a in legal}
+    if s.player == seat:
+        return max(vals.values())
+    probs = opp.policy(observe(s, s.player, Level.L1), legal)
+    return sum(p * vals[a] for a, p in probs.items())
+
+
+@pytest.mark.parametrize("name,depth", (("TOY", 5), ("TOY_FULL", 4), ("FULL_UNO", 3)))
+def test_response_continuation_equals_a_plain_expectimax(name, depth):
+    rs = getattr(rules, name)
+    opp = Heuristic(rs)
+    n = 0
+    for s, _ in _decisions(rs, 4 if name == "FULL_UNO" else 10, cap=8):
+        for seat in (0, 1):
+            assert response_value(s, seat, depth, _leaf, opp) == pytest.approx(_plain_response(s, seat, depth, opp), abs=1e-12)
+            n += 1
+    assert n > 20
+
+
+@pytest.mark.parametrize("name,depth", (("TOY", 5), ("TOY_FULL", 4), ("FULL_UNO", 3)))
+def test_responding_to_the_real_opponent_is_never_worse_than_assuming_a_clairvoyant_one(name, depth):
+    """The whole point of the `response` continuation, as an inequality that cannot come out of
+    the same code twice: minimax takes the *minimum* over the opponent's children, and any
+    expectation over those same children is at least that. A seat or sign error in either path
+    breaks it immediately.
+
+    It bounds the *searched* value, not the achieved score -- what the agent then wins is an
+    empirical question (step 9.5e), and on the toys `uno.compiled.pimc` measures the gap.
+    """
+    rs = getattr(rules, name)
+    opp = Heuristic(rs)
+    n = 0
+    for s, _ in _decisions(rs, 4 if name == "FULL_UNO" else 10, cap=8):
+        for seat in (0, 1):
+            assert response_value(s, seat, depth, _leaf, opp) >= search_value(s, seat, depth, _leaf) - 1e-12
+            n += 1
+    assert n > 20
+
+
+def test_the_leaf_is_chosen_by_the_observers_seat():
+    """Step 9.5d handed the agent the seat-0 network at both seats, so at seat 1 it searched with
+    a value function fitted on a different state distribution. The seat-1 leaf here raises, which
+    is what proves the dispatch actually happens."""
+    rs = rules.TOY
+
+    def boom(s):
+        raise AssertionError("the seat-0 leaf was used at seat 1")
+
+    assert leaf_for((_leaf, boom), 0) is _leaf and leaf_for((_leaf, boom), 1) is boom
+    assert leaf_for(_leaf, 0) is _leaf and leaf_for(_leaf, 1) is _leaf, "a single leaf serves both seats"
+    seen = 0
+    for s, obs in _decisions(rs, 20, cap=8):
+        legal = legal_actions(s)
+        if len(legal) < 2:
+            continue
+        # the leaf that must never fire is the *other* seat's, so each observation exercises one
+        leaves = (_leaf, boom) if obs.seat == 0 else (boom, _leaf)
+        PimcSearch(rs, leaves, worlds=2, depth=2, name="pimc").policy(obs, legal)
+        seen += 1
+    assert seen > 20
+
+
+def test_the_continuation_rule_changes_what_the_agent_plays():
+    """Non-vacuity guard for the closure test below, and the sharpest check of the axis there is.
+
+    On `TOY` against Random the two continuations are only 0.2-0.5 score points apart (exact,
+    `uno.compiled.pimc`), while 200 sampled games carry a standard error of ~3.2 points, so a
+    value comparison there *cannot* tell them apart: the closure test below would pass unchanged
+    with the wrong continuation wired in. This asserts the axis is live by the one thing that
+    carries no noise at all -- the actions themselves.
+
+    Both agents are given the same `name` and `seed` on purpose. That is what makes them draw the
+    identical worlds (`PimcSearch._rng` keys on the name), so any disagreement is the continuation
+    rule and nothing else. Two agents sharing a name must never be *played* against each other
+    (`uno.eval.play` raises); here they are only asked for a policy.
+    """
+    rs = rules.TOY_FULL  # free play, where the toys measured the continuation mattering most
+    rnd = PlayFirstRandom(rs)
+    mini = PimcSearch(rs, _leaf, worlds=4, depth=3, name="pimc", seed=0)
+    resp = PimcSearch(rs, _leaf, worlds=4, depth=3, name="pimc", seed=0, opponent=rnd)
+    assert (mini.continuation, resp.continuation) == ("minimax", "response")
+    differ = n = 0
+    for s, obs in _decisions(rs, 30, cap=10):
+        legal = legal_actions(s)
+        if len(legal) < 2:
+            continue
+        differ += mini.policy(obs, legal) != resp.policy(obs, legal)
+        n += 1
+    assert n > 40
+    assert differ / n > 0.02, f"the continuation rule changed nothing in {n} decisions: is `opponent` reaching the search?"
+
+
+def test_the_sampled_response_agent_reproduces_the_exact_pimc_on_a_toy():
+    """The 9.5e loop, closed the way 9.5d closed the minimax one: solving each world against the
+    opponent's real policy is `uno.compiled.pimc`'s `continuation="response"`, and splitting the
+    unseen cards uniformly is its `weighting="prior"`, so the sampled agent must land on that
+    exact number. Depth 12 always reaches a terminal on `TOY`, so the leaf is never consulted and
+    the worlds are solved exactly -- the leaf raises, which proves it."""
+    from uno import store
+    from uno.compiled.pimc import pimc_n
+    from uno.compiled.strategies import transfer
+    from uno.compiled.tree import compile_tree
+    from uno.eval.play import EVAL_SEEDS, play_from
+    from uno.game.engine import new_game
+
+    def no_leaf(s):
+        raise AssertionError("the search hit its depth limit: the world was not solved exactly")
+
+    rs = rules.TOY
+    world = compile_tree(rs, (Level.L1, Level.L3), True, cache=store.CACHE)
+    lazy = compile_tree(rs, (Level.L1,), True, cache=store.CACHE)
+    rnd = PlayFirstRandom(rs)
+    opp = (Level.L1, transfer(lazy, world, Level.L1, store.load_or_tabulate(lazy, Level.L1, rnd)))
+    n = 4
+    agent = PimcSearch(rs, no_leaf, worlds=n, depth=12, name="pimc", opponent=rnd)
+    assert agent.continuation == "response"
+    scores = ([], [])
+    for seed in EVAL_SEEDS[:200]:
+        s0 = new_game(rs, seed)
+        scores[0].append((returns(play_from(s0, seed, (agent, rnd)).final)[0] + 1) / 2)
+        scores[1].append((returns(play_from(s0, seed, (rnd, agent)).final)[1] + 1) / 2)
+    for seat in (0, 1):
+        exact = pimc_n(world, opp, seat, n, realizations=32, weighting="prior", continuation="response", seed=1)
+        xs = np.array(scores[seat])
+        z = (xs.mean() - exact.score) / (xs.std(ddof=1) / math.sqrt(len(xs)))
+        assert abs(z) <= 3.5, f"seat {seat}: sampled {xs.mean():.4f} vs exact {exact.score:.4f}, z {z:+.2f}"
+
+
+def test_the_response_agent_matches_the_exact_value_on_the_toy_that_separates_the_two_rules():
+    """The closure test with power. `TOY` cannot separate the continuations (0.2-0.5 points apart,
+    against ~3.2 points of sampling noise at 200 games), but `TOY_FULL` can: free play is where
+    assuming a clairvoyant opponent is expensive, and exactly there the two rules sit 7-9 points
+    apart (measured, n = 4 prior: 0.7158 two-sided against 0.7870 responding, vs Random at seat 0).
+
+    So this asserts both halves: the sampled agent agrees with the exact `response` number, *and*
+    it is nearer that than the `minimax` one -- which is what would fail if the continuation were
+    mis-wired, and what the `TOY` test cannot see.
+    """
+    from uno import store
+    from uno.compiled.pimc import pimc_n
+    from uno.compiled.strategies import transfer
+    from uno.compiled.tree import compile_tree
+    from uno.eval.play import EVAL_SEEDS, play_from
+    from uno.game.engine import new_game
+
+    def no_leaf(s):
+        raise AssertionError("the search hit its depth limit: the world was not solved exactly")
+
+    rs = rules.TOY_FULL
+    world = compile_tree(rs, (Level.L1, Level.L3), True, cache=store.CACHE)
+    lazy = compile_tree(rs, (Level.L1,), True, cache=store.CACHE)
+    rnd = PlayFirstRandom(rs)
+    opp = (Level.L1, transfer(lazy, world, Level.L1, store.load_or_tabulate(lazy, Level.L1, rnd)))
+    n = 4
+    agent = PimcSearch(rs, no_leaf, worlds=n, depth=40, name="pimc", opponent=rnd)  # 40 > any TOY_FULL game
+    scores = ([], [])
+    for seed in EVAL_SEEDS[:200]:
+        s0 = new_game(rs, seed)
+        scores[0].append((returns(play_from(s0, seed, (agent, rnd)).final)[0] + 1) / 2)
+        scores[1].append((returns(play_from(s0, seed, (rnd, agent)).final)[1] + 1) / 2)
+    for seat in (0, 1):
+        exact = {c: pimc_n(world, opp, seat, n, realizations=16, weighting="prior", continuation=c, seed=1).score for c in ("minimax", "response")}
+        xs = np.array(scores[seat])
+        z = (xs.mean() - exact["response"]) / (xs.std(ddof=1) / math.sqrt(len(xs)))
+        assert abs(z) <= 3.5, f"seat {seat}: sampled {xs.mean():.4f} vs exact response {exact['response']:.4f}, z {z:+.2f}"
+        if abs(exact["response"] - exact["minimax"]) > 0.03:  # only where the two rules really differ
+            near = abs(xs.mean() - exact["response"]) < abs(xs.mean() - exact["minimax"])
+            assert near, f"seat {seat}: sampled {xs.mean():.4f} is nearer the two-sided value {exact['minimax']:.4f} than {exact['response']:.4f}"
 
 
 def test_scores_split_is_the_same_worlds_cut_in_two():
