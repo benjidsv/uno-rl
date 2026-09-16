@@ -1223,3 +1223,141 @@ Checks (`tests/eval/test_pimc.py`, `tests/eval/test_value_net.py`):
   save / load; the played path (`CriticValues`) equals the tree path (`critic_values` + `TreeValues`).
 
 Experiment: `uv run uno pimc_value check | floor | pilot | aivat | mc` (module docstring).
+
+## 25. The PIMC agent (`uno/compiled/pimc.py`)
+
+Step 9.5d. PIMC (perfect-information Monte Carlo) samples worlds consistent with what the
+player knows, solves each with perfect information, and plays the action that scores best on
+average. Section 24's rollouts use determinization to *value* a state under a fixed profile;
+here determinization drives the *choice*, which is where PIMC's own bias (strategy fusion and
+non-locality) lives.
+
+**PIMC-infinity, exactly.** On the toys the `n -> infinity` limit is computable: average over
+the whole belief instead of a sample of it. At an L1 set `I` the choice is
+`argmax_a sum_{h in I} b(h) * V_L3(h, a)`, and on a **world tree** both factors are already
+there. The roots are the worlds and everything below is the bare engine, so every non-root arc
+has exactly one edge of probability 1 and `reach(...)[:, 2]` at a node *is* that world's prior.
+Hence:
+
+- `V_L3(h, a)` is a **gather** off a node-value vector (`world_values`), not a pass of its own;
+- neither `b` nor `V_L3` depends on PIMC's own policy (own reach is constant within an L1 set,
+  which has perfect recall), so the policy is fixed by **one global grouped argmax** -- there is
+  no per-level backward loop, unlike `best_response`, whose levels exist precisely because a
+  set's value there depends on what the responder does deeper down.
+
+Two axes, four variants:
+
+- **belief**: `"posterior"` weights `b(h) ~ prior(h) * opponent_reach(h)`, the true Bayesian
+  belief given the opponent's known strategy (PIMC *with* inference); `"prior"` weights
+  `b(h) ~ prior(h)`, i.e. no inference -- what a real PIMC does when it deals the unseen cards
+  uniformly, and the only one available where the opponent's strategy is unknown;
+- **continuation**: `"minimax"` solves each world two-sided (classic PIMC: the opponent is
+  assumed clairvoyant too); `"response"` solves it as a perfect-information best response to the
+  opponent's actual fixed strategy (`best_response_perfect`, whose `sigma` replays through
+  `tree.values` to give exactly these per-arc values).
+
+`"prior"` + `"minimax"` reads nothing about the opponent at all, so that policy is literally
+opponent-independent (and its exploitability is identical whichever opponent it was built
+against: a check, not a coincidence).
+
+**Orbits.** The choice is an *orbit* of actions played uniformly, as in `best_response`: a pure
+choice at a set with a non-trivial stabilizer is not a symmetric strategy (section 18).
+
+**Unreached sets.** Under `"posterior"` the sets the opponent never allows carry no mass and get
+a fill-in, not a choice, exactly as a best response does (section 16); under `"prior"` every set
+holds at least one world, so the mass is always positive and no fill-in ever arises.
+
+**Tie-breaking is value-relevant here, unlike a best response.** For a best response a tie
+between orbits means equal continuation value, so any tie-break scores the same; a PIMC tie is a
+tie in the belief-weighted *perfect-information* score, and two actions can look identical to
+that optimistic model while being worth different amounts in the real game. "PIMC" is therefore
+a family indexed by its tie-break: the quotient's orbit-uniform choice and a full tree's pure
+per-set choice are different policies (0.01-0.44 score points apart on `TOY`). The orbit-uniform
+one is canonical because it is the symmetric one.
+
+`value` is the policy's **actual** return from an ordinary `evaluate` pass, never the argmax's
+own optimistic sum. `believed` is the root of the same perfect-information solve: BR L3's value
+under `"response"`, the two-sided value under `"minimax"`. `fusion_gap = believed - value` is an
+upper reference only under `"response"`; under `"minimax"` it routinely goes negative, because
+the two-sided value assumes a clairvoyant *opponent* as well and a weak fixed opponent gives the
+policy more than that.
+
+**PIMC-n** (`pimc_n`). With `n` sampled worlds instead of the whole belief, and perfect recall
+giving at most one visit to an information set per game, what the player follows is the
+*behavioural* policy `pi_n(a | I) = P(the argmax over n worlds drawn from the belief is a)`.
+`pi_n` is estimated by resampling each set, then scored by one exact `evaluate`, so the number
+carries no game-playing noise -- only `pi_n`'s own Monte Carlo error.
+
+It converges to PIMC-infinity, and on the toys almost always from below (n = 1 costs 0.9-7.4
+score points), but **not necessarily**: PIMC-infinity maximises the belief-weighted
+*perfect-information* score, which is not the true value, so the deterministic limit need not be
+the best member of its own family and a randomised `pi_n` can be worth slightly more (measured:
+`TOY` vs the Heuristic at seat 1, -0.08 at n = 32 and -0.11 at n = 64). The pre-declared check is
+therefore that the gap *shrinks* with n, never that it stays positive.
+
+**A world's arcs are not listed in its information set's order.** The members of an L1 set are
+different worlds, each canonicalised by its own group element, so arc `j` of a member's node is
+not set-action `j` (3.9-23.8 % of arcs on the toys, worse at seat 1). Anything averaging
+per-action values across a set's members must map arcs through `k.arc_ia` -- the trap section 21
+documents for `tree.arc_action`, one level over. Taking the positional shortcut cost 21 score
+points at `TOY` seat 1 and, being systematic, grew worse with more sampled worlds.
+
+Checks (`tests/compiled/test_pimc.py`, `uv run uno pimc exact | pimcn`):
+
+- `value <= best_response(tree, L1, opponent, seat).value`: PIMC-infinity is an L1 policy and
+  BR L1 is the best of those (section 18's lesson one level over);
+- `believed` equals BR L3 / the two-sided value, per continuation;
+- `"prior"` leaves no set without mass, `"posterior"` does;
+- every policy is orbit-uniform, and on a small ruleset the quotient's value equals that same
+  policy lifted onto the full tree with `CompiledAgent` -- the check that separates the
+  tie-break property above from a bug.
+
+### The PIMC agent where no tree exists (`uno/eval/search.py`)
+
+**Determinization at L1.** A PIMC *player* cannot see the opponent's hand either, so
+`determinize_l1(rs, obs, rng)` samples it as well: unseen = deck - own hand - discard - the setup's
+skipped cards while they are still at the bottom of the pile (after a reshuffle nothing of the pile
+is known, as in section 24), split uniformly into `opp_hand_size` cards and the rest of the pile,
+with `draws="pile"` and a fresh seed. It is driven from an **observation**, not a state, because
+that is all an agent receives. The opponent's `initial_hands` / `own_draws` are fabricated to match
+the hand dealt: nothing downstream reads them, but no key of the opponent's seat may be taken from
+a determinized state.
+
+**Depth-limited search.** A determinized world has no hidden information and no chance left, so
+`search_value` is ordinary alpha-beta cut off at `depth` decisions and evaluated there by a leaf
+value function (step 9.5c's network). With two players a skip or reverse means the same player
+moves again, so the maximising side is read from `s.player`, never from the parity of the depth.
+
+**Two agents.** `PimcSearch` solves each sampled world (PIMC proper: it assumes it will see
+everything from the next decision on -- the strategy fusion the exact toys measure).
+`PimcRollout` instead plays each world out with fixed policies, whose rollout players act on their
+own L1 observations, so it carries **no fusion**: it is a one-step policy improvement, a different
+object, and the toys' bias numbers do not describe it.
+
+**The sampling must be keyed, or AIVAT breaks.** AIVAT subtracts `sum_a sigma(a|h) alpha(h, a)`
+using the probabilities the agent reports. An agent that sampled worlds afresh and returned a point
+mass would report a deterministic policy while following a stochastic one, and the row correction
+would stop being zero-mean. Keying the sampling on the information state makes the policy genuinely
+deterministic, so `{a: 1.0}` is the truth. A consequence worth knowing: for such an agent the row
+correction is *identically zero*, so AIVAT's gain comes only from chance and the opponent.
+
+**Selection and valuation must not share a sample.** Reading a reference value off the same worlds
+used to pick the action is the winner's curse: `max_a Qhat` overshoots `max_a Q` by the expected
+maximum of the noise, at every decision, and a sum over a game's decisions accumulates it into tens
+of score points. `PimcSearch.scores_split` cuts the agent's own worlds into disjoint halves, one to
+choose with and one to value with. The same trap has a second face: a *control* row that is itself
+the search must draw its worlds from a different seed than the estimator, or its action is picked
+using the half it is then valued on and the total is driven strongly negative. Measured, both
+directions cost ~30 score points per game before being controlled.
+
+This is also why a small world count is not merely imprecise but harmful: choosing the argmax of a
+few noisy per-action estimates is biased towards whichever action's noise came out high, which is
+how a rollout agent at 8 worlds scores *below* `PlayFirstRandom` (`uv run uno pimc sweep`).
+
+**D2 with a search Q.** Section 21's exact decomposition uses the performance-difference lemma, so
+its per-decision terms sum to the value gap. A search Q is not a fixed policy's value function and
+carries Monte Carlo noise, so nothing telescopes: `uv run uno pimc d2` reports where a row's choices
+differ most from the search's preference, by `node_kind`, and its totals are **not** a value
+decomposition. Terms may be negative, so the kinds need not partition a positive whole.
+
+Experiment: `uv run uno pimc exact | pimcn | uno | d2 | sweep` (module docstring).

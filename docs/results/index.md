@@ -157,3 +157,49 @@ seat 0 / seat 1: `TOY` 0.42 / 0.47, `TOY2` 0.38 / 0.40, `TOY2_SKIP` 0.46 / 0.40,
 `MID_25` 0.17 / 0.16, `FULL_UNO` **0.086 / 0.090**; against heuristic_col it is about twice as high
 (`FULL_UNO` 0.17). The toy values match the exact ratios. So on full UNO an exact L2 value function
 would need ~350 deals where raw needs ~3,900, and the fitted network reaches ~1,800.
+
+## PIMC as an agent ([step 9.5d](09.5d-results.md))
+
+**Exact PIMC-infinity on the toy world trees** (`uv run uno pimc exact`), gap to BR L1 in score
+points, over 64 solves with 0 failed checks. The continuation rule matters far more than the belief:
+solving each world as a best response to the fixed opponent (`posterior/response`) stays within
+0.04-0.70 points of BR L1 everywhere, while classic two-sided PIMC (`minimax`) loses 0.15-3.21 on
+the forced toys and **8.4-8.8 on `TOY_FULL`**, where the voluntary draw makes assuming a clairvoyant
+opponent expensive. Modelling the opponent's reach is worth 0.0-0.6 points against Random but up to
+2.6 against the Heuristic, and it *costs* exploitability (2.91 / 4.03 against 0.81 / 0.34 on `TOY`).
+
+**PIMC-n** (`pimcn`): sampling n worlds instead of the whole belief costs 2-7 points at n = 1 and is
+essentially paid off by n = 8-16 (gap 0.02-0.45 at n = 64). This is a statement about *toy* belief
+sizes -- 2-23 consistent worlds at the decisions actually faced -- and does not transfer.
+
+**Full UNO** (`sweep`, `uno`), raw score against Random, 8 cores:
+
+| row | seat 0 | seat 1 |
+|---|---|---|
+| PIMC search, 32 worlds, depth 2 | **0.7033** | 0.5633 |
+| PIMC rollout, 32 worlds | 0.5400 | 0.5000 |
+| Heuristic | 0.5767 | 0.6433 |
+
+More worlds help a great deal at first (0.415 -> 0.595 -> 0.695 at seat 0 for 2 -> 8 -> 32 worlds)
+and then stop: past 32 the ladder is flat, with w = 128 only +3.0 / +6.0 points over w = 32 for four
+times the cost, neither significant. Search beats rollouts at equal worlds, and a *small* world
+count is actively harmful -- at 2 worlds, or as a rollout player at 8, PIMC scores below
+`PlayFirstRandom`, because the argmax of a few noisy per-action estimates is biased towards whichever
+action's noise came out high. Extra *depth* does not help either: paired at w = 32, depth 4 comes out
+7.5 / 6.0 points below depth 2 (z -1.7 / -1.3, so the harm is not proven at 3 sigma) for 8.3x the
+cost, and the point estimates fall monotonically with depth, which disfavours an odd-even leaf
+artefact. So the usable setting is around **32 worlds at depth 2**: below it the agent is
+noise-driven, above it neither more worlds nor more depth buys anything measurable, and where the two
+compete at equal compute worlds win (w = 128 d = 2 beats w = 32 d = 3 at both seats).
+
+**AIVAT on a search row** (`uno`, 300 EVAL deals, V = 9.5c's network, off-profile): variance ratio
+0.54-0.62 against the Heuristic row's 0.41-0.52. For a deterministic search agent the row correction
+is identically zero, so the gain comes from chance and the opponent only. This is the regime AIVAT
+pays in: per game on one core a w = 32 search costs ~722 ms against the Heuristic's ~1.3 ms, so the
+corrections are 4-11 % of the cost rather than several times it.
+
+**D2 with a search Q** (`d2`, 150 EVAL deals): where the Heuristic's choices differ most from a
+w = 32 search -- **action-card timing 68-73 % and wild handling 25-29 %**, i.e. ~97 % between them,
+nearly seat-symmetric. The control row (the search itself) sits at -3.3 / -2.5 against the
+Heuristic's +21, which is what licenses reading the split. Not a value decomposition: the shares are
+the finding, not the totals.

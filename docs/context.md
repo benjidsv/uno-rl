@@ -3,8 +3,8 @@
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 9.5c, 2026-09-16** (on top of
-commit `092613b`, uncommitted); next step is **9.5d, the PIMC agent**.
+with no access to the repo. State as of **step 9.5d, 2026-09-16** (on top of
+commit `9cef561`, uncommitted); next step is **10, formalising the toy results for RL**.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -805,6 +805,71 @@ deal correction 0.38 / 0.39 (1,483 deals). On the toys the network is nearly the
 
 Results: `docs/results/09.5c-results.md`.
 
+### 5.18 Step 9.5d: PIMC as an agent, exact on the toys and sampled on full UNO
+
+**Problem:** 9.5c used PIMC rollouts as a value function's *teacher*. Whether PIMC is a good
+*player* -- and what its known biases (strategy fusion, non-locality) actually cost -- was untested.
+The toys can answer it exactly, which is what they are for.
+
+**Techniques** (`docs/spec.md` section 25):
+
+- **Exact PIMC-infinity** (`uno/compiled/pimc.py`) on the toy **world trees**. Every non-root arc of
+  a world tree has one edge of probability 1 and `reach(...)[:, 2]` is the world's prior, so the
+  perfect-information value of an action is a *gather*, and neither it nor the belief depends on
+  PIMC's own policy: the whole policy is **one global orbit-aware argmax**, with none of
+  `best_response`'s per-level backward loop. Two axes: belief weighted by the opponent's reach
+  (`posterior`) or the prior alone (`prior`, i.e. no inference), and each world solved two-sided
+  (`minimax`, classic PIMC) or as a perfect-information best response to the fixed opponent
+  (`response`).
+- **PIMC-n** as the behavioural policy `pi_n(a | I) = P(argmax over n sampled worlds)`, estimated per
+  set and then scored by one exact `evaluate`, so the numbers carry no game-playing noise.
+- **The sampled agent** (`uno/eval/search.py`): `determinize_l1` samples the opponent's hand *and*
+  the pile from an observation (a PIMC player is an L1 player); alpha-beta with 9.5c's network at the
+  leaves; `PimcSearch` (fusion) and `PimcRollout` (no fusion, a one-step policy improvement). The
+  world sampling is keyed on the information state, which makes the policy genuinely deterministic
+  -- required, or AIVAT's row correction stops being zero-mean.
+- **D2 with a search Q** where no tree exists, with selection and valuation on disjoint halves of the
+  worlds and a control row that must score ~0.
+
+**What went wrong: three bugs, each caught by a check written before the number was believed.**
+Assuming arc `j` of a world is set-action `j` cost 21 score points on `TOY` at seat 1 and got *worse*
+with more sampled worlds (the `uno.compiled.lookup` trap one level over: a set's members are
+different worlds, each with its own canonicalising element). Selecting and valuing a reference on the
+same worlds -- the winner's curse -- inflated a D2 total to 34-40 points per game; fixing that by
+splitting the worlds then drove the *control* to -32, because a control row that is itself the search
+must also draw its worlds from a different seed than the estimator.
+
+**What it bought:** with the `response` continuation PIMC-infinity is within **0.04-0.70 points of
+BR L1** on every toy, seat and opponent, so PIMC's structural bias is small there; classic `minimax`
+PIMC loses up to **8.8 points** on free play, where assuming a clairvoyant opponent is expensive. On
+full UNO at 32 worlds the search row beats the Heuristic at seat 0 (0.703 against 0.577) and loses at
+seat 1 (0.563 against 0.643), and the world ladder had **not** plateaued. AIVAT works on it
+(variance ratio 0.54-0.62) with the row correction identically zero, which is what a deterministic
+agent implies. D2 puts ~97 % of the Heuristic's disagreement with the search in **action-card timing
+and wild handling**, the same two kinds the exact toys flagged in step 9.5a. Extra search *depth*
+does **not** help: paired at w = 32 on the same deals, depth 4 is 7.5 / 6.0 points below depth 2 for
+8.3x the cost, and the scores fall monotonically with depth, which disfavours an odd-even leaf
+artefact. The harm itself is not proven (z -1.7 / -1.3), so the conclusion is that depth is dominated
+on cost-effectiveness, not that it is harmful. **Worlds stop helping too**: the ladder is flat past
+32 (w = 128 is +3.0 / +6.0 over w = 32 for four times the cost, neither significant), so the whole
+gain lives in the first few doublings, and at equal compute worlds still beat depth (w = 128 d = 2
+scores 0.725 / 0.620 against w = 32 d = 3's 0.660 / 0.530).
+
+**What is left on the table** (none of it tested): the full-UNO search solves each world by
+*minimax*, i.e. assuming the opponent is clairvoyant too -- the continuation the toys measured as the
+**worse** one by up to 8.8 points, and worst on free play, which full UNO is; in every ladder matchup
+the opponent's policy is known, so best-responding to it instead needs no training. The leaf value
+function is 9.5c's network, off-profile for a search row at outcome R^2 ~0.15, which is the likeliest
+reason more worlds stopped helping: extra samples of a position that is evaluated badly buy nothing.
+And the agent deals unseen cards uniformly, doing no inference, worth up to 2.6 points on the toys.
+The 11-point seat-1 deficit against the Heuristic (0.560 against 0.670) in a game with no measurable
+seat effect is partly a known wiring defect: the sweep and the AIVAT row hand the agent the *seat-0*
+value network at both seats (`d2` uses the right one), so at seat 1 it searches with a value function
+fitted on a different state distribution. One line to fix, and every seat-1 number in step 9.5d is
+mildly pessimistic until it is.
+
+Results: `docs/results/09.5d-results.md`.
+
 ## 6. Results: what we know
 
 All exact unless marked sampled. Scores of the first-named player, seat 0 /
@@ -1062,6 +1127,12 @@ Kept because they show where this kind of analysis goes wrong.
 | (9.5b) "a better full-UNO V has up to twice the gain to collect" | the floor is 0.086-0.090, not ~0.4, so up to 11x; the fitted network takes 2.2x of it (step 9.5c) |
 | (9.5c plan) teacher targets at n = 8 rollouts per state | at a fixed budget, n = 2 on four times as many games fits better (step 9.5c) |
 | (step 9.5a plan) "one `best_response` pass with `own` fixed gives the same value on the quotient as on the full tree" (K0 / K1 / K2) | only true for `identity_key` (no merging ambiguity); K0/K1/K2 group by whichever canonical L1 representative `compile_tree` picked for each set (history included), not one re-minimised for the coarse key's own fields, so the two trees' partitions can differ and need not agree numerically (step 9.5a) |
+| (9.5 brainstorm) the toys' PIMC-n curve anchors the full-UNO world budget | it does not: a toy belief holds 2-23 consistent worlds at the decisions actually faced and full UNO's holds astronomically more, so "n = 8 recovers nearly all of PIMC-infinity" is a statement about toy belief sizes (step 9.5d) |
+| (9.5d) PIMC-n "converges to PIMC-infinity from below" | not always: it overshoots on `TOY` vs the Heuristic at seat 1, because PIMC-infinity maximises the belief-weighted *perfect-information* score and not the true value, so the deterministic limit need not be the best member of its own family (step 9.5d) |
+| (9.5d, first draft) "worlds help; depth hurts" | the first half holds at many sigma (0.415 -> 0.595 -> 0.695 for 2 -> 8 -> 32 worlds); the second was read off differences of about **one standard error** at 200 unpaired deals. Retested paired: depth 4 is 7.5 / 6.0 points below depth 2 at w = 32 for 8.3x the cost, monotone in depth, but only z -1.7 / -1.3 -- so depth is *dominated*, not *proven harmful* (step 9.5d section 3a) |
+| (9.5d) "sharing the world-sampling key makes these comparisons tightly paired" | it removes 8 % of the standard error when the configs differ in *depth* and 18-20 % when they differ in *worlds* (where the larger config's first `n` worlds are exactly the smaller one's), not most of it either way: the coupling lasts only until the two agents' games diverge, which on a ~50-decision game is soon, unlike step 9's near-identical policy variants on a shared stream (77-85 %) (step 9.5d) |
+| (9.5c) AIVAT's corrections are cheap next to a search agent | they are 4-11 % of a search game rather than negligible, and for a *deterministic* search agent the row correction is identically zero, so the gain comes from chance and the opponent only (step 9.5d) |
+| (9.5b brainstorm) "PIMC on full UNO is a strong row" | only with enough worlds: at 2 worlds, and as a rollout player at 8, it scores *below* `PlayFirstRandom`, because the argmax of a few noisy per-action estimates is biased towards whichever action's noise came out high (step 9.5d) |
 
 ## 8. Dead ends and things deliberately not done
 
@@ -1104,8 +1175,8 @@ Kept because they show where this kind of analysis goes wrong.
 | 9.5a | exact: memory keys (K0/K1/K2), edge-by-decision decomposition, fixed-opponent metric, deal model at 100k seeds, divergence statistic, node lookup, sampled D2 cross-check; brainstorm and section D verdicts in `docs/results/09.5-brainstorm.md` | done |
 | 9.5b | AIVAT: exact validation on the toys (exact moments, scorings, tickets, imperfect-V curve, deal term at 5M seeds), chance model with reshuffle, L2-state logistic critic, `MID_12` / `MID_25`, full UNO, transfer curve (`docs/results/09.5b-results.md`) | done |
 | 9.5c | PIMC values as a teacher: determinized rollouts against the exact toys, the deal floor, a symmetric value network as AIVAT's V (full UNO 0.71/0.76 → 0.46/0.47), the Monte Carlo deal mean, the cost of rollouts as V (`docs/results/09.5c-results.md`) | done |
-| **9.5d** | **PIMC agent: exact PIMC-∞ on the toy world trees vs BR L1 / L2 (with and without opponent-reach weighting), PIMC-n, the full-UNO PIMC row evaluated with 9.5c's network; full-UNO D2 with a search Q (MCTS deferred)** | **next** |
-| 10 | formalise the toy results: figures and tables that RL relies on | |
+| 9.5d | PIMC agent: exact PIMC-∞ on the toy world trees vs BR L1 / L2 (with and without opponent-reach weighting), PIMC-n, the full-UNO PIMC **search** row evaluated with 9.5c's network (the rollout player is a weaker comparator), full-UNO D2 with a search Q, and the worlds-versus-depth budget study (MCTS deferred) (`docs/results/09.5d-results.md`) | done |
+| **10** | **formalise the toy results: figures and tables that RL relies on** | **next** |
 | 11 | RL | |
 
 Framing (step 9 review): the toys exist to validate the sampled methods of full
@@ -1191,7 +1262,10 @@ Planned design and checks (from the plan and step 8.9):
   and since step 9.5b `aivat` (toys, exact validation) and `aivat_uno` (the
   intermediate-ruleset sweep, critics, AIVAT on `MID_12` / `MID_25` / full UNO), and since step 9.5c
   `pimc_value` (`check` rollouts against the exact toys, `floor` the deal's share of the variance,
-  `pilot` the teacher/student trade-off, `aivat` the network as V, `mc` the cost of rollouts as V).
+  `pilot` the teacher/student trade-off, `aivat` the network as V, `mc` the cost of rollouts as V),
+  and since step 9.5d `pimc` (`exact` PIMC-infinity on the toy world trees, `pimcn` the finite-world
+  curve, `uno` the full-UNO search row under AIVAT, `d2` edge attribution with a search Q, `sweep`
+  the worlds-versus-depth budget study).
   Tests: `uv run pytest` (154 tests, 6 min 44 s on an idle machine at step 9.5c; the 9 PIMC /
   value-network tests add ~30 s of it). Everything: `bash scripts/rerun_all.sh`
   (~8 h 30 by the script's own estimates, of which only the 18 steps of the step-8.9

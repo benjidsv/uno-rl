@@ -216,7 +216,11 @@ def test_cache_round_trip(tmp_path):
     assert np.array_equal(tabulate(back, Level.L1, heu), tabulate(tree, Level.L1, heu))
     cached = compile_tree(rs, (Level.L1, Level.L3), cache=tmp_path)  # builds and saves
     again = compile_tree(rs, (Level.L1, Level.L3), cache=tmp_path)  # loads
-    assert again.seconds == cached.seconds and str(again) == str(tree)
+    # `seconds` is compared only between a tree and its own round-trip (above): `again` and `tree`
+    # are two *independent* compiles, and `__str__` prints the compile time to a tenth of a second,
+    # so comparing the full repr fails whenever the two land either side of a rounding boundary
+    # (seen under CPU load: 1.1s against 0.9s). Compare the structural part, as the test above does.
+    assert again.seconds == cached.seconds and str(again).split(";")[0] == str(tree).split(";")[0]
     try:
         CompiledTree.load(tmp_path / "t.npz", Ruleset())  # FULL_UNO
     except ValueError:
