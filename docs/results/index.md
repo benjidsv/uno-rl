@@ -219,8 +219,9 @@ step 9.5d's row lost seat 1. The seat asymmetry of that step is gone. AIVAT on t
 ratio 0.60-0.68 against the Heuristic row's 0.44-0.49, with the row correction identically zero
 (a deterministic agent), and 0 failed checks. The row is **opponent-specific** -- it uses the
 column's exact policy, so it is a ladder instrument, not a general player. Inference (a posterior
-belief rather than a uniform determinization) is still not implemented and is scheduled as plan row
-9.5f, the particle filter of the original design.
+belief rather than a uniform determinization) was built in [step 9.5f](09.5f-results.md) -- though
+**not** as the particle filter of the original design, which collapses; see the belief ladder
+below, worth +2.83 / +4.40 points at both seats.
 
 **The budget ladders** (step 9.5e, 3,000 EVAL deals per config, response continuation, paired):
 **more worlds stop paying past 32 and depth never pays.** Worlds at depth 2 climb +5.57 / +3.33
@@ -230,8 +231,12 @@ sigma of zero) for 3.7x the cost at d = 3 and 13.5x at d = 4, which also dispose
 odd-even-artefact worry. At equal compute worlds beat depth: w = 128 d = 2 (530 ms/game) scores
 0.7677 / 0.7403 against w = 32 d = 4 (1766 ms/game) at 0.7427 / 0.7170. The usable setting is
 **64-128 worlds at depth 2**. Because this held after the continuation rule and the seat networks
-were both fixed, the flattening is **not** an artefact of those approximations, as 9.5d supposed:
-the binding constraint is the off-profile leaf value network (outcome R^2 0.07-0.25 on these games).
+were both fixed, the flattening is **not** an artefact of those approximations, as 9.5d supposed.
+Step 9.5e concluded the binding constraint is therefore the off-profile leaf value network (outcome
+R^2 0.07-0.25 on these games); [step 9.5f](09.5f-results.md) supplies a **competing explanation not
+ruled out by that grid** -- 79.9 % of the worlds being sampled were impossible, so w = 32 was
+effectively ~6 real worlds, well inside the steep part of this very ladder. Which of the two binds
+is settled by re-running the ladder with `voids` on, which has not been done.
 
 | row | seat 0 | seat 1 | ms/game |
 |---|---|---|---|
@@ -246,3 +251,31 @@ w = 32 search -- **action-card timing 68-73 % and wild handling 25-29 %**, i.e. 
 nearly seat-symmetric. The control row (the search itself) sits at -3.3 / -2.5 against the
 Heuristic's +21, which is what licenses reading the split. Not a value decomposition: the shares are
 the finding, not the totals.
+
+**The opponent-hand belief** ([step 9.5f](09.5f-results.md), `uv run uno pimc belief 3000 32 2`):
+3,000 EVAL deals against Random, w = 32, d = 2, response continuation, paired on the same deals.
+Until this step the agent split the unseen cards **uniformly** (`uno.compiled.pimc`'s `prior`), i.e.
+it did no opponent modelling at all.
+
+| row | seat 0 | seat 1 | ms/game |
+|---|---|---|---|
+| PIMC response w=32 d=2, uniform (`prior`) | 0.7530 | 0.7163 | 126.5 |
+| **PIMC response w=32 d=2, `voids`** | **0.7813** | **0.7603** | 139.6 |
+| PIMC response w=32 d=2, `window` | 0.7907 | 0.7517 | 162.9 |
+
+Paired against the prior: `voids` **+2.83 +- 0.95 (z +3.0) / +4.40 +- 0.99 (z +4.4)**, `window`
+**+3.77 +- 0.94 (z +4.0) / +3.53 +- 1.02 (z +3.5)**. Inference is established at **both** seats and
+is the second-largest full-UNO lever after the continuation rule. But `window - voids` is
++0.93 / -0.87 (z +1.0 / -0.9), **within noise and of opposite sign at the two seats**: the soft
+policy likelihood adds nothing measurable over the hard constraints. `voids` is therefore the
+setting -- it costs +10 % against `window`'s +29 %, and it reads **no opponent policy**, so unlike
+the `response` continuation it does not make the row opponent-specific. (The `prior` row here,
+0.7530 / 0.7163, reproduces step 9.5e's w = 32 figures of 0.7567 / 0.7167 within noise: the two runs
+share a configuration, which is the cross-check that the rewiring left that path alone.)
+
+Two things behind the number: the **particle filter over the deal** that `plan.md` specified does
+not work (64 particles survive the opponent's first five plays 0.156 -> 0 -- a particle lives only
+if it holds the played card, ~7/98 -- and the built version scored *worse than the prior*, Brier
+0.167 against 0.085); and the void constraint alone rules out **79.9 %** of the uniform split's
+worlds, so **w = 64 was effectively w = 10**, with the opponent's true hand violating it 0 times in
+2,487 decisions.

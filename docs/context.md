@@ -3,8 +3,8 @@
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 9.5e, 2026-09-16** (on top of
-commit `d60d6a6`, uncommitted); next step is **10, formalising the toy results for RL**.
+with no access to the repo. State as of **step 9.5f, 2026-09-16** (on top of
+commit `9109a65`, uncommitted); next step is **10, formalising the toy results for RL**.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -934,7 +934,67 @@ of it still unbuilt**: PIMC was always meant to come with a belief, and 9.5d / 9
 uniform determinization instead. Scheduled as build-order row **9.5f**, with its exact target
 already on the toys (`uno.compiled.pimc`'s `"posterior"` weighting).
 
+**Superseded by step 9.5f (section 5.20).** Inference was built, but the particle filter named
+above is the wrong instrument and does not work: weighting deal-time samples by the opponent's
+actions collapses geometrically, and the version built to that description scored *worse than the
+uniform prior it replaced*. What works conditions instead of weighting. The toy figure quoted
+above as the reason to defer (0.0-0.6 points against Random) also did not transfer: full UNO gives
++2.83 / +4.40 at both seats.
+
 Results: `docs/results/09.5e-results.md`.
+
+### 5.20 Step 9.5f: the opponent-hand belief, and a design in the plan that does not work
+
+**Problem:** `determinize_l1` splits the unseen cards uniformly, which is `uno.compiled.pimc`'s
+`"prior"` weighting -- PIMC with no inference. Inference was the last unbuilt piece of `plan.md`'s
+sampled-oracle design.
+
+**The design in the plan was refuted first.** A particle filter over the deal (sample the
+opponent's initial hand, replay the history, weight by their action probabilities) **collapses**:
+a particle survives an observed play only if it holds the played card, `hand_size / unseen` ~ 7/98
+on full UNO, so 64 particles decay 0.156 -> 0.018 -> 0.002 -> 0.0004 -> 0 over the opponent's
+first five plays. No particle count fixes a geometric decay. The built version, resetting on
+collapse at 62 % of decisions, scored **worse than the prior it replaced** (Brier 0.167 against
+0.085). The lesson generalises: **condition, never weight** -- build a world consistent with what
+was observed rather than sampling one and testing it afterwards.
+
+**Techniques** (`docs/spec.md` section 26), both sampling the hand at the *current* split, where
+consistency is automatic, and using the history only to constrain or score it:
+
+- **`voids`**: a draw proves the drawer held nothing playable against the board then in force; if
+  they have drawn `k` cards since, at most `k` of their cards now may be playable against it. It
+  reads **no opponent policy**, so unlike the `response` continuation it does not make the row
+  opponent-specific. On a *forced-play* ruleset the statement needs no policy assumption at all --
+  `legal_actions` offers `Draw` only when nothing is playable, so the draw proves the void by the
+  rules.
+- **`window`**: plus the opponent's real action probabilities over their trailing run of plays
+  with no draw in between, where their hand is exactly recoverable as "the hand now plus the cards
+  played since". Sampled by importance-resampling, never by argmax.
+
+**What it bought:** against Random at w = 32, d = 2 over 3,000 EVAL deals, `voids` is
+**+2.83 / +4.40** points (z +3.0 / +4.4) and `window` **+3.77 / +3.53** (z +4.0 / +3.5) -- the
+second-largest full-UNO lever after 9.5e's continuation rule. `voids` costs +10 % and `window`
++29 %, and `window - voids` is +0.93 / -0.87, **within noise at both seats**: the hard constraints
+carry the whole measured gain, so the cheap, policy-free rung is the one to keep.
+
+**What it taught:**
+
+- **The toy figure did not transfer, in the direction that favoured building it.** The toys put
+  `posterior - prior` at 0.0-0.6 points against Random, which is why 9.5e deferred the step; full
+  UNO gives five to ten times that. A 41-decision game with `Draw` legal at 60 % of decisions
+  accumulates draw evidence a 6-decision toy cannot. 9.5d's "toy belief sizes do not transfer",
+  pointing the other way.
+- **Calibration, not sharpness, is the correctness test for a belief.** Over-pruning looks like
+  confidence. The refutation above came from a calibration harness written before any score was
+  measured; the score alone would have been read as progress.
+- **Brier on marginals is the wrong *value* test.** The constraint excludes 79.9 % of worlds while
+  moving per-card marginals by 2 %, because it rules out *joint* combinations. Correctness and
+  value needed different instruments.
+- **Most of PIMC's worlds were impossible** (median surviving share 15.6 %: w = 64 was effectively
+  w = 10). That is a second explanation for 9.5e's world ladder staying flat past 32, competing
+  with the off-profile leaf network that step promoted to "the residual explanation". Untested.
+
+Results: `docs/results/09.5f-results.md`.
 
 ## 6. Results: what we know
 
@@ -1204,6 +1264,12 @@ Kept because they show where this kind of analysis goes wrong.
 | (9.5e scoping) a `TOY` closure test validates the sampled continuation rule | vacuous on that axis: the two rules are 0.2-0.5 points apart there against ~3.2 points of noise at 200 games, so the test would pass with the wrong one wired in. Moved to `TOY_FULL` (7-9 points apart) and backed by a noise-free "the two rules choose differently" test (step 9.5e) |
 | (9.5d) the full-UNO PIMC row loses to the Heuristic at seat 1, and worlds/depth have stopped helping | that row used the two-sided continuation and the seat-0 network at both seats; with the `response` continuation and per-seat leaves it beats the Heuristic at *both* seats, so "the ladder is flat past 32 worlds" was measured under approximations that have since changed and needs re-testing (step 9.5e) |
 
+| (`plan.md`, from the start) sampled L1/L2 inference is a **particle filter over the deal** | it collapses: 64 particles survive the opponent's first five plays 0.156 -> 0.018 -> 0.002 -> 0.0004 -> 0, because a particle lives only if it holds the played card (~7/98). The built version scored *worse than the prior it replaced* (Brier 0.167 against 0.085). Replaced by rungs that condition instead of weighting (step 9.5f) |
+| (9.5e) inference is worth deferring: the toys put it at 0.0-0.6 points against Random, the headline column | +2.83 / +4.40 measured on full UNO against Random, established at both seats. Toy games are too short to accumulate the draw evidence the constraint feeds on (step 9.5f) |
+| (9.5f scoping) the soft policy likelihood is the point, the hard constraints a cheap approximation of it | reversed: `window - voids` is +0.93 / -0.87, within noise at both seats. The policy-free rung carries the whole measured gain, at +10 % cost instead of +29 % (step 9.5f) |
+| (9.5f) the `voids` rung can only bite on free-play rulesets, since forced play has no voluntary draw | wrong, and for a better reason: on forced play `legal_actions` offers `Draw` only when nothing is playable, so a draw *proves* the void by the rules instead of implying it by policy. Live at 16.5-23.3 % of decisions on the forced toys (step 9.5f) |
+| (9.5f) the belief costs 3.4x the search | that measured a harness calling it 64 times at *every* decision; the agent calls it once per world at its own decisions only, so the real cost is +10 % / +29 % (step 9.5f) |
+
 ## 8. Dead ends and things deliberately not done
 
 - **rlcard, pyspiel** as the core: not used (section 3).
@@ -1247,7 +1313,7 @@ Kept because they show where this kind of analysis goes wrong.
 | 9.5c | PIMC values as a teacher: determinized rollouts against the exact toys, the deal floor, a symmetric value network as AIVAT's V (full UNO 0.71/0.76 → 0.46/0.47), the Monte Carlo deal mean, the cost of rollouts as V (`docs/results/09.5c-results.md`) | done |
 | 9.5d | PIMC agent: exact PIMC-∞ on the toy world trees vs BR L1 / L2 (with and without opponent-reach weighting), PIMC-n, the full-UNO PIMC **search** row evaluated with 9.5c's network (the rollout player is a weaker comparator), full-UNO D2 with a search Q, and the worlds-versus-depth budget study (MCTS deferred) (`docs/results/09.5d-results.md`) | done |
 | 9.5e | the `response` continuation (each determinized world solved as a best response to the known column: +10.2 / +5.2 points on full UNO, and *cheaper* than two-sided), per-seat leaf networks (9.5d used the seat-0 one at both seats), AIVAT on the new row; inference deferred to a particle-filter sub-step (`docs/results/09.5e-results.md`) | done |
-| 9.5f | **PIMC inference: particle filter + expectimax**, the one piece of `plan.md`'s original sampled-oracle design still unbuilt. Sample the opponent's initial hand and the pile at the deal, replay the public history weighting particles by the opponent's action probabilities, resample per step, and feed that posterior belief to the search instead of a uniform determinization. Exact target on the toys: `uno.compiled.pimc`'s `"posterior"` weighting (0.0-0.6 points against Random, up to 2.6 against the Heuristic) | deferred at 9.5e |
+| 9.5f | **PIMC inference**: the particle filter over the deal that `plan.md` specified **does not work** (survival 0.156 -> 0 over the opponent's first five plays; the built version scored worse than the prior it replaced). Replaced by rungs that condition instead of weighting -- `voids` (a draw proves the drawer held nothing playable; no opponent policy, so the row stays general) and `window` (plus the opponent's real probabilities over their trailing no-draw run of plays). **+2.83 / +4.40** points against Random at both seats for `voids`, where the toys predicted 0.0-0.6; the soft rung adds nothing measurable on top (`window - voids` +0.93 / -0.87) (`docs/results/09.5f-results.md`) | done |
 | **10** | **formalise the toy results: figures and tables that RL relies on** | **next** |
 | 11 | RL | |
 
@@ -1339,9 +1405,16 @@ Planned design and checks (from the plan and step 8.9):
   curve, `uno` the full-UNO search row under AIVAT, `d2` edge attribution with a search Q, `sweep`
   the worlds-versus-depth budget study). Since step 9.5e `pimc sweep` takes an `s<worlds>x<depth>r`
   config token and `pimc uno` a trailing `r` argument, both selecting the `response` continuation
-  (each determinized world solved as a best response to the known column).
-  Tests: `uv run pytest` (154 tests, 6 min 44 s on an idle machine at step 9.5c; the 9 PIMC /
-  value-network tests add ~30 s of it). Everything: `bash scripts/rerun_all.sh`
+  (each determinized world solved as a best response to the known column). Since step 9.5f
+  `pimc belief` runs the belief ladder (`prior` / `voids` / `window`, docs/spec.md section 26) and
+  `pimc calibration` checks that a belief is *correct* rather than merely confident -- the
+  instrument that refuted the deal-time particle filter, with two pre-declared checks (no rung
+  materially worse than the exact prior; no populated reliability bin missing by more than 0.25).
+  Unlike `belief` it runs single-process, so it also reports the fallback rates.
+  Tests: `uv run pytest` (**206 tests, 7 min 27 s** at step 9.5f; 154 in 6 min 44 s at 9.5c, 197 at
+  9.5e). Suite time is noisy on a loaded machine rather than monotone in the test count: 9.5e logged
+  an unexplained +3 min 40 s jump with no cause established, and 9.5f ran four minutes *faster* with
+  nine more tests. Check a new file's own runtime directly. Everything: `bash scripts/rerun_all.sh`
   (~8 h 30 by the script's own estimates, of which only the 18 steps of the step-8.9
   rerun have measured durations, 115 min; everything from `robustness` on is a first-run guess,
   logs in `logs/rerun-*/report.txt`).

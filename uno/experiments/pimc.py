@@ -5,6 +5,8 @@
     uv run uno pimc uno    [deals=400] [worlds=8] [depth=2] [workers] [cont=m|r]
     uv run uno pimc d2     [deals=200] [worlds=8] [depth=2] [workers]
     uv run uno pimc sweep  [deals=200] [workers] [configs=s2x2,s8x2,...]  (s<worlds>x<depth>[r], r<worlds>x<rollouts>, heu)
+    uv run uno pimc belief [deals=1000] [worlds=32] [depth=2] [workers]
+    uv run uno pimc calibration [deals=120] [samples=64]
 
 A trailing `r` on a search config (`s32x2r`), and the `cont=r` argument of `uno`, select step
 9.5e's **response** continuation: each determinized world is solved as a best response to the
@@ -30,6 +32,24 @@ decomposition -- read the shares, not the totals.
 `sweep`: raw score against Random as the world count and search depth grow. The toys' "n = 8
 worlds is nearly the limit" does not transfer, because a toy belief holds 2-23 consistent worlds
 and full UNO's holds astronomically more; this is where that shows up.
+
+`belief`: step 9.5f's ladder over what the agent believes about the opponent's hand -- `prior` (the
+uniform split, i.e. the 9.5e row unchanged), `voids` (the hard constraints a *voluntary draw*
+implies, needing no opponent policy, so this rung does not make the row opponent-specific) and
+`window` (plus the opponent's real action probabilities over their trailing run of plays, where
+their hand is exactly recoverable) -- all at one budget, so the difference is the belief alone.
+The particle filter over the deal that docs/plan.md originally specified **collapses**: a particle
+survives the opponent's first play only if it holds the played card, ~7/98 on full UNO, so 64 of
+them decay 0.156 -> 0.018 -> 0.002 -> 0.0004 -> 0 over their first five plays, and a version that
+reset on collapse scored worse than the prior it replaced. These rungs therefore condition instead
+of weighting. docs/spec.md section 26.
+
+`calibration`: is the belief *correct*, or merely more confident? Over-pruning is the dangerous
+failure of inference -- a belief that rules out the world the opponent is actually in looks sharp
+and is wrong, and nothing downstream notices. Sharpness cannot detect that; calibration can. This
+is the check that refuted the deal-time particle filter (Brier 0.167 against the uniform prior's
+0.085, its "probability 1.000" bin observed at 0.112) while that design's *score* still looked
+unremarkable, so it lives in the repo rather than in a scratch file.
 
 `exact`: PIMC-infinity (`uno.compiled.pimc`) on the toy **world trees**, i.e. the n -> infinity
 limit of "sample worlds consistent with what you know, solve each with perfect information,
@@ -462,6 +482,213 @@ def sweep_section(games: int, workers: int | None, spec: str | None = None) -> N
         sys.stdout.flush()
 
 
+def _belief_chunk(rs, pair, seeds):
+    """The row's score at each seat, per deal, from the two seatings of one deal."""
+    from uno.eval.play import play_from
+    from uno.game.engine import new_game, returns
+
+    out = []
+    for seed in seeds:
+        try:
+            s0 = new_game(rs, seed)
+        except ValueError:
+            continue
+        t0 = play_from(s0, seed, pair)
+        t1 = play_from(s0, seed, pair[::-1])
+        out.append(((returns(t0.final)[0] + 1) / 2, (returns(t1.final)[1] + 1) / 2))
+    return out
+
+
+def belief_section(games: int, worlds: int, depth: int, workers: int | None) -> None:
+    """Step 9.5f: what the opponent's own actions are worth to the PIMC row.
+
+    `determinize_l1` splits the unseen cards uniformly, which is `uno.compiled.pimc`'s `"prior"`
+    weighting -- PIMC with no inference. Three rungs at an otherwise identical budget, so the
+    difference is the belief and nothing else:
+
+    - `prior`: the uniform split, i.e. the step 9.5e row unchanged;
+    - `voids`: the hard constraints a *voluntary draw* implies (the drawer held nothing playable).
+      No opponent policy, so unlike the `response` continuation this does not make the row
+      opponent-specific -- the half that would survive into a general player;
+    - `window`: additionally the opponent's real action probabilities over their trailing run of
+      plays with no draw in between, where their hand is exactly recoverable.
+
+    **Why not a particle filter over the deal**, which is what docs/plan.md's original design
+    called for: it collapses. A particle survives the opponent's first play with probability
+    `hand_size / unseen` ~ 7/98, and 64 particles decay 0.156 -> 0.018 -> 0.002 -> 0.0004 -> 0
+    over their first five plays. A filter that resets on collapse scored *worse than the prior it
+    replaced* (Brier 0.167 against 0.085, its 1.000 bin observed at 0.112). The rungs above
+    condition instead of weighting, which is why they cannot degenerate.
+    """
+    from uno.eval.belief import Belief
+    from uno.eval.play import EVAL_SEEDS
+
+    rs = rules.FULL_UNO
+    nets = [net_for(rs, "heuristic", "random", s) for s in (0, 1)]
+    leaves = (nets[0].value, nets[1].value)
+    rnd = PlayFirstRandom(rs)
+    seeds = EVAL_SEEDS[:games]
+    k = (os.cpu_count() or 1) * 8 if workers != 1 else 1
+
+    print(f"\n== FULL_UNO PIMC belief ladder vs Random: w={worlds}, d={depth}, response continuation.")
+    print(f"   {games} EVAL deals per rung, both seatings, paired on the same deals.")
+    print(f"   {'belief':10s} {'seat 0':>16s} {'seat 1':>16s} {'ms/game':>9s}")
+    scores: dict[str, np.ndarray] = {}
+    beliefs: dict[str, object] = {}
+    for label in ("prior", "voids", "window"):
+        belief = None if label == "prior" else Belief(rs, kind=label, opponent=rnd if label == "window" else None)
+        beliefs[label] = belief
+        # a name identifies a policy (docs/context.md section 3) and these are three policies
+        agent = PimcSearch(rs, leaves, worlds=worlds, depth=depth, name=f"pimc_resp_random_{label}", opponent=rnd, belief=belief)
+        t0 = time.perf_counter()
+        parts = pmap(_belief_chunk, [(rs, (agent, rnd), c) for c in chunks(seeds, k)], workers)
+        arr = np.array([g for p in parts for g in p])
+        secs = time.perf_counter() - t0
+        scores[label] = arr
+        cells = [f"{arr[:, s].mean():.4f}+-{arr[:, s].std(ddof=1) / math.sqrt(len(arr)):.4f}" for s in (0, 1)]
+        print(f"   {label:10s} {cells[0]:>16s} {cells[1]:>16s} {1000 * secs / (2 * len(arr)):9.1f}")
+        sys.stdout.flush()
+
+    print("\n   paired against the prior (score points; positive = inference helps).")
+    print("   The three rungs carry different names, so they do *not* share a world-sampling key:")
+    print("   the coupling here is the deal, as it is for the continuation rule (step 9.5e).")
+    print(f"      {'comparison':24s} {'seat 0':>20s} {'seat 1':>20s}")
+    for label in ("voids", "window"):
+        cells = []
+        for s in (0, 1):
+            d = scores[label][:, s] - scores["prior"][:, s]
+            se = d.std(ddof=1) / math.sqrt(len(d))
+            cells.append(f"{100 * d.mean():+6.2f}+-{100 * se:.2f} (z {au.z_of(d.mean(), se):+.1f})")
+        print(f"      {label + ' - prior':24s} {cells[0]:>20s} {cells[1]:>20s}")
+    cells = []
+    for s in (0, 1):
+        d = scores["window"][:, s] - scores["voids"][:, s]
+        se = d.std(ddof=1) / math.sqrt(len(d))
+        cells.append(f"{100 * d.mean():+6.2f}+-{100 * se:.2f} (z {au.z_of(d.mean(), se):+.1f})")
+    print(f"      {'window - voids':24s} {cells[0]:>20s} {cells[1]:>20s}")
+
+    # The fallback rate says whether the belief was *available*; a report that hides it hides
+    # whether the rung ran at all. The counters live on the agent, which `pmap` pickles into each
+    # worker, so they only come back when everything ran in this process.
+    if workers == 1:
+        for label in ("voids", "window"):
+            b = beliefs[label]
+            print(f"   {label:7s}: fallbacks {b.fallbacks:,}/{b.draws:,} draws ({100 * b.fallbacks / max(b.draws, 1):.1f} %)")
+    else:
+        print("   (fallback rates need workers=1: the counters do not cross processes)")
+    sys.stdout.flush()
+
+
+def calibration_section(games: int, samples: int) -> None:
+    """Is the belief *correct*, or only more confident? (step 9.5f, docs/spec.md section 26.5)
+
+    Over-pruning is the dangerous failure of any inference: a belief that rules out the world the
+    opponent is actually in looks sharp and is wrong, and nothing downstream notices -- the search
+    simply explores a set of worlds that excludes the truth. For every card type at every row
+    decision each belief states P(the opponent holds at least one copy), and the played state says
+    whether they do.
+
+    - the **prior** is exact (hypergeometric), so it is the floor no belief may fall below;
+    - a correct belief is **sharper** (lower Brier) *and* **calibrated** (predicted ~ observed);
+    - an over-pruning one is sharper and mis-calibrated: it says 0.95 and is right 0.7 of the time.
+
+    Two pre-declared checks, both sized against the design this refuted rather than against the
+    numbers that passed: a rung may not be materially worse than no belief at all (the particle
+    filter was 2x the prior's Brier), and no populated reliability bin may miss by more than 0.25
+    (it missed by 0.89). The bound is deliberately loose: its job is to catch catastrophic
+    miscalibration, not to police the gap between two already-calibrated rungs, and a threshold
+    sitting just above the observed value is a test that fails on a different seed range by
+    construction (docs/context.md section 7, first entry).
+
+    Measured on the shipped rungs at the defaults: Brier prior 0.0846, `voids` 0.0828, `window`
+    0.0825; worst reliability-bin gap 0.088 / 0.093 / 0.135. Note `window` is the **least**
+    calibrated of the three while being marginally the sharpest, which is what a *windowed*
+    posterior should look like -- it conditions on a truncated history, so it is slightly biased.
+    That is a second mark against it, beside failing to beat `voids` on score.
+
+    Runs single-process, which is what lets it report the fallback rates `belief_section` cannot
+    (those counters do not cross `pmap`'s process boundary). DEV seeds: a diagnostic, never a
+    reported number.
+    """
+    import random
+    from collections import Counter
+
+    from uno.eval.belief import Belief
+    from uno.eval.play import DEV_SEEDS, play_game, stable_hash
+    from uno.eval.search import unseen_cards
+
+    rs = rules.FULL_UNO
+    heu, rnd = Heuristic(rs), PlayFirstRandom(rs)
+    seat = 0
+    kinds = ("prior", "voids", "window")
+    beliefs = {"voids": Belief(rs, kind="voids"), "window": Belief(rs, kind="window", opponent=rnd)}
+    n = dict.fromkeys(kinds, 0)
+    brier = dict.fromkeys(kinds, 0.0)
+    bins = {k: [[0, 0.0, 0.0] for _ in range(10)] for k in kinds}
+    decisions = 0
+
+    def add(kind: str, p: float, actual: float) -> None:
+        p = min(max(p, 0.0), 1.0)
+        n[kind] += 1
+        brier[kind] += (p - actual) ** 2
+        b = bins[kind][min(int(p * 10), 9)]
+        b[0] += 1
+        b[1] += p
+        b[2] += actual
+
+    print("\n== FULL_UNO belief calibration: is the belief correct, or only more confident?")
+    print(f"   {games} DEV deals, {samples} worlds per decision, belief over Random's hand at seat 1.")
+    t0 = time.perf_counter()
+    for seed in list(DEV_SEEDS)[:games]:
+        try:
+            t = play_game(rs, seed, (heu, rnd))
+        except ValueError:
+            continue
+        for st in t.steps:
+            if st.state.player != seat:
+                continue
+            obs = st.obs
+            truth = set(st.state.hands[seat ^ 1])
+            try:
+                unseen, _ = unseen_cards(rs, obs)
+            except ValueError:
+                continue
+            k, u = obs.opp_hand_size, len(unseen)
+            if not u or not k:
+                continue
+            decisions += 1
+            mult = Counter(unseen)
+            for t_id, m in mult.items():
+                add("prior", 1.0 - math.comb(u - m, k) / math.comb(u, k), 1.0 if t_id in truth else 0.0)
+            for kind, b in beliefs.items():
+                rng = random.Random(stable_hash((seed, "calibration", st.state.turn)))
+                held: Counter = Counter()
+                for _ in range(samples):
+                    held.update(set(b.hand(obs, unseen, rng)))
+                for t_id in mult:
+                    add(kind, held[t_id] / samples, 1.0 if t_id in truth else 0.0)
+
+    print(f"   {decisions:,} row decisions, {n['prior']:,} (card type, decision) pairs each, {time.perf_counter() - t0:.0f}s")
+    print(f"\n   {'belief':8s} {'Brier':>7s} {'vs prior':>9s} {'worst bin':>10s}  reliability, bins with n >= 200 (predicted -> observed)")
+    for kind in kinds:
+        cells, worst = [], 0.0
+        for b in bins[kind]:
+            if b[0] >= 200:
+                pred, seen = b[1] / b[0], b[2] / b[0]
+                worst = max(worst, abs(pred - seen))
+                cells.append(f"{pred:.2f}->{seen:.2f}")
+        rel = brier[kind] / brier["prior"] if brier["prior"] else float("nan")
+        ok = ""
+        if kind != "prior":
+            # sized against the refuted design (2x the prior), not against the margin that passed
+            ok += check(brier[kind] <= brier["prior"] * 1.05, f"calibration: {kind} Brier {brier[kind] / max(n[kind], 1):.4f} is worse than the prior's {brier['prior'] / max(n['prior'], 1):.4f}")
+        ok += check(worst <= 0.25, f"calibration: {kind} worst reliability-bin gap {worst:.2f} > 0.25 -- over-pruning?")
+        print(f"   {kind:8s} {brier[kind] / max(n[kind], 1):7.4f} {rel:9.3f} {worst:10.3f}  {'  '.join(cells)} {ok}")
+    for kind, b in beliefs.items():
+        print(f"   {kind:8s} fallbacks {b.fallbacks:,}/{b.draws:,} draws ({100 * b.fallbacks / max(b.draws, 1):.1f} %)")
+    sys.stdout.flush()
+
+
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     section = argv[0] if argv else "exact"
@@ -492,8 +719,17 @@ def main(argv: list[str] | None = None) -> None:
             int(args[1]) if len(args) > 1 and args[1] else None,
             args[2] if len(args) > 2 and args[2] else None,
         )
+    elif section == "belief":
+        belief_section(
+            int(args[0]) if args else 1000,
+            int(args[1]) if len(args) > 1 else 32,
+            int(args[2]) if len(args) > 2 else 2,
+            int(args[3]) if len(args) > 3 and args[3] else None,
+        )
+    elif section == "calibration":
+        calibration_section(int(args[0]) if args else 120, int(args[1]) if len(args) > 1 else 64)
     else:
-        raise SystemExit(f"unknown section {section!r}: exact, pimcn, uno, d2, sweep")
+        raise SystemExit(f"unknown section {section!r}: exact, pimcn, uno, d2, sweep, belief, calibration")
     print(f"\n== {len(au.FAILS)} failed checks" + (": " + "; ".join(au.FAILS) if au.FAILS else ""))
 
 

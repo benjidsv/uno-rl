@@ -1390,4 +1390,115 @@ carries Monte Carlo noise, so nothing telescopes: `uv run uno pimc d2` reports w
 differ most from the search's preference, by `node_kind`, and its totals are **not** a value
 decomposition. Terms may be negative, so the kinds need not partition a positive whole.
 
-Experiment: `uv run uno pimc exact | pimcn | uno | d2 | sweep` (module docstring).
+Experiment: `uv run uno pimc exact | pimcn | uno | d2 | sweep | belief` (module docstring). The
+`belief` section is step 9.5f's opponent-hand inference, section 26.
+
+## 26. The opponent-hand belief (`uno/eval/belief.py`)
+
+Step 9.5f. `determinize_l1` (section 25) splits the unseen cards **uniformly**, which is exactly
+`uno.compiled.pimc`'s `"prior"` weighting: PIMC with no inference at all. This section is the
+sampled analogue of its `"posterior"`, where a world is weighted by how likely the opponent's
+*observed actions* were had they held that hand. On the toys the exact gap between the two is
+0.0-0.6 score points against Random and up to 2.6 against the Heuristic, and it only opens under
+the `"response"` continuation (under `"minimax"` it is ~0 even on `TOY_FULL`).
+
+### 26.1 The design that does not work, and why
+
+docs/plan.md's original sampled-oracle design is a **particle filter over the deal**: sample the
+opponent's initial hand, replay the public history, weight each particle by the opponent's action
+probabilities, resample per step. Measured before the rungs below were written, it collapses:
+
+| opponent's play | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| share of 64 particles still alive | 0.156 | 0.018 | 0.002 | 0.0004 | 0 |
+
+A particle survives one observed play only if it happens to hold the played card, which is
+`hand_size / unseen` ~ 7/98 on full UNO, so survival decays geometrically and **no particle count
+fixes it**: by the fourth play one would need ~10^5 particles, and it keeps decaying. A filter
+that resets on collapse (62 % of decisions) scored **worse than the prior it replaced** -- Brier
+0.167 against the uniform split's 0.085, its "probability 1.000" bin observed at 0.112.
+
+**The lesson is to condition, never to weight.** A world must be *built* consistent with what was
+observed, not sampled and then tested against it. Both rungs below therefore sample the opponent's
+hand at the **current** split, where consistency with the hand sizes is automatic, and use the
+history only to constrain or to score that sample. Neither propagates anything, so neither can
+degenerate.
+
+### 26.2 `"voids"`: what a voluntary draw proves
+
+`voluntary_draw` (section 7) is a *choice*, and no play-first policy takes it holding a playable
+card. So at each voluntary draw by the opponent, against the board `(top, colour)` then in force,
+their hand held nothing playable. If they have drawn `k` cards since, at most `k` cards of their
+hand **now** may be playable against that board -- a necessary condition, exact, and checkable
+against a current hand with no propagation at all (`Void(top, colour, since)`, `voids`,
+`satisfies`). Penalty draws from a +2 / +4 are excluded: they are not decisions.
+
+On a **forced-play** ruleset the statement needs no policy assumption at all: `legal_actions`
+(section 6) offers `Draw` only when nothing is playable, so a draw *proves* the void by the rules.
+The rung therefore has teeth on every toy, not only the free-play ones. Share of decisions
+carrying at least one constraint:
+
+| ruleset | `TOY` | `TOY2` | `TOY2_SKIP` | `TOY_FULL` | `FULL_UNO` |
+|---|---|---|---|---|---|
+| forced play | yes | yes | yes | no | no |
+| decisions with a constraint | 16.5 % | 23.3 % | 18.3 % | 16.5 % | 73.4 % |
+
+`TOY` and `TOY_FULL` agree to the digit because neither rulebot ever draws voluntarily, so under
+that profile the free-play toy plays out exactly as the forced one.
+
+It reads **no opponent policy**, so unlike the `response` continuation it does not make the row
+opponent-specific; it is the half that would survive into a general player. Measured on full UNO:
+it alone rules out **79.9 %** of `determinize_l1`'s worlds (median surviving share 15.6 %, so
+w = 64 is effectively w = 10), and the opponent's real hand violated it **0 times in 2,487**
+decisions.
+
+### 26.3 `"window"`: the policy likelihood, exactly, where it is computable
+
+Over the opponent's **trailing run of plays with no draw of theirs in between**, their hand at
+each of those decisions is recoverable from the hand they hold now: it is that hand plus the cards
+they have played since. So a sampled hand is rolled backwards through that window and scored by
+the opponent's real action probabilities (`trailing_window`, `Belief._window_likelihood`) -- the
+genuine posterior restricted to the window, not an approximation of it. The window stops at the
+first draw going back, because a draw is precisely where the hand stops being recoverable, which
+is what defeated 26.1.
+
+Candidates are drawn by **sampling-importance-resampling**: propose uniformly among
+void-consistent hands, then draw one proportionally to its window likelihood. Taking the argmax
+instead would collapse every world onto a single explanation -- the winner's curse of section 25,
+one level over.
+
+### 26.4 Fallbacks, determinism and cost
+
+No consistent hand is found within `tries` attempts at a small share of decisions (4.8 % measured
+on full UNO), where the rung falls back to the uniform prior. `Belief.fallbacks` **counts** it: a
+report that hides that number hides whether the belief was available at all.
+
+The rungs carry no state across decisions -- there is nothing to propagate -- so the agent stays a
+deterministic function of the information state with no cache to invalidate, which is what keeps
+AIVAT's row correction identically zero (section 25). Sampling uses `rng.sample` (O(k)) rather
+than shuffling the whole unseen pool to take 7 of ~98 cards, which was most of the rung's price.
+
+Cost at w = 32, d = 2, wall clock per game against Random: prior 132.8 ms, `voids` 140.5 ms,
+`window` 181.4 ms. The belief is consulted once per world at the agent's own decisions only, so it
+is a **+6 % / +37 %** addition and not the multiple a per-decision measurement suggests.
+
+### 26.5 Checks (`tests/eval/test_belief.py`)
+
+The dangerous failure of any inference is **over-pruning**: a belief that excludes the world the
+opponent is actually in looks confident and is wrong, and nothing downstream would notice. So the
+load-bearing tests assert the truth survives, one per rung -- `voids` never excludes the hand the
+opponent really holds (on `FULL_UNO` and `TOY_FULL`), and the `window` likelihood is strictly
+positive for it, since the opponent demonstrably made those plays from that hand. Beside them sits
+a non-vacuity test (the void constraint must actually exclude a measurable share of uniform
+worlds), because a test of the first kind would pass unchanged with `voids` returning `[]` --
+the step 9.5e lesson. A determinized world is still checked consistent with the observation, and
+the agent is still checked to be a function of its information state with a belief wired in.
+
+Experiments: `uv run uno pimc belief [deals] [worlds] [depth] [workers]` scores the ladder, and
+`uv run uno pimc calibration [deals] [samples]` checks that a belief is *correct* rather than
+merely confident -- the instrument that refuted 26.1, kept in the repo so a confidently wrong
+belief cannot pass unnoticed again. It carries two pre-declared checks: no rung may be materially
+worse than the exact prior, and no populated reliability bin may miss by more than 0.25 (the
+refuted filter missed by 0.89). Measured: Brier 0.0846 / 0.0828 / 0.0825 for prior / `voids` /
+`window`, worst bin gap 0.088 / 0.093 / 0.135. `window` is the least calibrated of the three while
+being marginally the sharpest, as a *windowed* posterior should be.

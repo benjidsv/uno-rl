@@ -12,6 +12,14 @@ public history is fixed. `determinize_l1` deals `opp_hand_size` of them to the o
 the rest into the pile above the known tail, and sets `draws="pile"` with a fresh seed, so
 reshuffles and rollouts inside the search are independent of the real game.
 
+**The belief (step 9.5f).** That uniform split is `uno.compiled.pimc`'s `"prior"` weighting: PIMC
+with no inference at all. Given a `uno.eval.belief.Belief`, `determinize_l1` instead draws the
+opponent's hand from what their own actions implied -- a voluntary draw proves they held nothing
+playable, and their trailing run of plays is scored by their real policy. The belief chooses only
+the *hand*; the pile is the remainder in a uniform order either way. See docs/spec.md section 26,
+including why the particle filter over the deal that docs/plan.md originally called for collapses
+(a particle survives the opponent's first play with probability `hand_size / unseen` ~ 7/98).
+
 The opponent's `initial_hands` / `own_draws` are fabricated to match the hand we just dealt them:
 nothing downstream reads them (`uno.eval.value_net.state_features` and the baseline agents work
 off `hands`, `discard`, `top`, `current_color`, `phase`, `drawn` and the pile length), but they
@@ -78,14 +86,26 @@ def unseen_cards(rs: Ruleset, obs: Observation) -> tuple[list[int], tuple[int, .
     return unseen, tail
 
 
-def determinize_l1(rs: Ruleset, obs: Observation, rng: random.Random) -> State:
-    """A state consistent with `obs`: the unseen cards split uniformly into the opponent's hand
-    and the pile. See the module docstring on the fabricated opponent memory."""
+def determinize_l1(rs: Ruleset, obs: Observation, rng: random.Random, belief=None) -> State:
+    """A state consistent with `obs`: the unseen cards split into the opponent's hand and the
+    pile. See the module docstring on the fabricated opponent memory.
+
+    Without `belief` the split is **uniform**, which is `uno.compiled.pimc`'s `"prior"` weighting:
+    PIMC with no inference at all. A `uno.eval.belief.Belief` instead draws the opponent's hand
+    from what their own actions implied (step 9.5f), which is the `"posterior"` direction. The
+    belief only chooses the *hand*; the pile is the remainder in a uniform order either way.
+    """
     unseen, tail = unseen_cards(rs, obs)
-    rng.shuffle(unseen)
     me, opp = obs.seat, obs.seat ^ 1
-    opp_hand = tuple(sorted(unseen[: obs.opp_hand_size]))
-    pile = (*unseen[obs.opp_hand_size :], *tail)
+    if belief is None:
+        rng.shuffle(unseen)
+        opp_hand = tuple(sorted(unseen[: obs.opp_hand_size]))
+        rest = list(unseen[obs.opp_hand_size :])
+    else:
+        opp_hand = belief.hand(obs, unseen, rng)
+        rest = list((Counter(unseen) - Counter(opp_hand)).elements())
+        rng.shuffle(rest)
+    pile = (*rest, *tail)
     hands, initial, draws = [None, None], [None, None], [None, None]
     hands[me], hands[opp] = obs.hand, opp_hand
     initial[me], initial[opp] = obs.initial_hand, opp_hand  # fabricated for the opponent: consistent with the hand, not with history
@@ -246,9 +266,11 @@ class PimcSearch:
         seed: int = 0,
         exhaustion: str = "hand",
         opponent=None,
+        belief=None,
     ) -> None:
         self.rs, self.leaf, self.worlds, self.depth = rs, leaf, worlds, depth
         self.name, self.seed, self.exhaustion, self.opponent = name, seed, exhaustion, opponent
+        self.belief = belief  # None = the uniform `"prior"` split (step 9.5f)
 
     @property
     def continuation(self) -> str:
@@ -260,7 +282,7 @@ class PimcSearch:
         return random.Random(stable_hash((self.seed, self.name, obs.info_state)))
 
     def _q(self, obs: Observation, rng: random.Random) -> dict[int, float]:
-        world = determinize_l1(self.rs, obs, rng)
+        world = determinize_l1(self.rs, obs, rng, self.belief)
         return search_q(world, obs.seat, self.depth, leaf_for(self.leaf, obs.seat), self.exhaustion, self.opponent)
 
     def _scores(self, obs: Observation, legal: tuple[int, ...]) -> dict[int, float]:
