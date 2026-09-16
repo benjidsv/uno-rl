@@ -1494,8 +1494,24 @@ worlds), because a test of the first kind would pass unchanged with `voids` retu
 the step 9.5e lesson. A determinized world is still checked consistent with the observation, and
 the agent is still checked to be a function of its information state with a belief wired in.
 
-Experiments: `uv run uno pimc belief [deals] [worlds] [depth] [workers]` scores the ladder, and
-`uv run uno pimc calibration [deals] [samples]` checks that a belief is *correct* rather than
+Experiments: `uv run uno pimc belief [deals] [worlds] [depth] [workers] [column=random|heuristic]`
+scores the ladder against the named column. The column matters to this axis specifically: Random
+is nearly uniform, so its *play* choices carry little information and only its draws (the `voids`
+rung) say much, which is why the exact toys put the belief axis at 0.0-0.6 points against Random
+but up to 2.6 against the Heuristic. Step 9.5f measured the `random` column only, so `window`'s
++29 % cost was judged where it was least likely to pay. The section also carries two checks of its
+own -- the rungs must have scored the same deals, and no rung may sit 3 sigma *below* the uniform
+prior at either seat, which is the refuted particle filter's signature -- because as shipped in
+9.5f it registered none and its "0 failed checks" line was therefore vacuous.
+
+The world ladder can be climbed under a belief with `uv run uno pimc sweep`'s `v` / `w` config
+suffix (`s32x2rv`), which is what separates the two live explanations for that ladder flattening
+past w = 32: an off-profile leaf value network (9.5e's conclusion), or worlds that were simply
+impossible (79.9 % of them, making w = 32 about six real worlds). The belief is a **separate
+field** of the config's meta tuple, never folded into the continuation letter, because the ladder
+groupings filter on that letter and would silently drop the rows instead of grouping them.
+
+Also: `uv run uno pimc calibration [deals] [samples]` checks that a belief is *correct* rather than
 merely confident -- the instrument that refuted 26.1, kept in the repo so a confidently wrong
 belief cannot pass unnoticed again. It carries two pre-declared checks: no rung may be materially
 worse than the exact prior, and no populated reliability bin may miss by more than 0.25 (the

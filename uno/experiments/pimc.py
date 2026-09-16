@@ -4,14 +4,20 @@
     uv run uno pimc pimcn  [rulesets=...] [realizations=64] [max_n=64]
     uv run uno pimc uno    [deals=400] [worlds=8] [depth=2] [workers] [cont=m|r]
     uv run uno pimc d2     [deals=200] [worlds=8] [depth=2] [workers]
-    uv run uno pimc sweep  [deals=200] [workers] [configs=s2x2,s8x2,...]  (s<worlds>x<depth>[r], r<worlds>x<rollouts>, heu)
-    uv run uno pimc belief [deals=1000] [worlds=32] [depth=2] [workers]
+    uv run uno pimc sweep  [deals=200] [workers] [configs=s2x2,s8x2,...]  (s<worlds>x<depth>[r][v|w], r<worlds>x<rollouts>, heu)
+    uv run uno pimc belief [deals=1000] [worlds=32] [depth=2] [workers] [column=random|heuristic]
     uv run uno pimc calibration [deals=120] [samples=64]
 
 A trailing `r` on a search config (`s32x2r`), and the `cont=r` argument of `uno`, select step
 9.5e's **response** continuation: each determinized world is solved as a best response to the
 column's real policy instead of two-sided minimax. Worth +10.2 / +5.2 score points on full UNO at
 w = 32, d = 2, and cheaper, because expectimax expands only the opponent's support.
+
+A further `v` or `w` on a search config (`s32x2rv`) draws the opponent's hand from step 9.5f's
+`voids` or `window` belief instead of the uniform split. It is a **separate axis from the
+continuation letter**, so `sweep` groups its ladders by (continuation, belief) and never folds one
+into the other: the groupings filter on `cont in ("m", "r")`, and a belief encoded there would
+silently drop the rows it touched rather than compare them.
 
 docs/spec.md section 25. Every check prints ok / XX; the last line counts the failures.
 
@@ -31,7 +37,10 @@ decomposition -- read the shares, not the totals.
 
 `sweep`: raw score against Random as the world count and search depth grow. The toys' "n = 8
 worlds is nearly the limit" does not transfer, because a toy belief holds 2-23 consistent worlds
-and full UNO's holds astronomically more; this is where that shows up.
+and full UNO's holds astronomically more; this is where that shows up. Since step 9.5f the world
+count can be climbed under a **belief** as well, which is what separates the two live explanations
+for the ladder flattening past w = 32: an off-profile leaf network (9.5e's conclusion), or worlds
+that were simply impossible (9.5f measured 79.9 % of them so, making w = 32 about six real worlds).
 
 `belief`: step 9.5f's ladder over what the agent believes about the opponent's hand -- `prior` (the
 uniform split, i.e. the 9.5e row unchanged), `voids` (the hard constraints a *voluntary draw*
@@ -42,7 +51,11 @@ The particle filter over the deal that docs/plan.md originally specified **colla
 survives the opponent's first play only if it holds the played card, ~7/98 on full UNO, so 64 of
 them decay 0.156 -> 0.018 -> 0.002 -> 0.0004 -> 0 over their first five plays, and a version that
 reset on collapse scored worse than the prior it replaced. These rungs therefore condition instead
-of weighting. docs/spec.md section 26.
+of weighting. docs/spec.md section 26. The `column` argument picks the opponent the ladder is
+scored against: step 9.5f ran only `random`, which is nearly uniform and so says little through its
+play choices, while the exact toys put the belief axis at 0.0-0.6 points against Random and up to
+2.6 against the Heuristic. `heuristic` is therefore where the soft `window` rung has to earn its
++29 % cost, having failed to beat `voids` against Random.
 
 `calibration`: is the belief *correct*, or merely more confident? Over-pruning is the dangerous
 failure of inference -- a belief that rules out the world the opponent is actually in looks sharp
@@ -103,6 +116,7 @@ from uno.compiled.pimc import CONTINUATIONS, WEIGHTINGS, pimc_n, pimc_response, 
 from uno.compiled.solvers import best_response, evaluate, two_sided
 from uno.compiled.strategies import transfer
 from uno.compiled.tree import compile_tree
+from uno.eval.belief import Belief
 from uno.eval.critic import CriticValues
 from uno.eval.pimc import chunks, pmap
 from uno.eval.search import PimcRollout, PimcSearch
@@ -360,25 +374,46 @@ def _sweep_chunk(rs, pair, seeds) -> list[tuple[float, float]]:
     return out
 
 
+BELIEF_SUFFIX = {"p": "prior", "v": "voids", "w": "window"}
+
+
 def _parse_config(rs, nets, heu, rnd, token: str):
     """`s32x2` = PimcSearch 32 worlds depth 2, each world solved two-sided; a trailing `r`
-    (`s32x2r`) solves each world as a best response to the column instead (step 9.5e);
-    `r8x4` = PimcRollout 8 worlds 4 rollouts; `heu`."""
+    (`s32x2r`) solves each world as a best response to the column instead (step 9.5e); a further
+    `v` / `w` (`s32x2rv`) draws the opponent's hand from step 9.5f's `voids` / `window` belief
+    instead of the uniform split; `r8x4` = PimcRollout 8 worlds 4 rollouts; `heu`.
+
+    **The belief is a separate field of the meta tuple, never folded into the continuation
+    letter.** The ladder groupings below filter on `cont in ("m", "r")`, so encoding a belief
+    there would silently drop every row it touched instead of grouping it.
+    """
     if token == "heu":
         return "Heuristic", heu, None
     kind, rest = token[0], token[1:]
+    bel = "prior"
+    if rest and rest[-1] in BELIEF_SUFFIX:
+        bel, rest = BELIEF_SUFFIX[rest[-1]], rest[:-1]
     resp = rest.endswith("r")
     rest = rest[:-1] if resp else rest
     a, b = (int(x) for x in rest.split("x"))
     leaves = (nets[0].value, nets[1].value)  # step 9.5e: per seat, not nets[0] twice
     if kind == "s":
         # the sweep's column is always Random, so that is what a response config best-responds to
-        label = f"PimcSearch w={a} d={b}" + (" resp" if resp else "")
-        agent = PimcSearch(rs, leaves, worlds=a, depth=b, name="pimc_resp_random" if resp else "pimc", opponent=rnd if resp else None)
-        return label, agent, ("search", a, b, "r" if resp else "m")
+        # -- and what a `window` belief reads the action probabilities of.
+        belief = None if bel == "prior" else Belief(rs, kind=bel, opponent=rnd)
+        # A name identifies a policy (context.md section 3), so a belief needs its own. The prior
+        # rows deliberately keep step 9.5e's bare names: same name, same world-sampling key, so at
+        # the same deals they replay that step's games exactly and reproduce its numbers to the
+        # digit -- the cross-check that this rewiring left the no-belief path alone.
+        name = ("pimc_resp_random" if resp else "pimc") + ("" if bel == "prior" else f"_{bel}")
+        label = f"PimcSearch w={a} d={b}" + (" resp" if resp else "") + ("" if bel == "prior" else f" {bel}")
+        agent = PimcSearch(rs, leaves, worlds=a, depth=b, name=name, opponent=rnd if resp else None, belief=belief)
+        return label, agent, ("search", a, b, "r" if resp else "m", bel)
     if kind == "r":
-        return f"PimcRollout w={a} r={b}", PimcRollout(rs, (heu, rnd), worlds=a, rollouts=b, name="pimc_rollout"), ("rollout", a, b, "m")
-    raise SystemExit(f"bad sweep config {token!r}: s<worlds>x<depth>[r], r<worlds>x<rollouts>, or heu")
+        if bel != "prior":
+            raise SystemExit(f"bad sweep config {token!r}: the rollout player takes no belief (it never determinizes with one)")
+        return f"PimcRollout w={a} r={b}", PimcRollout(rs, (heu, rnd), worlds=a, rollouts=b, name="pimc_rollout"), ("rollout", a, b, "m", "prior")
+    raise SystemExit(f"bad sweep config {token!r}: s<worlds>x<depth>[r][v|w], r<worlds>x<rollouts>, or heu")
 
 
 def sweep_section(games: int, workers: int | None, spec: str | None = None) -> None:
@@ -404,7 +439,7 @@ def sweep_section(games: int, workers: int | None, spec: str | None = None) -> N
     print("   ~50-decision game is soon: measured at 3,000 deals under the response rule (step 9.5e), it removes")
     print("   11-19 % of the standard error on every axis -- worlds, depth and continuation alike, so 9.5d's")
     print("   '8 % for depth, 18-20 % for worlds' split does not survive a powered run. Never step 9's 77-85 %.")
-    print(f"   {'row':30s} {'seat 0':>14s} {'seat 1':>14s} {'ms/game':>8s} {'sec':>6s}")
+    print(f"   {'row':34s} {'seat 0':>14s} {'seat 1':>14s} {'ms/game':>8s} {'sec':>6s}")
     scores: dict[str, np.ndarray] = {}
     meta: dict[str, tuple] = {}
     for token in tokens:
@@ -415,7 +450,7 @@ def sweep_section(games: int, workers: int | None, spec: str | None = None) -> N
         secs = time.perf_counter() - t0
         scores[token], meta[token] = arr, (label, kind)
         cells = [f"{arr[:, s].mean():.4f}+-{arr[:, s].std(ddof=1) / math.sqrt(len(arr)):.4f}" for s in (0, 1)]
-        print(f"   {label:30s} {cells[0]:>14s} {cells[1]:>14s} {1000 * secs / (2 * len(arr)):8.1f} {secs:6.0f}")
+        print(f"   {label:34s} {cells[0]:>14s} {cells[1]:>14s} {1000 * secs / (2 * len(arr)):8.1f} {secs:6.0f}")
         sys.stdout.flush()
 
     # Depth, tested properly: the same deals and the same sampled worlds, so the difference is paired.
@@ -429,56 +464,89 @@ def sweep_section(games: int, workers: int | None, spec: str | None = None) -> N
         print(f"      {label:28s} {cells[0]:>18s} {cells[1]:>18s}")
 
     search = {t: m[1] for t, m in meta.items() if m[1] and m[1][0] == "search"}
-    # The budget ladders are read *within* a continuation: mixing the two would compare different
-    # agents, not different budgets. Step 9.5d's "flat past 32 worlds" and "depth does not help"
-    # were both measured under the two-sided rule with the seat-0 network at both seats, so under
-    # the response rule they are open questions again rather than settled ones.
+    seen = [b for b in ("prior", "voids", "window") if any(m[4] == b for m in search.values())]
+    # The budget ladders are read *within* a continuation **and within a belief**: mixing either
+    # would compare different agents, not different budgets. Step 9.5d's "flat past 32 worlds" and
+    # "depth does not help" were both measured under the two-sided rule with the seat-0 network at
+    # both seats, so under the response rule they are open questions again rather than settled ones
+    # -- and step 9.5f reopened them a second time, since 79.9 % of the worlds those ladders were
+    # counting were impossible (see the belief block at the end of this section).
     for cont, cname in (("m", "two-sided"), ("r", "response")):
-        base = {w: t for t, (_, w, d, c) in search.items() if d == 2 and c == cont}
-        deep = [(t, w, d) for t, (_, w, d, c) in search.items() if d > 2 and c == cont]
-        if deep and base:
-            print(f"\n   [{cname}] paired effect of depth at equal worlds (deeper minus depth 2, score points; negative = deeper is worse).")
-            print("   The two depths diverge at the first decision they disagree on, so 9.5d expected this pairing to be the")
-            print("   weak one (~8 % of the SE); measured at 3,000 deals (9.5e) it removes 15-19 %, more than the worlds pairing.")
+        for bel in seen:
+            tag = cname if bel == "prior" else f"{cname}, {bel}"
+            base = {w: t for t, (_, w, d, c, b) in search.items() if d == 2 and c == cont and b == bel}
+            deep = [(t, w, d) for t, (_, w, d, c, b) in search.items() if d > 2 and c == cont and b == bel]
+            if deep and base:
+                print(f"\n   [{tag}] paired effect of depth at equal worlds (deeper minus depth 2, score points; negative = deeper is worse).")
+                print("   The two depths diverge at the first decision they disagree on, so 9.5d expected this pairing to be the")
+                print("   weak one (~8 % of the SE); measured at 3,000 deals (9.5e) it removes 15-19 %, more than the worlds pairing.")
+                print(f"      {'comparison':28s} {'seat 0':>18s} {'seat 1':>18s}")
+                for t, w, d in sorted(deep, key=lambda x: (x[1], x[2])):
+                    if w in base:
+                        paired_row(f"w={w}: d={d} - d=2", t, base[w])
+                sys.stdout.flush()
+            if len(base) > 1:
+                least = min(base)
+                print(f"\n   [{tag}] paired effect of worlds at depth 2 (more worlds minus w={least}, score points; positive = more worlds is better).")
+                print(f"   The larger config's first {least} worlds are exactly the smaller one's, so the two agree wherever those")
+                print("   already decided the action. Measured at 3,000 deals (9.5e) this pairing removes ~14 % of the SE --")
+                print("   *less* than the depth pairing, which reverses what 9.5d expected of the two axes.")
+                print(f"      {'comparison':28s} {'seat 0':>18s} {'seat 1':>18s}")
+                for w in sorted(base):
+                    if w != least:
+                        paired_row(f"d=2: w={w} - w={least}", base[w], base[least])
+                # Successive doublings: "does the *next* doubling still pay". The rows above cannot
+                # answer it -- they share a baseline, so the standard error of a difference between two
+                # of them needs their covariance and is not recoverable from what they print. Step 9.5e
+                # had to read "flat past 32" off unpaired per-config errors for exactly that reason.
+                ws = sorted(base)
+                if len(ws) > 2:
+                    print(f"      {'-- each doubling against the previous one':28s}")
+                    for a, b in zip(ws, ws[1:]):
+                        paired_row(f"d=2: w={b} - w={a}", base[b], base[a])
+                sys.stdout.flush()
+
+    # Step 9.5e's headline: the continuation rule, at an otherwise identical budget and belief.
+    for bel in seen:
+        resp = {(w, d): t for t, (_, w, d, c, b) in search.items() if c == "r" and b == bel}
+        mini = {(w, d): t for t, (_, w, d, c, b) in search.items() if c == "m" and b == bel}
+        shared = sorted(set(resp) & set(mini))
+        if shared:
+            print(f"\n   [{bel}] paired effect of the continuation rule (response minus two-sided, score points; positive = responding is better).")
+            print("   Exact on the toys: solving each world against the opponent's real policy instead of assuming a clairvoyant")
+            print("   one is worth up to 8.8 points there, and most on free play, which full UNO is (09.5d section 1).")
+            print("   The two share a world-sampling key only when they share a name, which they do not (a response agent is a")
+            print("   different policy per column), so read this as unpaired-ish: the coupling here is the deal, not the worlds.")
             print(f"      {'comparison':28s} {'seat 0':>18s} {'seat 1':>18s}")
-            for t, w, d in sorted(deep, key=lambda x: (x[1], x[2])):
-                if w in base:
-                    paired_row(f"w={w}: d={d} - d=2", t, base[w])
-            sys.stdout.flush()
-        if len(base) > 1:
-            least = min(base)
-            print(f"\n   [{cname}] paired effect of worlds at depth 2 (more worlds minus w={least}, score points; positive = more worlds is better).")
-            print(f"   The larger config's first {least} worlds are exactly the smaller one's, so the two agree wherever those")
-            print("   already decided the action. Measured at 3,000 deals (9.5e) this pairing removes ~14 % of the SE --")
-            print("   *less* than the depth pairing, which reverses what 9.5d expected of the two axes.")
-            print(f"      {'comparison':28s} {'seat 0':>18s} {'seat 1':>18s}")
-            for w in sorted(base):
-                if w != least:
-                    paired_row(f"d=2: w={w} - w={least}", base[w], base[least])
-            # Successive doublings: "does the *next* doubling still pay". The rows above cannot
-            # answer it -- they share a baseline, so the standard error of a difference between two
-            # of them needs their covariance and is not recoverable from what they print. Step 9.5e
-            # had to read "flat past 32" off unpaired per-config errors for exactly that reason.
-            ws = sorted(base)
-            if len(ws) > 2:
-                print(f"      {'-- each doubling against the previous one':28s}")
-                for a, b in zip(ws, ws[1:]):
-                    paired_row(f"d=2: w={b} - w={a}", base[b], base[a])
+            for w, d in shared:
+                paired_row(f"w={w} d={d}: resp - two-sided", resp[(w, d)], mini[(w, d)])
             sys.stdout.flush()
 
-    # Step 9.5e's headline: the continuation rule, at an otherwise identical budget.
-    resp = {(w, d): t for t, (_, w, d, c) in search.items() if c == "r"}
-    mini = {(w, d): t for t, (_, w, d, c) in search.items() if c == "m"}
-    shared = sorted(set(resp) & set(mini))
-    if shared:
-        print("\n   paired effect of the continuation rule (response minus two-sided, score points; positive = responding is better).")
-        print("   Exact on the toys: solving each world against the opponent's real policy instead of assuming a clairvoyant")
-        print("   one is worth up to 8.8 points there, and most on free play, which full UNO is (09.5d section 1).")
-        print("   The two share a world-sampling key only when they share a name, which they do not (a response agent is a")
-        print("   different policy per column), so read this as unpaired-ish: the coupling here is the deal, not the worlds.")
+    # Step 9.5f's axis inside the sweep: the belief, at an otherwise identical budget.
+    #
+    # This is what separates the two live explanations for the worlds ladder flattening past
+    # w = 32 (09.5f-results.md item 4). Step 9.5e promoted the off-profile leaf value network to
+    # "the residual explanation" because the flattening survived fixing the continuation rule and
+    # the seat networks. Step 9.5f then measured that the void constraint alone rules out 79.9 %
+    # of `determinize_l1`'s worlds -- so w = 32 was carrying ~6 *possible* worlds, well inside the
+    # steep part of that very ladder, and the ladder may have been flat because the extra worlds
+    # were impossible rather than because the leaves cap what search can do. The two predict
+    # different shapes for the `voids` ladder above: if it climbs past w = 32 where `prior` was
+    # flat, world *quality* was binding; if it flattens in the same place, the leaf network stands.
+    prior_at = {(w, d, c): t for t, (_, w, d, c, b) in search.items() if b == "prior"}
+    for bel in seen:
+        if bel == "prior":
+            continue
+        shared = sorted((w, d, c) for t, (_, w, d, c, b) in search.items() if b == bel and (w, d, c) in prior_at)
+        if not shared:
+            continue
+        print(f"\n   paired effect of the `{bel}` belief at an equal budget ({bel} minus prior, score points; positive = inference helps).")
+        print("   The two carry different names, so they do *not* share a world-sampling key: the coupling is the deal.")
+        print("   Measured against Random at w = 32, d = 2 over 3,000 deals (step 9.5f): voids +2.83 / +4.40.")
         print(f"      {'comparison':28s} {'seat 0':>18s} {'seat 1':>18s}")
-        for w, d in shared:
-            paired_row(f"w={w} d={d}: resp - two-sided", resp[(w, d)], mini[(w, d)])
+        for w, d, c in shared:
+            t = next(t for t, m in search.items() if m[1:] == (w, d, c, bel))
+            paired_row(f"w={w} d={d}{' resp' if c == 'r' else ''}: {bel} - prior", t, prior_at[(w, d, c)])
         sys.stdout.flush()
 
 
@@ -499,7 +567,7 @@ def _belief_chunk(rs, pair, seeds):
     return out
 
 
-def belief_section(games: int, worlds: int, depth: int, workers: int | None) -> None:
+def belief_section(games: int, worlds: int, depth: int, workers: int | None, column: str = "random") -> None:
     """Step 9.5f: what the opponent's own actions are worth to the PIMC row.
 
     `determinize_l1` splits the unseen cards uniformly, which is `uno.compiled.pimc`'s `"prior"`
@@ -520,28 +588,32 @@ def belief_section(games: int, worlds: int, depth: int, workers: int | None) -> 
     replaced* (Brier 0.167 against 0.085, its 1.000 bin observed at 0.112). The rungs above
     condition instead of weighting, which is why they cannot degenerate.
     """
-    from uno.eval.belief import Belief
     from uno.eval.play import EVAL_SEEDS
 
+    if column not in ("random", "heuristic"):
+        raise SystemExit(f"unknown belief column {column!r}: random or heuristic")
     rs = rules.FULL_UNO
     nets = [net_for(rs, "heuristic", "random", s) for s in (0, 1)]
     leaves = (nets[0].value, nets[1].value)
-    rnd = PlayFirstRandom(rs)
+    col = PlayFirstRandom(rs) if column == "random" else Heuristic(rs)
     seeds = EVAL_SEEDS[:games]
     k = (os.cpu_count() or 1) * 8 if workers != 1 else 1
 
-    print(f"\n== FULL_UNO PIMC belief ladder vs Random: w={worlds}, d={depth}, response continuation.")
+    print(f"\n== FULL_UNO PIMC belief ladder vs {col.name}: w={worlds}, d={depth}, response continuation.")
     print(f"   {games} EVAL deals per rung, both seatings, paired on the same deals.")
     print(f"   {'belief':10s} {'seat 0':>16s} {'seat 1':>16s} {'ms/game':>9s}")
     scores: dict[str, np.ndarray] = {}
     beliefs: dict[str, object] = {}
     for label in ("prior", "voids", "window"):
-        belief = None if label == "prior" else Belief(rs, kind=label, opponent=rnd if label == "window" else None)
+        belief = None if label == "prior" else Belief(rs, kind=label, opponent=col if label == "window" else None)
         beliefs[label] = belief
-        # a name identifies a policy (docs/context.md section 3) and these are three policies
-        agent = PimcSearch(rs, leaves, worlds=worlds, depth=depth, name=f"pimc_resp_random_{label}", opponent=rnd, belief=belief)
+        # A name identifies a policy (docs/context.md section 3). A response row is already a
+        # different policy per column, so the column goes in the name beside the rung -- which
+        # also keeps the vs-Random names byte-identical to step 9.5f's, so re-running that column
+        # replays its games rather than merely resampling them.
+        agent = PimcSearch(rs, leaves, worlds=worlds, depth=depth, name=f"pimc_resp_{column}_{label}", opponent=col, belief=belief)
         t0 = time.perf_counter()
-        parts = pmap(_belief_chunk, [(rs, (agent, rnd), c) for c in chunks(seeds, k)], workers)
+        parts = pmap(_belief_chunk, [(rs, (agent, col), c) for c in chunks(seeds, k)], workers)
         arr = np.array([g for p in parts for g in p])
         secs = time.perf_counter() - t0
         scores[label] = arr
@@ -553,19 +625,31 @@ def belief_section(games: int, worlds: int, depth: int, workers: int | None) -> 
     print("   The three rungs carry different names, so they do *not* share a world-sampling key:")
     print("   the coupling here is the deal, as it is for the continuation rule (step 9.5e).")
     print(f"      {'comparison':24s} {'seat 0':>20s} {'seat 1':>20s}")
-    for label in ("voids", "window"):
-        cells = []
+
+    def diff_row(lo: str, hi: str) -> list[float]:
+        cells, zs = [], []
         for s in (0, 1):
-            d = scores[label][:, s] - scores["prior"][:, s]
+            d = scores[hi][:, s] - scores[lo][:, s]
             se = d.std(ddof=1) / math.sqrt(len(d))
-            cells.append(f"{100 * d.mean():+6.2f}+-{100 * se:.2f} (z {au.z_of(d.mean(), se):+.1f})")
-        print(f"      {label + ' - prior':24s} {cells[0]:>20s} {cells[1]:>20s}")
-    cells = []
-    for s in (0, 1):
-        d = scores["window"][:, s] - scores["voids"][:, s]
-        se = d.std(ddof=1) / math.sqrt(len(d))
-        cells.append(f"{100 * d.mean():+6.2f}+-{100 * se:.2f} (z {au.z_of(d.mean(), se):+.1f})")
-    print(f"      {'window - voids':24s} {cells[0]:>20s} {cells[1]:>20s}")
+            zs.append(au.z_of(d.mean(), se))
+            cells.append(f"{100 * d.mean():+6.2f}+-{100 * se:.2f} (z {zs[-1]:+.1f})")
+        print(f"      {f'{hi} - {lo}':24s} {cells[0]:>20s} {cells[1]:>20s}")
+        return zs
+
+    zs = {label: diff_row("prior", label) for label in ("voids", "window")}
+    diff_row("voids", "window")
+
+    # Real checks. Step 9.5f shipped this section with none, so its "0 failed checks" line was
+    # vacuous (09.5f-results.md item 5). Both are sized to catch a *broken* belief, not to police
+    # a close call: a threshold sitting just above the observed value is a test that fails on a
+    # different seed range by construction (docs/context.md section 7).
+    sizes = {label: len(a) for label, a in scores.items()}
+    check(len(set(sizes.values())) == 1, f"belief: the rungs did not score the same deals ({sizes}), so the paired differences above are not paired")
+    for label, z in zs.items():
+        check(
+            min(z) > -3.0,
+            f"belief: {label} is {min(z):.1f} sigma *below* the uniform prior at a seat -- a belief that scores worse than no belief at all is over-pruning, not inference (the refuted particle filter's signature)",
+        )
 
     # The fallback rate says whether the belief was *available*; a report that hides it hides
     # whether the rung ran at all. The counters live on the agent, which `pmap` pickles into each
@@ -725,6 +809,7 @@ def main(argv: list[str] | None = None) -> None:
             int(args[1]) if len(args) > 1 else 32,
             int(args[2]) if len(args) > 2 else 2,
             int(args[3]) if len(args) > 3 and args[3] else None,
+            args[4] if len(args) > 4 and args[4] else "random",
         )
     elif section == "calibration":
         calibration_section(int(args[0]) if args else 120, int(args[1]) if len(args) > 1 else 64)

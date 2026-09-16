@@ -1406,11 +1406,21 @@ Planned design and checks (from the plan and step 8.9):
   the worlds-versus-depth budget study). Since step 9.5e `pimc sweep` takes an `s<worlds>x<depth>r`
   config token and `pimc uno` a trailing `r` argument, both selecting the `response` continuation
   (each determinized world solved as a best response to the known column). Since step 9.5f
-  `pimc belief` runs the belief ladder (`prior` / `voids` / `window`, docs/spec.md section 26) and
-  `pimc calibration` checks that a belief is *correct* rather than merely confident -- the
+  `pimc belief [deals] [worlds] [depth] [workers] [column=random|heuristic]` runs the belief ladder
+  (`prior` / `voids` / `window`, docs/spec.md section 26) against the named column -- the column is
+  part of the question, since Random's play choices are nearly uniform and so say little, which is
+  why the toys put the belief axis at 0.0-0.6 points against Random but up to 2.6 against the
+  Heuristic -- and a further `v` / `w` on a `sweep` config token (`s32x2rv`) climbs any ladder
+  *under* a belief. The belief is a separate field of the config's meta tuple, never folded into
+  the continuation letter: the ladder groupings filter on that letter and would silently drop the
+  rows rather than group them. `pimc calibration` checks that a belief is *correct* rather than
+  merely confident -- the
   instrument that refuted the deal-time particle filter, with two pre-declared checks (no rung
   materially worse than the exact prior; no populated reliability bin missing by more than 0.25).
-  Unlike `belief` it runs single-process, so it also reports the fallback rates.
+  Unlike `belief` it runs single-process, so it also reports the fallback rates; `belief` itself
+  carries two checks of its own (the rungs scored the same deals; no rung 3 sigma *below* the
+  uniform prior at a seat), added because as shipped in 9.5f it registered none and its
+  "0 failed checks" line was vacuous.
   Tests: `uv run pytest` (**206 tests, 7 min 27 s** at step 9.5f; 154 in 6 min 44 s at 9.5c, 197 at
   9.5e). Suite time is noisy on a loaded machine rather than monotone in the test count: 9.5e logged
   an unexplained +3 min 40 s jump with no cause established, and 9.5f ran four minutes *faster* with
