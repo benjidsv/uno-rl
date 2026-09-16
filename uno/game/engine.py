@@ -10,6 +10,7 @@ import random
 from bisect import insort
 from dataclasses import dataclass
 from enum import IntEnum
+from functools import cache
 
 from uno.game.rules import Draw, Kind, Pass, Play, Ruleset
 
@@ -127,16 +128,30 @@ def is_playable(ruleset: Ruleset, card: int, top: int, current_color: int) -> bo
     return ct.kind is tt.kind
 
 
+@cache
+def playable_table(rs: Ruleset) -> tuple[tuple[frozenset[int], ...], ...]:
+    """`table[top][colour]` = the card types playable on that board, i.e. `is_playable` tabulated.
+
+    `is_playable` is a pure function of `(card, top, colour)` over a domain of a few thousand, and
+    it is the single hottest call in the hot paths that ask it about card after card: measured on
+    `FULL_UNO`, 138 ns as a call against 24 ns as a `frozenset` membership test. Callers take the
+    table once and index it, so the per-card cost is the lookup and nothing else."""
+    return tuple(
+        tuple(frozenset(c for c in range(rs.num_types) if is_playable(rs, c, top, colour)) for colour in range(rs.colors))
+        for top in range(rs.num_types)
+    )
+
+
 def legal_actions(state: State) -> tuple[int, ...]:
     if state.terminal:
         return ()
     rs = state.ruleset
     if state.phase is Phase.AFTER_DRAW:
         return rs.play_actions[state.drawn] + (rs.pass_action,)
-    top, color = state.top, state.current_color
+    playable = playable_table(rs)[state.top][state.current_color]
     acts: list[int] = []
     for t in sorted(set(state.hands[state.player])):
-        if is_playable(rs, t, top, color):
+        if t in playable:
             acts.extend(rs.play_actions[t])
     if not rs.forced_play or not acts:
         acts.append(rs.draw_action)

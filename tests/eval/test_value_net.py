@@ -9,6 +9,7 @@ import random
 from functools import cache
 
 import numpy as np
+import pytest
 
 from tests.eval.test_pimc import small_profile
 from tests.game.test_draw_outcomes import RESH, games
@@ -18,9 +19,10 @@ from uno.compiled.lookup import build
 from uno.eval.critic import CriticValues
 from uno.eval.pimc import teacher_targets
 from uno.eval.play import play_game
-from uno.eval.value_net import ValueNet, fit_value_net, layout, observation_features, state_features
+from uno.eval.value_net import ValueNet, batch_state_features, fit_value_net, layout, observation_features, state_features
 from uno.experiments.pairing import DUPS
 from uno.game import rules
+from uno.game.engine import legal_actions, new_game, step
 from uno.game.observe import Level, observe
 from uno.game.symmetry import Symmetry
 
@@ -96,6 +98,61 @@ def test_at_a_fixed_batch_size_a_row_does_not_depend_on_its_neighbours():
         batch.insert(position, target)
         seen.add(float(net.values(batch)[position]))
     assert len(seen) == 1, f"one row took {len(seen)} different values at a fixed batch size: {seen}"
+
+
+@pytest.mark.parametrize("name", ("FULL_UNO", "TOY", "TOY2_SKIP", "TOY_FULL", "MID_12"))
+def test_batch_features_equal_the_row_at_a_time_ones_bit_for_bit(name):
+    """`batch_position_features` exists only to be faster, so it must produce the same array, not
+    a close one -- `np.array_equal`, never `allclose`. Anything less and the network sees different
+    inputs, the agent plays different games, and the rows on the ladder stop being comparable.
+
+    Parametrised over rulesets because the tables are built per ruleset and the toys differ in the
+    two dimensions the vectorisation folds into array shapes: the number of colours and the number
+    of ranks.
+    """
+    rs = getattr(rules, name)
+    states = []
+    for seed in range(12):
+        try:
+            s = new_game(rs, seed)
+        except ValueError:
+            continue
+        rng = random.Random(seed)
+        while not s.terminal and len(states) < 400:
+            states.append(s)
+            s = step(s, rng.choice(legal_actions(s)))
+    assert len(states) > 30
+    assert np.array_equal(batch_state_features(states), np.array([state_features(x) for x in states]))
+
+
+def test_batch_features_handle_a_wild_top_and_a_wild_drawn_card():
+    """The trap the vectorisation has to dodge: a wild has `col == -1`, and `eye[-1]` is not "no
+    colour", it is the *last* colour. Both `blk[15]` (does this block hold the top card's colour)
+    and `blk[16]` (the drawn card's) index by a card's colour, so a wild top or a wild drawn card
+    would silently light up the last colour block. The generic test above only catches this if its
+    random games happen to leave a wild on top, so this one builds the states deliberately."""
+    rs = rules.FULL_UNO
+    wild_top, wild_drawn = [], []
+    for seed in range(200):
+        s = new_game(rs, seed)
+        rng = random.Random(seed)
+        while not s.terminal:
+            if rs.card_types[s.top].is_wild:
+                wild_top.append(s)
+            if s.drawn is not None and rs.card_types[s.drawn].is_wild:
+                wild_drawn.append(s)
+            s = step(s, rng.choice(legal_actions(s)))
+        if len(wild_top) > 40 and len(wild_drawn) > 5:
+            break
+    assert wild_top and wild_drawn, "no state with a wild on the board was produced"
+    for states, what in ((wild_top, "a wild on top"), (wild_drawn, "a wild drawn card")):
+        assert np.array_equal(batch_state_features(states), np.array([state_features(x) for x in states])), what
+
+
+def test_an_empty_batch_is_refused_rather_than_guessed():
+    """The ruleset comes from the batch, so there is nothing to build a zero-row array of."""
+    with pytest.raises(ValueError, match="at least one state"):
+        batch_state_features([])
 
 
 def test_played_path_equals_tree_path():

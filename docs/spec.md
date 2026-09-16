@@ -1361,6 +1361,38 @@ alone, not on which rows accompany it or where it sits (`NetLeaf`, pinned in
 state, since the worlds come from an rng keyed on that state, so the agent remains the
 deterministic function of the information state that AIVAT's row correction assumes.
 
+**The batch's features are computed as array operations.** Once the leaf takes a batch, the
+row-at-a-time `position_features` is what is left, and 69 % of it is the loop over the two hands
+(the discard loop is 6 %). Every feature it computes is a sum over the cards of a per-card quantity
+or a reduction of one, so `batch_position_features` turns the batch's hands into a
+`(n, num_types)` multiplicity matrix and the features into matrix products against tables that
+depend only on the ruleset -- `playable[top, colour]` for the playable counts, `(rank, colour)`
+indicators for "ranks held in two or more colours", and so on. 3.2x on the features.
+
+It is **bit-identical** to `position_features`, and has to be: every feature is a count, a count
+compared with a constant, or a count divided by the same constant, so float64 has nothing to
+reassociate. `tests/eval/test_value_net.py` asserts `np.array_equal` over five rulesets -- the
+tables are built per ruleset, and the toys differ in the two dimensions the vectorisation folds
+into array shapes -- plus a case built deliberately around a **wild top card**: a wild has
+`colour == -1`, `eye[-1]` is the *last* colour rather than none, and the two block features that
+index by a card's colour would silently light it up. Random games reach that state too rarely for
+the general test to be relied on for it.
+
+**What a decision derives once, it derives once.** `unseen_cards` and the belief's `voids` /
+`trailing_window` depend on the observation alone, and a decision samples `worlds` worlds, so all
+three were being recomputed over the same history that many times. `PimcSearch._worlds_q` computes
+the split once and passes it to `determinize_l1`; `Belief` memoises its constraints on the public
+history they came from. The memo is keyed on that history, so it answers what a freshly built
+`Belief` would and the policy stays a deterministic function of the information state --
+`tests/eval/test_belief.py` reuses one `Belief` across decisions with differing histories and
+demands a fresh one's answers, which is the staleness a memo gets wrong.
+
+**`is_playable` is tabulated.** It is a pure function of `(card, top, colour)` over a domain of a
+few thousand and the single hottest call where cards are tested one after another: 138 ns as a
+call against 24 ns as a `frozenset` membership test. `uno.game.engine.playable_table` tabulates it,
+and `legal_actions` and the belief's `satisfies` -- which is nothing *but* that test, on every
+candidate hand of every world -- index the table instead. Worth 1.9x on the `voids` belief.
+
 **The continuation rule (step 9.5e).** `search_value` assumes the opponent is clairvoyant too,
 which is classic PIMC and the `"minimax"` continuation above. Given an `opponent`, `PimcSearch`
 instead solves each world with `response_value`: max at its own nodes, the **expectation under the

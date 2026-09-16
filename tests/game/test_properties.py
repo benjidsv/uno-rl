@@ -18,11 +18,13 @@ from uno import (
     State,
     deal,
     initial_state,
+    is_playable,
     legal_actions,
     observe,
     reconstruct,
     step,
 )
+from uno.game.engine import playable_table
 
 
 def multiset(s: State) -> Counter:
@@ -217,3 +219,17 @@ def test_action_encoding_is_complete(rs):
     kinds = [ct.kind for ct in rs.card_types]
     assert kinds == sorted(kinds)  # numbers, skips, reverses, +2, W, W+4
     assert kinds[0] is Kind.NUMBER
+
+
+@game
+@walks
+def test_11_playable_table_is_is_playable(rs, seed, policy_seed):
+    """`playable_table` tabulates `is_playable`, so it has to agree on every cell of its domain,
+    not on the cells a game happens to reach -- a wrong cell would show up as a missing legal
+    action only in the position that needed it."""
+    table = playable_table(rs)
+    for top in range(rs.num_types):
+        for colour in range(rs.colors):
+            cell = table[top][colour]
+            for card in range(rs.num_types):
+                assert (card in cell) == is_playable(rs, card, top, colour), f"card {card} on ({top}, {colour})"

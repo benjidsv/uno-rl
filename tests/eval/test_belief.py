@@ -183,3 +183,40 @@ def test_the_agent_stays_a_deterministic_function_of_the_information_state():
                 n += 1
             s = step(s, rng.choice(legal))
     assert n > 40
+
+
+def _observations(rs, games: int, cap: int = 10**9):
+    """The mover's L1 observation along random-policy games."""
+    for seed in range(games):
+        s = new_game(rs, seed)
+        rng = random.Random(seed)
+        n = 0
+        while not s.terminal and n < cap:
+            yield observe(s, s.player, Level.L1)
+            s = step(s, rng.choice(legal_actions(s)))
+            n += 1
+
+
+def test_the_constraint_memo_follows_the_decision_it_was_derived_from():
+    """`Belief` memoises what a decision derives from its public history, because every world of
+    that decision asks for the same thing. The failure a memo has is not being slow, it is being
+    *stale*: a belief reused across decisions -- which is exactly how one is used, one object per
+    rung for a whole run -- must answer for the history in front of it and not the one before.
+
+    So this walks real decisions with a single reused `Belief` and demands the same answers a
+    fresh one gives each time, and it checks the histories actually differ, or a memo that never
+    invalidated would pass."""
+    rs = rules.FULL_UNO
+    rnd = PlayFirstRandom(rs)
+    shared = {k: Belief(rs, kind=k, opponent=rnd if k == "window" else None) for k in ("voids", "window")}
+    seen, n = set(), 0
+    for obs in _observations(rs, 3, cap=14):
+        opp = obs.seat ^ 1
+        seen.add(len(obs.public))
+        for kind, bel in shared.items():
+            fresh = Belief(rs, kind=kind, opponent=rnd if kind == "window" else None)
+            assert bel._constraints(obs, opp) == fresh._constraints(obs, opp), kind
+            unseen, _ = unseen_cards(rs, obs)
+            assert bel.hand(obs, list(unseen), random.Random(3)) == fresh.hand(obs, list(unseen), random.Random(3))
+        n += 1
+    assert n > 20 and len(seen) > 5, "the decisions did not have differing histories, so staleness could not show"

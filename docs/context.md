@@ -996,7 +996,7 @@ carry the whole measured gain, so the cheap, policy-free rung is the one to keep
 
 Results: `docs/results/09.5f-results.md`.
 
-### 5.21 After 9.5f: batched leaves, a 2.8-3.3x speed-up that changes no number
+### 5.21 After 9.5f: a 2.6-4.5x speed-up that changes no number
 
 **Problem:** a full-UNO PIMC row costs 125-165 ms/game and the belief ladder at 4,000 deals runs
 about an hour, which is the tax on every question asked of the agent. Profiling put **69 % of the
@@ -1010,10 +1010,11 @@ depth-limited trees before consulting the leaf (`_plan` defers each leaf state i
 leaves its index in the plan), evaluates them all in one call, and backs the values up (`_fold`).
 `uno.eval.value_net.NetLeaf` is the batched leaf; a plain callable still works, one call per state.
 
-**What it bought:** **2.8-3.3x** end to end on the response rows (`prior` 3.1x / 3.3x, `voids` 2.8x /
-2.9x against the Heuristic / Random), 1.8-2.1x on `window`, 3.3x on the two-sided `minimax` rows --
-at **identical per-game scores** on the real network, across both columns and all three belief
-rungs. The belief ladder at 4,000 deals goes from about an hour to about twenty minutes.
+**What it bought:** **2.8-3.3x** end to end on the response rows, 1.8-2.1x on `window`, 3.3x on the
+two-sided `minimax` rows -- at **identical per-game scores** on the real network, across both
+columns and all three belief rungs. Confirmed at full scale: re-running the 4,000-deal ladder
+against the Heuristic reproduced the killed pre-optimisation run's `prior` rung to the digit
+(0.6175 / 0.5897) at 24.5 ms/game against 76.2.
 
 **What it taught:**
 
@@ -1035,13 +1036,34 @@ rungs. The belief ladder at 4,000 deals goes from about an hour to about twenty 
   deterministic function of the information state AIVAT's row correction assumes. That is now the
   documented claim and a test.
 
-**What is left on the table** (measured, not built): after batching, the profile is flat and
-interpreter-bound -- `position_features` 35 %, world construction 29 % (of which `rng.shuffle` of a
-~90-card pile to draw at most a few, and a `Counter` difference recomputed once per world instead of
-once per decision), `step` / `freeze` 20 %, the network itself 6 %. A table-driven `is_playable`
-(138 ns a card as a call, 24 ns as a frozenset lookup) is worth ~1.9x on the `voids` belief, whose
-`satisfies` is nothing but that test. Beyond that the remaining ~90 % is Python, which is where a
-Rust engine would start paying.
+**Then the second pass, on what batching exposed.** With the leaf no longer dominant the profile
+was flat and interpreter-bound -- `position_features` 35 %, world construction 29 %, `step` /
+`freeze` 20 %, the network itself 6 % -- so each candidate was measured before being built, and
+three of five were dropped on the measurement:
+
+- **built:** `batch_position_features`, the batch's features as array products against per-ruleset
+  tables (3.2x on the features, **1.3-1.6x end to end**, bit-identical); the per-decision derivations
+  (`unseen_cards`, `voids`, `trailing_window`) computed once instead of once per world; and
+  `playable_table`, `is_playable` tabulated (138 ns a card as a call against 24 ns as a frozenset
+  lookup), worth **1.9x on the `voids` belief**, whose `satisfies` is nothing but that test.
+- **dropped:** copy-on-write in `step` (1.13x on `step`, ~2 % overall -- the cost is not the
+  copying); caching the board and discard features across a decision's worlds (the discard loop is
+  6 % of the features, and the board is shared in only 11 of 26 groups); and a partial shuffle of
+  the ~90-card pile to draw at most a few (7 %, but no early exit preserves `random.shuffle`'s
+  stream, so it would resample the ladder rather than replay it).
+
+Together the two passes, measured through the parallel CLI on the same 400 EVAL deals against the
+Heuristic (ms/game, identical scores at every step):
+
+| rung | before | batched leaves | + this pass | total |
+|------|-------:|---------------:|------------:|------:|
+| `prior` | 79.5 | 25.7 | **17.7** | 4.5x |
+| `voids` | 91.6 | 32.8 | **21.0** | 4.4x |
+| `window` | 132.7 | 68.3 | **50.3** | 2.6x |
+
+Beyond that the remaining ~90 % is Python, which is where a Rust engine would start paying -- but
+the binding constraint on what the agent is *worth* is the leaf network (R^2 0.07-0.25) and the
+share of impossible worlds, neither of which more speed answers.
 
 ## 6. Results: what we know
 

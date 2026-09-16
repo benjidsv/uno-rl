@@ -94,7 +94,7 @@ def unseen_cards(rs: Ruleset, obs: Observation) -> tuple[list[int], tuple[int, .
     return unseen, tail
 
 
-def determinize_l1(rs: Ruleset, obs: Observation, rng: random.Random, belief=None) -> State:
+def determinize_l1(rs: Ruleset, obs: Observation, rng: random.Random, belief=None, split=None) -> State:
     """A state consistent with `obs`: the unseen cards split into the opponent's hand and the
     pile. See the module docstring on the fabricated opponent memory.
 
@@ -102,8 +102,13 @@ def determinize_l1(rs: Ruleset, obs: Observation, rng: random.Random, belief=Non
     PIMC with no inference at all. A `uno.eval.belief.Belief` instead draws the opponent's hand
     from what their own actions implied (step 9.5f), which is the `"posterior"` direction. The
     belief only chooses the *hand*; the pile is the remainder in a uniform order either way.
+
+    `split` is `unseen_cards(rs, obs)` when the caller already has it. It depends on the
+    observation alone, so an agent sampling `worlds` worlds of one decision was recomputing the
+    same multiset difference over the same history `worlds` times (`PimcSearch._worlds_q` now
+    computes it once). The list is copied here because the uniform branch shuffles it in place.
     """
-    unseen, tail = unseen_cards(rs, obs)
+    unseen, tail = unseen_cards(rs, obs) if split is None else (list(split[0]), split[1])
     me, opp = obs.seat, obs.seat ^ 1
     if belief is None:
         rng.shuffle(unseen)
@@ -381,7 +386,8 @@ class PimcSearch:
         search takes none -- so the worlds are the same worlds, which is what lets the batched
         agent replay the unbatched one's games rather than merely resample them.
         """
-        worlds = [determinize_l1(self.rs, obs, rng, self.belief) for _ in range(n)]
+        split = unseen_cards(self.rs, obs)  # the same for every world of this decision
+        worlds = [determinize_l1(self.rs, obs, rng, self.belief, split) for _ in range(n)]
         return batched_search_q(worlds, obs.seat, self.depth, leaf_for(self.leaf, obs.seat), self.exhaustion, self.opponent)
 
     def _scores(self, obs: Observation, legal: tuple[int, ...]) -> dict[int, float]:

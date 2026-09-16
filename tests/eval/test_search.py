@@ -16,6 +16,7 @@ import pytest
 from tests.game.test_draw_outcomes import RESH
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.eval.aivat import terminal_return
+from uno.eval.belief import Belief
 from uno.eval.search import PimcRollout, PimcSearch, batched_search_q, determinize_l1, leaf_for, response_value, search_q, search_value, unseen_cards
 from uno.game import rules
 from uno.game.chance import pile_split
@@ -340,6 +341,25 @@ def test_the_response_agent_matches_the_exact_value_on_the_toy_that_separates_th
         if abs(exact["response"] - exact["minimax"]) > 0.03:  # only where the two rules really differ
             near = abs(xs.mean() - exact["response"]) < abs(xs.mean() - exact["minimax"])
             assert near, f"seat {seat}: sampled {xs.mean():.4f} is nearer the two-sided value {exact['minimax']:.4f} than {exact['response']:.4f}"
+
+
+def test_a_precomputed_split_gives_the_identical_world():
+    """`unseen_cards` depends on the observation alone, so an agent sampling `worlds` worlds of one
+    decision recomputed the same multiset difference over the same history that many times.
+    Passing it in must change nothing -- including the rng, which the uniform branch shuffles the
+    list with, so the list has to be copied and not aliased."""
+    rs = rules.FULL_UNO
+    n = 0
+    for _, obs in _decisions(rs, 4, cap=10):
+        split = unseen_cards(rs, obs)
+        for belief in (None, Belief(rs, kind="voids")):
+            a = determinize_l1(rs, obs, random.Random(5), belief)
+            b = determinize_l1(rs, obs, random.Random(5), belief, split)
+            assert a == b
+        # the caller's copy must survive being handed over twice
+        assert split == unseen_cards(rs, obs)
+        n += 1
+    assert n > 10
 
 
 # -- batched leaves (the leaf is consulted once per decision, not once per leaf state) -----------

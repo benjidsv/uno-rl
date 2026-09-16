@@ -55,7 +55,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 from uno.agents.baseline import Agent
-from uno.game.engine import Phase, is_playable
+from uno.game.engine import Phase, playable_table
 from uno.game.observe import Level, Observation
 from uno.game.rules import Kind, Play, Ruleset
 
@@ -108,9 +108,20 @@ def voids(rs: Ruleset, public: tuple, opp: int) -> list[Void]:
 
 
 def satisfies(rs: Ruleset, hand, vs: list[Void]) -> bool:
+    """Whether `hand` could be held by an opponent whose draws implied `vs`.
+
+    This is the belief's inner loop -- it runs on every candidate hand of every world -- and it is
+    nothing but the playable test, so it reads `playable_table` rather than calling `is_playable`
+    per card, and stops at the first card past a void's budget."""
+    table = playable_table(rs)
     for v in vs:
-        if sum(1 for c in hand if is_playable(rs, c, v.top, v.colour)) > v.since:
-            return False
+        playable = table[v.top][v.colour]
+        over, budget = 0, v.since
+        for c in hand:
+            if c in playable:
+                over += 1
+                if over > budget:
+                    return False
     return True
 
 
@@ -151,7 +162,14 @@ class Belief:
 
     Stateless across decisions by construction -- there is nothing to carry, because nothing is
     propagated -- so the policy stays a deterministic function of the information state, which
-    AIVAT's row correction needs (docs/spec.md section 25), with no cache to invalidate."""
+    AIVAT's row correction needs (docs/spec.md section 25). `_constraints` memoises what a decision
+    derives from its public history, which is a memo and not state: it is keyed on that history, so
+    it answers exactly what a freshly built `Belief` would."""
+
+    # Class-level defaults, so an instance that predates them -- one pickled by a `pmap` parent
+    # against an older copy of this module -- still answers rather than raising an AttributeError.
+    _cache_key: tuple | None = None
+    _cached: tuple[list[Void], list] | None = None
 
     def __init__(self, rs: Ruleset, kind: str = "window", opponent: Agent | None = None, tries: int = 32) -> None:
         if kind not in BELIEFS:
@@ -161,6 +179,14 @@ class Belief:
         self.rs, self.kind, self.opponent, self.tries = rs, kind, opponent, tries
         self.fallbacks = 0  # decisions where no consistent hand was found and the prior was used
         self.draws = 0
+        # One decision asks for `worlds` hands and every one of them read the same history to
+        # derive the same constraints, so `voids` / `trailing_window` are memoised for the public
+        # history they were derived from. This is a memo, not state: the key is the history itself,
+        # so the answer is the one a fresh `Belief` would give, and the policy stays the
+        # deterministic function of the information state AIVAT needs. The key is compared by
+        # identity, which is sound because the cache holds a reference to the tuple it keyed on,
+        # so that object cannot be freed and its address reused while the entry is live.
+        self._cache_key, self._cached = None, None
 
     def hand(self, obs: Observation, unseen: list[int], rng: random.Random) -> tuple[int, ...]:
         """One opponent hand of `obs.opp_hand_size` cards from `unseen`.
@@ -175,8 +201,7 @@ class Belief:
             return tuple(sorted(rng.sample(pool, k)))
 
         opp = obs.seat ^ 1
-        vs = voids(self.rs, obs.public, opp)
-        window = trailing_window(self.rs, obs.public, opp) if self.kind == "window" else []
+        vs, window = self._constraints(obs, opp)
         cands: list[tuple[int, ...]] = []
         weights: list[float] = []
         for _ in range(self.tries):
@@ -207,6 +232,17 @@ class Belief:
             return cands[-1]
         self.fallbacks += 1
         return tuple(sorted(rng.sample(pool, k)))
+
+    def _constraints(self, obs: Observation, opp: int) -> tuple[list[Void], list]:
+        """`(voids, trailing window)` for this decision, derived once per public history."""
+        key = (obs.public, opp)
+        if self._cache_key is None or self._cache_key[0] is not key[0] or self._cache_key[1] != key[1]:
+            self._cache_key = key
+            self._cached = (
+                voids(self.rs, obs.public, opp),
+                trailing_window(self.rs, obs.public, opp) if self.kind == "window" else [],
+            )
+        return self._cached
 
     def _window_likelihood(self, obs: Observation, hand: tuple[int, ...], window) -> float:
         """P(the opponent played exactly that trailing run) if they hold `hand` now.
@@ -259,9 +295,10 @@ class Belief:
 
     def _legal(self, hand, top: int, colour: int) -> tuple[int, ...]:
         rs = self.rs
+        playable = playable_table(rs)[top][colour]
         acts: list[int] = []
         for t in sorted(set(hand)):
-            if is_playable(rs, t, top, colour):
+            if t in playable:
                 acts.extend(rs.play_actions[t])
         if not rs.forced_play or not acts:
             acts.append(rs.draw_action)
