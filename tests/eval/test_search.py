@@ -16,7 +16,7 @@ import pytest
 from tests.game.test_draw_outcomes import RESH
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.eval.aivat import terminal_return
-from uno.eval.search import PimcRollout, PimcSearch, determinize_l1, leaf_for, response_value, search_q, search_value, unseen_cards
+from uno.eval.search import PimcRollout, PimcSearch, batched_search_q, determinize_l1, leaf_for, response_value, search_q, search_value, unseen_cards
 from uno.game import rules
 from uno.game.chance import pile_split
 from uno.game.engine import legal_actions, new_game, returns, step
@@ -340,6 +340,118 @@ def test_the_response_agent_matches_the_exact_value_on_the_toy_that_separates_th
         if abs(exact["response"] - exact["minimax"]) > 0.03:  # only where the two rules really differ
             near = abs(xs.mean() - exact["response"]) < abs(xs.mean() - exact["minimax"])
             assert near, f"seat {seat}: sampled {xs.mean():.4f} is nearer the two-sided value {exact['minimax']:.4f} than {exact['response']:.4f}"
+
+
+# -- batched leaves (the leaf is consulted once per decision, not once per leaf state) -----------
+
+
+class _BatchCountingLeaf:
+    """`_leaf`, plus the batched form `batched_search_q` looks for, counting how often it is asked."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.rows = 0
+
+    def __call__(self, s):
+        self.calls += 1
+        self.rows += 1
+        return _leaf(s)
+
+    def batch(self, states):
+        self.calls += 1
+        self.rows += len(states)
+        return [_leaf(s) for s in states]
+
+
+@pytest.mark.parametrize("continuation", ("response", "minimax"))
+@pytest.mark.parametrize("name,depth", (("TOY", 4), ("TOY2_SKIP", 4), ("TOY_FULL", 3), ("FULL_UNO", 3)))
+def test_batched_search_q_equals_search_q_bit_for_bit(name, depth, continuation):
+    """The batching may not change a value by so much as an ulp, so this asserts `==` on floats
+    and not `approx`.
+
+    It can hold because `_plan` walks the nodes `response_value` walks, in the order it walks them
+    -- `probs.items()` at an opponent node, zero-probability actions skipped -- and `_fold` combines
+    them with the same `max` and the same left-to-right `sum`. A tolerance here would pass on a plan
+    that had quietly reordered an expectation, which is exactly the kind of drift that makes a
+    'faster' row incomparable with the numbers already on the ladder.
+
+    Under `minimax` the batched walk also *drops* `search_value`'s alpha-beta, so this is the check
+    that pruning was only ever a speed-up: a min or a max selects one of its children's floats
+    without arithmetic, and `search_q` opens a fresh window per root action, so every root value it
+    returns is the exact one and not a fail-soft bound.
+    """
+    rs = getattr(rules, name)
+    opp = Heuristic(rs) if continuation == "response" else None
+    n = 0
+    for s, _ in _decisions(rs, 4 if name == "FULL_UNO" else 8, cap=6):
+        for seat in (0, 1):
+            one = search_q(s, seat, depth, _leaf, opponent=opp)
+            many = batched_search_q([s], seat, depth, _leaf, opponent=opp)[0]
+            assert many == one, f"{name} seat {seat} {continuation}: batched {many} != {one}"
+            n += 1
+    assert n > 20
+
+
+def test_batched_search_q_batches_across_worlds():
+    """Non-vacuity: the point of the change is one leaf call for a whole *sample* of worlds, so a
+    version that merely looped `search_q` would pass the equality test above and buy nothing."""
+    rs = rules.FULL_UNO
+    opp = Heuristic(rs)
+    rng = random.Random(0)
+    for s, obs in _decisions(rs, 3, cap=4):
+        worlds = [determinize_l1(rs, obs, rng) for _ in range(8)]
+        leaf = _BatchCountingLeaf()
+        batched_search_q(worlds, obs.seat, 2, leaf, opponent=opp)
+        if leaf.rows < 8:
+            continue  # a decision whose whole tree terminates inside the depth has nothing to batch
+        assert leaf.calls == 1, f"{leaf.rows} leaf states took {leaf.calls} calls, not one batch"
+        return
+    pytest.fail("no decision produced leaf states to batch")
+
+
+def test_a_leaf_that_cannot_batch_still_works():
+    """`batch_leaf` falls back to one call per state, so any plain callable is still a leaf."""
+    rs = rules.FULL_UNO
+    opp = PlayFirstRandom(rs)
+    rng = random.Random(1)
+    for s, obs in _decisions(rs, 2, cap=3):
+        worlds = [determinize_l1(rs, obs, rng) for _ in range(4)]
+        assert batched_search_q(worlds, obs.seat, 2, _leaf, opponent=opp) == batched_search_q(
+            worlds, obs.seat, 2, _BatchCountingLeaf(), opponent=opp
+        )
+
+
+@pytest.mark.parametrize("continuation", ("response", "minimax"))
+@pytest.mark.parametrize("name", ("TOY_FULL", "FULL_UNO"))
+def test_the_batched_agent_plays_the_unbatched_agent_s_games(name, continuation):
+    """The whole point of the speed-up: the row must **replay** the rows already on the ladder, not
+    merely resample them. So the agent's scores must equal, to the bit, what the same agent would
+    have scored calling its leaf once per leaf state -- which needs the worlds to be the same
+    worlds, i.e. the rng consumed in the same order (`PimcSearch._worlds_q`).
+    """
+    rs = getattr(rules, name)
+    opp = Heuristic(rs) if continuation == "response" else None
+    agent = PimcSearch(rs, _leaf, worlds=6, depth=2, name=f"pimc_{continuation}", opponent=opp)
+
+    def unbatched(obs, legal):
+        rng = agent._rng(obs)
+        total = dict.fromkeys(legal, 0.0)
+        for _ in range(agent.worlds):
+            world = determinize_l1(rs, obs, rng, agent.belief)
+            q = search_q(world, obs.seat, agent.depth, leaf_for(agent.leaf, obs.seat), agent.exhaustion, opp)
+            for a in legal:
+                total[a] += q[a]
+        return {a: v / agent.worlds for a, v in total.items()}
+
+    n = 0
+    for s, obs in _decisions(rs, 3 if name == "FULL_UNO" else 6, cap=8):
+        legal = legal_actions(s)
+        if len(legal) < 2:
+            continue
+        assert agent._scores(obs, legal) == unbatched(obs, legal)
+        assert agent.policy(obs, legal) == {max(legal, key=lambda a: (unbatched(obs, legal)[a], -a)): 1.0}
+        n += 1
+    assert n > 10
 
 
 def test_scores_split_is_the_same_worlds_cut_in_two():

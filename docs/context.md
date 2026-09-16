@@ -3,8 +3,8 @@
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 9.5f, 2026-09-16** (on top of
-commit `9109a65`, uncommitted); next step is **10, formalising the toy results for RL**.
+with no access to the repo. State as of **step 9.5f, 2026-09-16**, plus the batched-leaf
+speed-up of section 5.21; next step is **10, formalising the toy results for RL**.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -995,6 +995,53 @@ carry the whole measured gain, so the cheap, policy-free rung is the one to keep
   with the off-profile leaf network that step promoted to "the residual explanation". Untested.
 
 Results: `docs/results/09.5f-results.md`.
+
+### 5.21 After 9.5f: batched leaves, a 2.8-3.3x speed-up that changes no number
+
+**Problem:** a full-UNO PIMC row costs 125-165 ms/game and the belief ladder at 4,000 deals runs
+about an hour, which is the tax on every question asked of the agent. Profiling put **69 % of the
+time in the leaf value network** and most of that in torch's per-call dispatch, not its arithmetic:
+the search called the leaf once per leaf state, so every forward was a batch of one. Measured on
+`FULL_UNO`, 78.5 us a row at batch 1 against 7.0 us at batch 32-256.
+
+**Technique** (`docs/spec.md` section 25): a decision searches a whole *sample* of determinized
+worlds, all independent, so `uno.eval.search.batched_search_q` plans every one of their
+depth-limited trees before consulting the leaf (`_plan` defers each leaf state into one list and
+leaves its index in the plan), evaluates them all in one call, and backs the values up (`_fold`).
+`uno.eval.value_net.NetLeaf` is the batched leaf; a plain callable still works, one call per state.
+
+**What it bought:** **2.8-3.3x** end to end on the response rows (`prior` 3.1x / 3.3x, `voids` 2.8x /
+2.9x against the Heuristic / Random), 1.8-2.1x on `window`, 3.3x on the two-sided `minimax` rows --
+at **identical per-game scores** on the real network, across both columns and all three belief
+rungs. The belief ladder at 4,000 deals goes from about an hour to about twenty minutes.
+
+**What it taught:**
+
+- **A speed-up that changes a number is not free, so this one was built not to.** The searched value
+  is equal *bit for bit*, not to a tolerance: `_plan` visits the nodes `response_value` visits in
+  its order and `_fold` combines them with the same operations, and the worlds are drawn before the
+  search rather than between searches, so the world rng is consumed in the same order. The row
+  therefore **replays** 9.5e's and 9.5f's games instead of resampling them, and the ladder stays
+  comparable across the change. Both properties are pinned by tests, on all four rulesets and both
+  continuations.
+- **Pruning was worth less than batching at every depth measured.** Batching drops alpha-beta.
+  Under `response` that is free (expectation nodes never pruned). Under `minimax` it was measured
+  rather than assumed: 3.75x at depth 2, 1.91x at depth 4, a tie at depth 3.
+- **A docstring claim that is one ulp too strong is still worth fixing when something starts
+  resting on it.** `value_net.py` said float64 made V independent of "whatever else is in the
+  batch"; batch 1 and batch 256 in fact differ by ~1.7e-16, because BLAS picks its kernel by the
+  row count. The invariant that *does* hold exactly, and the one the batching needs, is that at a
+  **fixed** row count a row's value depends on that row alone -- so the agent stays the
+  deterministic function of the information state AIVAT's row correction assumes. That is now the
+  documented claim and a test.
+
+**What is left on the table** (measured, not built): after batching, the profile is flat and
+interpreter-bound -- `position_features` 35 %, world construction 29 % (of which `rng.shuffle` of a
+~90-card pile to draw at most a few, and a `Counter` difference recomputed once per world instead of
+once per decision), `step` / `freeze` 20 %, the network itself 6 %. A table-driven `is_playable`
+(138 ns a card as a call, 24 ns as a frozenset lookup) is worth ~1.9x on the `voids` belief, whose
+`satisfies` is nothing but that test. Beyond that the remaining ~90 % is Python, which is where a
+Rust engine would start paying.
 
 ## 6. Results: what we know
 

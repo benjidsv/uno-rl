@@ -71,6 +71,33 @@ def test_fit_learns_and_inference_is_batch_independent(tmp_path):
     assert np.array_equal(ValueNet.load(tmp_path / "net.pt", SMALL).values(rows), batch)
 
 
+def test_at_a_fixed_batch_size_a_row_does_not_depend_on_its_neighbours():
+    """The exact invariant `uno.eval.search.batched_search_q` rests on.
+
+    The test above pins batch-independence to 1e-12, which is the right tolerance for it: float64
+    inference is *not* bit-exact across row counts (batch 1 against batch 256 differ by ~1.7e-16,
+    one ulp, because BLAS picks its kernel by the number of rows). What is exact, and what the
+    search needs, is that at a **fixed** number of rows a row's value depends on that row alone --
+    otherwise a decision's value would depend on which worlds happened to be sampled alongside it,
+    and the agent would stop being the deterministic function of the information state that
+    AIVAT's row correction assumes (docs/spec.md section 25).
+    """
+    net, _ = small_net()
+    rows = [state_features(s) for s, _, _ in games(SMALL, 20)][:40]
+    assert len(rows) == 40
+    target, rest = rows[0], rows[1:]
+    rng = random.Random(0)
+    seen = set()
+    for _ in range(5):
+        others = rng.sample(rest, 15)
+        seen.add(float(net.values([target, *others])[0]))
+    for position in (0, 1, 8, 15):
+        batch = list(rng.sample(rest, 15))
+        batch.insert(position, target)
+        seen.add(float(net.values(batch)[position]))
+    assert len(seen) == 1, f"one row took {len(seen)} different values at a fixed batch size: {seen}"
+
+
 def test_played_path_equals_tree_path():
     tree, agents, _ = small_profile()
     idx = build(tree, Level.L2)

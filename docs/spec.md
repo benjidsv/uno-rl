@@ -1328,6 +1328,39 @@ a determinized state.
 value function (step 9.5c's network). With two players a skip or reverse means the same player
 moves again, so the maximising side is read from `s.player`, never from the parity of the depth.
 
+**Leaves are evaluated one batch per decision** (a speed-up after step 9.5f; it changes no number).
+A decision searches a whole *sample*
+of determinized worlds, every one of them independent, so `batched_search_q` plans all of their
+depth-limited trees first -- each leaf state appended to one list and standing in the plan as its
+index -- calls the leaf once on that list, and only then backs the values up (`_plan` / `_fold`).
+For a network leaf this is 2.8-3.3x end to end, because a batch-of-1 torch forward is dominated by
+per-call dispatch rather than arithmetic: 78.5 us a row at batch 1 against 7.0 us at batch 32-256
+on `FULL_UNO`.
+
+It is a pure speed-up, and the tests hold it to that. `_plan` visits the nodes `response_value`
+visits, in its order (`probs.items()` at an opponent node, zero-probability actions skipped), and
+`_fold` combines them with the same `max` and the same left-to-right `sum`, so the searched value
+is equal **bit for bit** and not merely to a tolerance; and the worlds are drawn before the search
+rather than between searches, which consumes the world rng in the same order, so the agent
+*replays* the games step 9.5e and 9.5f measured rather than resampling them. Both were checked on
+the real network across all three belief rungs and both columns, at identical per-game scores.
+
+Batching drops alpha-beta, which pruning cannot survive: it needs the values it is about to skip.
+Under `"response"` that is free -- `response_value` already walks unpruned, because bounds do not
+propagate through an expectation node. Under `"minimax"` it was measured rather than assumed
+(w = 32, `FULL_UNO`, against Random): batching wins **3.75x at depth 2 and 1.91x at depth 4** and
+ties at depth 3, so no depth repays the batch-of-1 forwards that pruning costs, and both
+continuations take the batched path. `search_value` stays as the pruning reference that
+`test_alpha_beta_equals_plain_minimax` and the bit-for-bit test check the batched values against.
+
+The leaf's own numerics are what let this be exact where it matters. Float64 inference is *not*
+bit-exact across batch sizes -- batch 1 and batch 256 differ by ~1.7e-16, one ulp, because BLAS
+picks its kernel by the row count -- but at a fixed row count a row's value depends on that row
+alone, not on which rows accompany it or where it sits (`NetLeaf`, pinned in
+`tests/eval/test_value_net.py`). A decision's batch is a deterministic function of its information
+state, since the worlds come from an rng keyed on that state, so the agent remains the
+deterministic function of the information state that AIVAT's row correction assumes.
+
 **The continuation rule (step 9.5e).** `search_value` assumes the opponent is clairvoyant too,
 which is classic PIMC and the `"minimax"` continuation above. Given an `opponent`, `PimcSearch`
 instead solves each world with `response_value`: max at its own nodes, the **expectation under the

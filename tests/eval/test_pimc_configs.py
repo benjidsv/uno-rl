@@ -42,7 +42,7 @@ def _leaf(s):
 
 
 def _parse(rs, token: str):
-    nets = (SimpleNamespace(value=_leaf), SimpleNamespace(value=_leaf))
+    nets = (SimpleNamespace(value=_leaf, leaf=_leaf), SimpleNamespace(value=_leaf, leaf=_leaf))
     return _parse_config(rs, nets, Heuristic(rs), PlayFirstRandom(rs), token)
 
 

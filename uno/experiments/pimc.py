@@ -239,7 +239,7 @@ def uno_section(games: int, worlds: int, depth: int, workers: int | None, cont: 
     rs = rules.FULL_UNO
     nets = [net_for(rs, "heuristic", "random", s) for s in (0, 1)]
     models = tuple(CriticValues(nets[s]) for s in (0, 1))
-    leaves = (nets[0].value, nets[1].value)  # step 9.5e: 9.5d gave the agent nets[0] at both seats
+    leaves = (nets[0].leaf, nets[1].leaf)  # step 9.5e: 9.5d gave the agent nets[0] at both seats
     heu, rnd = Heuristic(rs), PlayFirstRandom(rs)
 
     def row_agent(row: str, col: str, column):
@@ -330,9 +330,9 @@ def d2_section(games: int, worlds: int, depth: int, workers: int | None) -> None
     print(f"   {games} EVAL deals per seat, score points per game (mean +- se). Selection and valuation use disjoint halves of the worlds.")
     print("   Not a value decomposition (nothing telescopes): read the shares, not the totals. The search row is the control and should sit near zero.")
     for seat in (0, 1):
-        ref = PimcSearch(rs, nets[seat].value, worlds=worlds, depth=depth, name="pimc", seed=0)
+        ref = PimcSearch(rs, nets[seat].leaf, worlds=worlds, depth=depth, name="pimc", seed=0)
         # the control plays the same search but off an independent world sample (see the docstring)
-        ctl = PimcSearch(rs, nets[seat].value, worlds=worlds, depth=depth, name="pimc_ctl", seed=9_999)
+        ctl = PimcSearch(rs, nets[seat].leaf, worlds=worlds, depth=depth, name="pimc_ctl", seed=9_999)
         for label, row_agent in (("heuristic", heu), ("pimc (control)", ctl)):
             pair = (row_agent, rnd) if seat == 0 else (rnd, row_agent)
             t0 = time.perf_counter()
@@ -396,7 +396,7 @@ def _parse_config(rs, nets, heu, rnd, token: str):
     resp = rest.endswith("r")
     rest = rest[:-1] if resp else rest
     a, b = (int(x) for x in rest.split("x"))
-    leaves = (nets[0].value, nets[1].value)  # step 9.5e: per seat, not nets[0] twice
+    leaves = (nets[0].leaf, nets[1].leaf)  # step 9.5e: per seat, not nets[0] twice
     if kind == "s":
         # the sweep's column is always Random, so that is what a response config best-responds to
         # -- and what a `window` belief reads the action probabilities of.
@@ -594,7 +594,7 @@ def belief_section(games: int, worlds: int, depth: int, workers: int | None, col
         raise SystemExit(f"unknown belief column {column!r}: random or heuristic")
     rs = rules.FULL_UNO
     nets = [net_for(rs, "heuristic", "random", s) for s in (0, 1)]
-    leaves = (nets[0].value, nets[1].value)
+    leaves = (nets[0].leaf, nets[1].leaf)
     col = PlayFirstRandom(rs) if column == "random" else Heuristic(rs)
     seeds = EVAL_SEEDS[:games]
     k = (os.cpu_count() or 1) * 8 if workers != 1 else 1

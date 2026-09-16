@@ -15,9 +15,12 @@ also makes the architecture independent of the number of colours.
 **Frame.** Hands in the seat-0 frame, output the seat-0 return in [-1, 1] (tanh). One network per
 profile (row, column, seat), as the critic.
 
-**Inference in float64 on CPU**, so V is a deterministic function of the state whatever else is
-in the batch (AIVAT's unbiasedness wants V fixed before the chance event; float32 kernels can depend
-on the batch). Training is float32.
+**Inference in float64 on CPU**, so V is a deterministic function of the state and not of the batch
+it was evaluated in (AIVAT's unbiasedness wants V fixed before the chance event; float32 kernels can
+depend on the batch). Exactly: at a fixed number of rows a row's value does not depend on which rows
+accompany it, nor on its position among them. *Across* row counts float64 is still not bit-exact --
+batch 1 and batch 256 differ by ~1.7e-16, one ulp, because BLAS picks its kernel by the row count --
+which is why `NetLeaf` states the invariant its batching actually relies on. Training is float32.
 """
 
 from __future__ import annotations
@@ -184,6 +187,11 @@ class ValueNet:
     def value(self, s: State) -> float:
         return float(self.values([self.features(s)])[0])
 
+    @property
+    def leaf(self) -> NetLeaf:
+        """This network as a search leaf, one state or a whole batch at a time (`NetLeaf`)."""
+        return NetLeaf(self)
+
     def save(self, path: str | Path) -> None:
         torch.save({"width": self.width, "mean": self.mean, "scale": self.scale, "params": self.params, "rs": repr(self.rs)}, path)
 
@@ -193,6 +201,41 @@ class ValueNet:
         if d["rs"] != repr(rs):
             raise ValueError(f"{path} was fitted for another ruleset: {d['rs']}")
         return cls(rs, d["width"], d["mean"], d["scale"], d["params"])
+
+
+class NetLeaf:
+    """A `ValueNet` as a `uno.eval.search` leaf: `leaf(s)` for one state, `leaf.batch(states)`
+    for many at once.
+
+    **Why the batched form exists.** A depth-limited search calls its leaf once per leaf state,
+    and a batch-of-1 forward through this network is dominated by torch's per-call dispatch, not
+    by its arithmetic: measured on `FULL_UNO`, 78.5 us per row at batch 1 against 7.0 us at batch
+    32-256, an 11x gap. `uno.eval.search.batched_search_q` therefore plans the whole depth-limited
+    tree of every determinized world first, evaluates all of their leaves in one call, and only
+    then backs the values up -- 2.9-3.0x end to end on the step 9.5f belief ladder.
+
+    **What that does to the value.** Nothing a decision can see, but the module docstring's claim
+    above ("whatever else is in the batch") is one ulp too strong: batch 1 and batch 256 differ by
+    ~1.7e-16, because BLAS picks its kernel by the number of rows. What does hold exactly, and is
+    what the search needs, is that **at a fixed number of rows a row's value does not depend on
+    which rows accompany it or where it sits among them** (`tests/eval/test_value_net.py`). A
+    decision's batch is a deterministic function of its information state -- the worlds are drawn
+    from an rng keyed on that state -- so the agent's policy stays the deterministic function of
+    the information state that AIVAT's row correction assumes (docs/spec.md section 25). Only the
+    absolute value moves, by an ulp, which is far below any margin that flips an argmax: measured,
+    the batched and unbatched agents play identical action sequences.
+    """
+
+    __slots__ = ("net",)
+
+    def __init__(self, net: ValueNet) -> None:
+        self.net = net
+
+    def __call__(self, s: State) -> float:
+        return self.net.value(s)
+
+    def batch(self, states) -> np.ndarray:
+        return self.net.values([state_features(s) for s in states])
 
 
 @dataclass(frozen=True)

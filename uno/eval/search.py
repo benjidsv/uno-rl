@@ -40,6 +40,14 @@ that *costs* exploitability, so the row must be labelled with the opponent it wa
 seatings of a deal, so `leaf` may be a `(seat 0, seat 1)` pair resolved per observation
 (`leaf_for`); step 9.5d used the seat-0 network at both seats.
 
+**Leaves are evaluated in one batch per decision.** A decision searches `worlds` determinized
+worlds, all independent, so `batched_search_q` plans every one of their depth-limited trees before
+consulting the leaf and then values all the leaves together. For a network leaf that is 2.9-3.0x
+end to end, because a batch-of-1 torch forward is dominated by dispatch (78.5 us a row at batch 1,
+7.0 us at batch 32-256). It changes no decision: the plan visits the same nodes in the same order
+as `response_value` and combines them with the same operations, and the worlds are drawn from the
+same rng in the same order, so the batched agent replays the unbatched one's games.
+
 **Why the sampling is keyed, not free.** AIVAT's row correction subtracts
 `sum_a sigma(a|h) alpha(h, a)` using the probabilities the agent reports. An agent that sampled
 worlds afresh and returned a point mass on the winner would be reporting a *deterministic* policy
@@ -244,6 +252,85 @@ def search_q(s: State, seat: int, depth: int, leaf: Leaf, exhaustion: str = "han
     return {a: search_value(step(s, a, check=False), seat, depth - 1, leaf, exhaustion, s, a) for a in legal_actions(s)}
 
 
+# -- the same search, with every leaf of every world in one batch ---------------------------------
+#
+# `search_q` above calls `leaf` once per leaf state. When the leaf is `uno.eval.value_net.NetLeaf`
+# that is a batch-of-1 forward through a small network, and torch's per-call dispatch dominates its
+# arithmetic: 78.5 us per row at batch 1 against 7.0 us at batch 32-256 on `FULL_UNO`. A PIMC
+# decision has a whole *sample* of worlds to search, every one of them independent, so all of their
+# leaves can go through the network together -- measured 2.9-3.0x end to end on the step 9.5f
+# belief ladder, at identical action sequences.
+#
+# Batching and alpha-beta are incompatible: pruning needs the values it is about to skip. Under the
+# `response` continuation that costs nothing, since `response_value` already walks unpruned --
+# bounds do not propagate through an expectation node. Under `minimax` it is a real trade, and it
+# was measured rather than assumed (w = 32 on `FULL_UNO`, against Random): batching wins 3.75x at
+# depth 2 and 1.91x at depth 4, and ties at depth 3, so there is no depth at which pruning pays for
+# the batch-of-1 forwards it costs. Both continuations therefore take this path, and `search_value`
+# stays as the pruning reference the tests check the values against.
+
+Plan = tuple  # ("v", x) a known value | ("l", i) leaf row i | ("max" | "min", kids) | ("exp", [(p, kid)])
+
+
+def _plan(s: State, seat: int, depth: int, rows: list[State], opponent, exhaustion: str, parent: State | None = None, action: int = -1) -> Plan:
+    """`response_value`'s walk with the leaf calls deferred: every leaf state is appended to `rows`
+    and stands in the plan as its index, so the caller can value them all at once.
+
+    Mirrors `response_value` node for node -- same terminal handling, same `probs.items()` order at
+    an opponent node, the same actions skipped at probability zero -- so that `_fold` reproduces its
+    arithmetic and not merely its value."""
+    if s.terminal:
+        u = returns(s)[0] if parent is None else terminal_return(parent, action, s, exhaustion)
+        return ("v", u if seat == 0 else -u)
+    if depth <= 0:
+        rows.append(s)
+        return ("l", len(rows) - 1)
+    legal = legal_actions(s)
+    if s.player == seat:
+        return ("max", [_plan(step(s, a, check=False), seat, depth - 1, rows, opponent, exhaustion, s, a) for a in legal])
+    if opponent is None:
+        return ("min", [_plan(step(s, a, check=False), seat, depth - 1, rows, opponent, exhaustion, s, a) for a in legal])
+    probs = opponent.policy(observe(s, s.player, Level.L1), legal)
+    return ("exp", [(p, _plan(step(s, a, check=False), seat, depth - 1, rows, opponent, exhaustion, s, a)) for a, p in probs.items() if p > 0])
+
+
+def _fold(plan: Plan, values: list[float]) -> float:
+    """The plan's value once `values[i]` holds the (sign-adjusted) leaf value of row `i`."""
+    tag = plan[0]
+    if tag == "v":
+        return plan[1]
+    if tag == "l":
+        return values[plan[1]]
+    if tag == "max":
+        return max(_fold(k, values) for k in plan[1])
+    if tag == "min":
+        return min(_fold(k, values) for k in plan[1])
+    return sum(p * _fold(k, values) for p, k in plan[1])
+
+
+def batch_leaf(leaf: Leaf):
+    """`leaf` over many states at once: its own `batch` method when it has one (`NetLeaf`), else
+    one call per state, so any plain callable still works as a leaf."""
+    fn = getattr(leaf, "batch", None)
+    return fn if fn is not None else (lambda states: [leaf(s) for s in states])
+
+
+def batched_search_q(states, seat: int, depth: int, leaf: Leaf, exhaustion: str = "hand", opponent=None) -> list[dict[int, float]]:
+    """`[search_q(s, ...) for s in states]`, with every leaf of every state evaluated in one call.
+
+    Equal to `search_q` to the last bit, not merely to a tolerance: `_plan` visits the same nodes
+    in the same order and `_fold` combines them with the same operations, so the only thing that
+    changes is when the leaf is consulted. `tests/eval/test_search.py` pins that on all four
+    rulesets, for both continuations -- including against `search_q`'s alpha-beta, which this drops
+    (see the note above for why that is still a win at every depth measured).
+    """
+    rows: list[State] = []
+    plans = [{a: _plan(step(s, a, check=False), seat, depth - 1, rows, opponent, exhaustion, s, a) for a in legal_actions(s)} for s in states]
+    raw = batch_leaf(leaf)(rows) if rows else ()
+    values = [float(v) for v in raw] if seat == 0 else [-float(v) for v in raw]
+    return [{a: _fold(plan, values) for a, plan in per_state.items()} for per_state in plans]
+
+
 # -- the agents ----------------------------------------------------------------------------------
 
 
@@ -282,14 +369,24 @@ class PimcSearch:
         return random.Random(stable_hash((self.seed, self.name, obs.info_state)))
 
     def _q(self, obs: Observation, rng: random.Random) -> dict[int, float]:
-        world = determinize_l1(self.rs, obs, rng, self.belief)
-        return search_q(world, obs.seat, self.depth, leaf_for(self.leaf, obs.seat), self.exhaustion, self.opponent)
+        """One world's searched action values. `_worlds_q` is what the agent itself uses; this is
+        kept as the single-world spelling of it."""
+        return self._worlds_q(obs, rng, 1)[0]
+
+    def _worlds_q(self, obs: Observation, rng: random.Random, n: int) -> list[dict[int, float]]:
+        """`n` sampled worlds' searched action values, every leaf of every world in one batch.
+
+        Drawing the worlds first and searching them afterwards consumes `rng` in exactly the
+        order the interleaved version did -- `determinize_l1` is the only consumer, and the
+        search takes none -- so the worlds are the same worlds, which is what lets the batched
+        agent replay the unbatched one's games rather than merely resample them.
+        """
+        worlds = [determinize_l1(self.rs, obs, rng, self.belief) for _ in range(n)]
+        return batched_search_q(worlds, obs.seat, self.depth, leaf_for(self.leaf, obs.seat), self.exhaustion, self.opponent)
 
     def _scores(self, obs: Observation, legal: tuple[int, ...]) -> dict[int, float]:
-        rng = self._rng(obs)
         total = dict.fromkeys(legal, 0.0)
-        for _ in range(self.worlds):
-            q = self._q(obs, rng)
+        for q in self._worlds_q(obs, self._rng(obs), self.worlds):
             for a in legal:
                 total[a] += q[a]
         return {a: v / self.worlds for a, v in total.items()}
@@ -315,10 +412,8 @@ class PimcSearch:
         if self.worlds < 2:
             raise ValueError("scores_split needs at least 2 worlds")
         k = self.worlds // 2
-        rng = self._rng(obs)
         halves: tuple[dict[int, float], dict[int, float]] = (dict.fromkeys(legal, 0.0), dict.fromkeys(legal, 0.0))
-        for i in range(2 * k):
-            q = self._q(obs, rng)
+        for i, q in enumerate(self._worlds_q(obs, self._rng(obs), 2 * k)):
             half = halves[i >= k]
             for a in legal:
                 half[a] += q[a] / k
