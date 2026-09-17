@@ -11,12 +11,24 @@ from hypothesis import HealthCheck, assume, given, settings
 
 from tests.strategies import SMALL, small, small_lazy_rulesets
 from uno.agents.baseline import Heuristic, PlayFirstRandom
-from uno.compiled.coarse import coarsen, identity_key, k0, k1, memoryless_response, project_onto_coarse
+from uno.agents.tabular import CompiledAgent
+from uno.compiled.coarse import (
+    CoarseAgent,
+    coarsen,
+    identity_key,
+    k0,
+    k1,
+    k2,
+    lift_to_l1,
+    memoryless_response,
+    project_onto_coarse,
+)
 from uno.compiled.solvers import best_response, evaluate
 from uno.compiled.strategies import tabulate
 from uno.compiled.tree import compile_tree
 from uno.game import rules
-from uno.game.observe import Level
+from uno.game.observe import Level, observation_from_key
+from uno.game.symmetry import Symmetry
 
 
 def test_identity_coarsening_matches_best_response_on_small():
@@ -47,19 +59,79 @@ def test_random_and_heuristic_are_constant_within_every_k0_set():
         sigma = tabulate(tree, Level.L1, agent)
         c = coarsen(tree, k0)
         projected = project_onto_coarse(tree, c, sigma)
-        k1_ = tree.keyings[Level.L1]
-        # rebuild the L1-level view of the projected coarse strategy and compare to
-        # the original, set by set: every L1 set sharing a K0 group must see the
-        # representative's distribution.
-        for i in range(k1_.n_info):
-            cset = c.l1_to_coarse[i]
-            s1, e1 = k1_.info_start[i], k1_.info_start[i + 1]
-            sc, ec = c.keying.info_start[cset], c.keying.info_start[cset + 1]
-            acts1, vals1 = k1_.ia_action[s1:e1], sigma[s1:e1]
-            actsc, valsc = c.keying.ia_action[sc:ec], projected[sc:ec]
-            order1 = np.argsort(acts1)
-            orderc = np.argsort(actsc)
-            assert np.allclose(vals1[order1], valsc[orderc], atol=1e-9)
+        # The coarse and L1 sets can use different canonical coordinate frames.
+        # Lifting applies that map back before comparing the deployed policies.
+        assert np.allclose(lift_to_l1(tree, c, projected), sigma, atol=1e-15)
+
+
+def test_review_k1_collision_is_measurable_from_the_raw_input():
+    """Regression for docs/results/10-review.md's positive-reach counterexample.
+
+    Full-L1 canonicalisation puts these symmetry images in different coordinate
+    frames even though their raw K1 fields are identical. A K1 policy must not use
+    the discarded initial-hand/draw split to choose between actions 1 and 3.
+    """
+    tree = compile_tree(rules.TOY, (Level.L1,), symmetric=True)
+    k = tree.keyings[Level.L1]
+    rnd = tabulate(tree, Level.L1, PlayFirstRandom(rules.TOY))
+    heu = tabulate(tree, Level.L1, Heuristic(rules.TOY))
+    c = coarsen(tree, k1)
+    res = memoryless_response(tree, c, (Level.L1, rnd), 1, heu, iterations=20)
+    lifted = lift_to_l1(tree, c, res.sigma)
+
+    obs = observation_from_key(rules.TOY, Level.L1, k.key(423))
+    image = observation_from_key(
+        rules.TOY, Level.L1, Symmetry(rules.TOY).key(Level.L1, 12, k.key(423))
+    )
+    assert k1(rules.TOY, obs) == k1(rules.TOY, image)
+    assert obs.initial_hand == (0, 1, 2) and obs.own_draws == (3,)
+    assert image.initial_hand == (0, 2, 3) and image.own_draws == (1,)
+
+    # The collision remains on-policy at exactly the reach reproduced by the
+    # review, so this is not an unreachable-coordinate formality.
+    w0 = tree.weights(Level.L1, rnd, 0)
+    w1 = tree.weights(Level.L1, lifted, 1)
+    reach = tree.reach(w0, w1).prod(axis=1)
+    nodes = np.nonzero(tree.player >= 0)[0]
+    set_reach = np.bincount(k.node_info[nodes], weights=reach[nodes], minlength=k.n_info)
+    assert abs(set_reach[423] - 0.0017460317460317458) < 1e-15
+
+    expected = {1: 0.5, 3: 0.5}
+    coarse_agent = CoarseAgent(tree, c, res.sigma, "k1_response")
+    lifted_agent = CompiledAgent(tree, Level.L1, lifted, "lifted_k1_response")
+    for agent in (coarse_agent, lifted_agent):
+        assert agent.policy(obs, (1, 3)) == expected
+        assert agent.policy(image, (1, 3)) == expected
+
+
+def test_same_coarse_policy_has_the_same_partition_and_value_on_full_and_quotient_trees():
+    """Independent SMALL oracle: compare one policy, not two local optima."""
+    full = compile_tree(SMALL, (Level.L1,), symmetric=False)
+    quotient = compile_tree(SMALL, (Level.L1,), symmetric=True)
+    random = PlayFirstRandom(SMALL)
+    opponents = {
+        False: (Level.L1, tabulate(full, Level.L1, random)),
+        True: (Level.L1, tabulate(quotient, Level.L1, random)),
+    }
+
+    for keyfn in (k0, k1, k2):
+        cf = coarsen(full, keyfn)
+        cq = coarsen(quotient, keyfn)
+        # The quotient groups are exactly the symmetry orbits of the full tree's
+        # raw coarse groups.
+        assert {cq.canonical(key)[0] for key in cf.keys} == set(cq.keys)
+
+        coarse_sigma = cq.keying.first_orbit_uniform()
+        agent = CoarseAgent(quotient, cq, coarse_sigma, f"{keyfn.__name__}_first")
+        q_l1 = tabulate(quotient, Level.L1, agent)
+        f_l1 = tabulate(full, Level.L1, agent)
+        assert np.array_equal(q_l1, lift_to_l1(quotient, cq, coarse_sigma))
+        assert agent.misses == 0
+
+        for seat in (0, 1):
+            qp = ((Level.L1, q_l1), opponents[True]) if seat == 0 else (opponents[True], (Level.L1, q_l1))
+            fp = ((Level.L1, f_l1), opponents[False]) if seat == 0 else (opponents[False], (Level.L1, f_l1))
+            assert abs(evaluate(quotient, *qp)[seat] - evaluate(full, *fp)[seat]) < 1e-12
 
 
 def test_coarse_response_replays_through_evaluate_and_never_exceeds_br_l1():
@@ -67,6 +139,12 @@ def test_coarse_response_replays_through_evaluate_and_never_exceeds_br_l1():
     rnd, heu = PlayFirstRandom(rules.TOY), Heuristic(rules.TOY)
     opp = (Level.L1, tabulate(tree, Level.L1, rnd))
     heu_l1 = tabulate(tree, Level.L1, heu)
+    expected = {
+        ("K0", 0): 0.5348525132275134,
+        ("K0", 1): 0.0375548941798942,
+        ("K1", 0): 0.585388888888889,
+        ("K1", 1): 0.09797222222222222,
+    }
     for name, fn in (("K0", k0), ("K1", k1)):
         c = coarsen(tree, fn)
         for seat in (0, 1):
@@ -75,6 +153,7 @@ def test_coarse_response_replays_through_evaluate_and_never_exceeds_br_l1():
             prof = ((c.keying, res.sigma), opp) if seat == 0 else (opp, (c.keying, res.sigma))
             replayed = evaluate(tree, *prof)[seat]
             assert abs(replayed - res.value) < 1e-9, (name, seat)
+            assert abs(res.value - expected[(name, seat)]) < 1e-15, (name, seat)
             assert res.value <= br.value + 1e-9, (name, seat, res.value, br.value)
             # every iterate is non-decreasing on the value actually kept
             assert res.value >= res.log[0] - 1e-9
@@ -139,9 +218,7 @@ def test_own_weighted_best_response_replays_and_matches_own_none_value_on_each_t
 
 
 def test_k0_is_a_valid_lower_bound_on_both_full_and_quotient_trees():
-    """Independently on the full tree and on the quotient (the known limitation
-    above means their K0 numbers need not agree with each other, only each with
-    its own tree's BR L1 and starting policy)."""
+    """The solver remains bounded independently on both representations."""
     rnd, heu = PlayFirstRandom(SMALL), Heuristic(SMALL)
     for symmetric in (False, True):
         tree = compile_tree(SMALL, (Level.L1,), symmetric=symmetric)

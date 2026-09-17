@@ -41,7 +41,8 @@ session read `docs/context.md` and `docs/results/index.md`, then relevant code.
   before 10B, then retain 10B → 10C → Step 11's three phases.
 - `docs/results/<step>.md`: historical experiment, command, provenance, caveats.
 - `docs/results/10-review.md`: September 2026 second opinion, including a reproduced
-  K1 measurability problem. Recommendations there are proposals, not implemented work.
+  K1 measurability problem. Its memory repair is implemented in 10a.3A; its
+  observation-contract and LBR recommendations remain proposals.
 
 Keep these roles separate: results are not specifications, and old brainstorms
 are not proof that an algorithm has been built or validated.
@@ -52,9 +53,11 @@ are not proof that an algorithm has been built or validated.
   AIVAT, PIMC, value networks, and belief experiments built.
 - 10a and 10a.2: seed registry, batched tabulation, report card, gradient/target
   validation, shaping artifacts, belief exploitability, and column-free PIMC built.
-- LBR was deferred in 10a.2; the revised plan puts its baseline instrument in
-  10a.3 alongside the memory-evidence repair. No implementation is complete yet.
-  10b figures/generated tables and 10c distilled rulebot follow in the same order.
+- 10a.3A repaired the coarse-memory measurement: coarse keys and actions now use
+  the coarse observation's own symmetry, the positive-reach K1 collision is a
+  regression, and all five toy rows are refreshed. 10a.3B (observation contract)
+  and 10a.3C (LBR) remain; 10b figures/generated tables and 10c distilled rulebot
+  follow in the same order.
 - No RL learner yet. Benji's intended Step 11: (1) exact toy measurements to
   validate learning and approach appropriate benchmarks, (2) sampled full-UNO
   training/evaluation, (3) further RL iterations if substantial headroom remains.
@@ -131,9 +134,9 @@ Do not launch large trees or full sweeps merely to inspect the repo.
 - **Coarse-key warning:** K0 includes a public-history clock; K1 adds discard
   counts; current K2 adds only draw colors since the opponent's last play.
   K2 is not the later `voids` belief. `memoryless_response` is an iterative search,
-  not a certified optimal imperfect-recall solver. Current quotient coarsening
-  can retain history through its coordinate choice; a reproduced policy is not
-  a function of raw K1 alone. See the review before relying on memory ceilings.
+  not a certified optimal imperfect-recall solver. Step 10a.3A repaired the old
+  quotient coordinate leak and pinned raw-input measurability; the refreshed
+  values are achieved local-search scores, not certified memory ceilings.
 - `voids` assumes play-first behavior and immediate play of playable drawn cards.
   `soft(0.1)` relaxes that assumption; its toy robustness is not universal calibration.
   The failed deal-time particle sampler does not disprove all particle filters.

@@ -28,26 +28,20 @@ are *guaranteed* to share the same legal actions; K1 and K2 only add fields, so 
 guarantee carries over. `coarsen` asserts it anyway, as `compile_tree` does for its
 own keyings, and raises if it ever fails.
 
-**Orbits.** On the quotient tree, several L1 sets can merge into one coarse set,
-and each carries its own action-orbit partition (docs/spec.md section 18) --
-possibly a *different* one, since a set's orbit structure depends on the
-stabilizer of its whole canonical key (history included), not only on K0/K1/K2. A
-coarse policy is one distribution per coarse set, so for it to be valid for every
-merged L1 set at once, it must be uniform within the **transitive join** of their
-orbit partitions (union two actions whenever *any* merged set's own orbits group
-them together): the join is never finer than any single constituent's partition
-(so it never asks for *less* uniformity than a constituent independently
-requires), which is what keeps the resulting strategy achievable and never an
-over-estimate (docs/spec.md section 18, "a best response above the maximum is not
-a strategy"). It can force a little *more* uniformity than the coarse-optimal
-strategy strictly needs -- `coarsen` picks the safe join rather than search for
-the tightest valid partition, which only matters for `memoryless_response`'s
-value as a lower bound, never for its validity.
+**Symmetry and orbits.** A quotient L1 set is already in coordinates chosen by
+canonicalising its *whole* history. Those coordinates cannot be reused for a
+coarse observation: two observations with the same K0/K1/K2 fields may have been
+put in different frames by history that the coarse policy is not allowed to see.
+`coarsen` therefore canonicalises the coarse key again under its own group action
+and maps every legal action through the same element. Its action orbits come from
+the stabilizer of that canonical coarse key, rather than from the stabilizers of
+the constituent full-L1 keys. Consequently the resulting strategy is both a
+valid symmetric strategy and a function of the declared coarse input alone.
 
-`Coarsening.keying` has no `.keys` (no byte-encoding exists for K0/K1/K2 shapes,
-unlike the L1/L2/L3 keys of `uno.game.keys`): `best_response`, `tree.weights` /
-`tree.reach` / `tree.values` and `evaluate` never touch a keying's `.keys`, so this
-is enough for everything here, but `tabulate` / `CompiledAgent` do not work on it.
+`Coarsening.keying` has no byte-encoded `.keys` (K0/K1/K2 have variable tuple
+shapes unlike the L1/L2/L3 keys of `uno.game.keys`). `Coarsening.keys` and
+`CoarseAgent` provide the corresponding typed lookup and deployed policy path;
+`lift_to_l1` produces an ordinary L1 strategy for exact replay.
 """
 
 from __future__ import annotations
@@ -113,45 +107,89 @@ def identity_key(rs: Ruleset, obs: Observation, sym: Symmetry | None = None) -> 
 KEYS: dict[str, Callable[..., CoarseKey]] = {"K0": k0, "K1": k1, "K2": k2}
 
 
+def _map_k0(sym: Symmetry, g: int, key: CoarseKey) -> CoarseKey:
+    """`g . key` for K0. The field positions are documented at the top of the
+    module; only cards and colors move under the group."""
+    seat, level, hand, top, color, opp_n, pile_n, phase, drawn = key
+    tm, cm = sym._types[g], sym._colors[g]
+    return (
+        seat,
+        level,
+        sym.hand(g, hand),
+        tm[top],
+        cm[color],
+        opp_n,
+        pile_n,
+        phase,
+        None if drawn is None else tm[drawn],
+    )
+
+
+def _map_k1(sym: Symmetry, g: int, key: CoarseKey) -> CoarseKey:
+    return _map_k0(sym, g, key[:9]) + (tuple(sorted(sym._types[g][card] for card in key[9])),)
+
+
+def _map_k2(sym: Symmetry, g: int, key: CoarseKey) -> CoarseKey:
+    return _map_k1(sym, g, key[:10]) + (tuple(sym._colors[g][color] for color in key[10]),)
+
+
+def _map_identity(sym: Symmetry, g: int, key: CoarseKey) -> CoarseKey:
+    return sym.key(Level.L1, g, key)
+
+
+_SYMMETRY_ACTION: dict[Callable[..., CoarseKey], Callable[[Symmetry, int, CoarseKey], CoarseKey]] = {
+    k0: _map_k0,
+    k1: _map_k1,
+    k2: _map_k2,
+    identity_key: _map_identity,
+}
+
+
+def _coarse_canonical(
+    sym: Symmetry, keyfn: Callable[..., CoarseKey], key: CoarseKey
+) -> tuple[CoarseKey, int]:
+    """The minimum image of a coarse key and the first element reaching it.
+
+    A symmetric coarsening must declare its group action explicitly. Silently
+    canonicalising an arbitrary key through its source L1 history is exactly the
+    information leak this module is meant to prevent.
+    """
+    try:
+        action = _SYMMETRY_ACTION[keyfn]
+    except KeyError as exc:
+        raise ValueError("a custom key function on a symmetric tree needs a registered coarse symmetry action") from exc
+    best, bg = key, 0
+    for g in range(1, sym.order):
+        image = action(sym, g, key)
+        if image < best:
+            best, bg = image, g
+    return best, bg
+
+
+def _coarse_stabilizer(
+    sym: Symmetry, keyfn: Callable[..., CoarseKey], canonical_key: CoarseKey
+) -> tuple[int, ...]:
+    action = _SYMMETRY_ACTION[keyfn]
+    return tuple(g for g in range(sym.order) if action(sym, g, canonical_key) == canonical_key)
+
+
 @dataclass
 class Coarsening:
     keying: Keying
+    keyfn: Callable[..., CoarseKey]
+    keys: tuple[CoarseKey, ...]  # coarse set id -> raw key (full tree) or canonical key (quotient)
+    key_to_info: dict[CoarseKey, int]
+    symmetry: Symmetry | None
     representative: np.ndarray  # (n_coarse,) an L1 set id representing each coarse set
     l1_to_coarse: np.ndarray  # (k1.n_info,) coarse set id of every L1 set
+    l1_to_symmetry: np.ndarray  # (k1.n_info,) element mapping each L1 frame to its coarse frame
+    l1_ia_to_coarse_ia: np.ndarray  # (k1.n_ia,) exact action-coordinate map
 
-
-def _union_find_orbits(k: Keying, members: list[int], acts_sorted: tuple[int, ...]) -> np.ndarray:
-    """The transitive join of every member's own action-orbit partition (see the
-    module docstring's "Orbits"), as an (len(acts_sorted),) array of orbit ids."""
-    n = len(acts_sorted)
-    pos_of_action = {a: p for p, a in enumerate(acts_sorted)}
-    parent = list(range(n))
-
-    def find(x: int) -> int:
-        r = x
-        while parent[r] != r:
-            r = parent[r]
-        while parent[x] != r:
-            parent[x], x = r, parent[x]
-        return r
-
-    def union(a: int, b: int) -> None:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
-
-    for m in members:
-        s, e = k.info_start[m], k.info_start[m + 1]
-        local_orbit = k.ia_orbit[s:e] - k.info_orbit_start[m]
-        by_orbit: dict[int, list[int]] = {}
-        for j, a in enumerate(k.ia_action[s:e]):
-            by_orbit.setdefault(int(local_orbit[j]), []).append(pos_of_action[int(a)])
-        for positions in by_orbit.values():
-            for p in positions[1:]:
-                union(positions[0], p)
-    roots = [find(x) for x in range(n)]
-    root_to_orbit = {r: idx for idx, r in enumerate(sorted(set(roots)))}
-    return np.array([root_to_orbit[r] for r in roots], dtype=np.int32)
+    def canonical(self, key: CoarseKey) -> tuple[CoarseKey, int]:
+        """Canonical coarse key and the element mapping `key` to it."""
+        if self.symmetry is None:
+            return key, 0
+        return _coarse_canonical(self.symmetry, self.keyfn, key)
 
 
 def _none_safe(x):
@@ -170,32 +208,30 @@ def coarsen(tree: CompiledTree, keyfn: Callable[..., CoarseKey], level: Level = 
     """Group `tree.keyings[level]`'s information sets by `keyfn` applied to each
     set's own (canonical) observation, into a new `Keying` over the tree's own
     nodes and arcs (usable directly with `best_response`, `tree.weights`, `evaluate`
-    via `CompiledTree.keying_of`). `keyfn` also gets a `Symmetry` instance (`None`
-    on a non-symmetric tree), currently unused by K0 / K1 / K2 / `identity_key`.
+    via `CompiledTree.keying_of`). On a quotient tree, both the coarse key and its
+    actions are put in the coordinate frame selected from the coarse fields alone.
+    The chosen element is retained for projection, lifting, and arc construction;
+    no discarded L1 history can select the deployed policy's coordinates.
 
-    **Known limitation on a symmetric (quotient) tree**: K0 / K1 / K2 read their
-    fields off whichever canonical L1 representative `compile_tree` happened to
-    pick for each L1 set (minimising the *whole* key, history included) -- not a
-    representative re-minimised for K0/K1/K2's own, smaller field set. The same
-    abstract coarse position can therefore land in different coarse groups
-    depending on which L1 representative reached it, so the quotient tree's K0 /
-    K1 / K2 partition can be a *finer* (less merged) one than the "ideal" quotient
-    of the abstract K0/K1/K2 partition, and `coarsen(quotient_tree, k0)`'s value
-    is not expected to numerically match `coarsen(full_tree, k0)`'s (unlike
-    `identity_key`, where every group has one member and no such gap can arise).
-    Properly re-canonicalising K0/K1/K2 under the group would need every
-    constituent's action list remapped through its own canonicalising element at
-    the arc level, not just the key; not done (docs/results/09.5a-results.md logs
-    this as a correction to the step 9.5a plan, which expected the two to agree).
-    The value computed here is still a valid, achievable lower bound on *that
-    tree's* own BR L1 either way (`test_coarse_response_replays_through_evaluate_
-    and_never_exceeds_br_l1`); only the full/quotient comparison is affected."""
+    Custom key functions remain supported on a full tree. A quotient coarsening
+    rejects one without an explicit entry in `_SYMMETRY_ACTION`, because guessing
+    its group action would risk recreating the hidden-history leak."""
     k = tree.keyings[level]
     sym = Symmetry(tree.rs) if tree.symmetric else None
     groups: dict[CoarseKey, list[int]] = {}
+    l1_to_symmetry = np.zeros(k.n_info, dtype=np.int16)
+    canonical_cache: dict[CoarseKey, tuple[CoarseKey, int]] = {}
     for i in range(k.n_info):
         obs = observation_from_key(tree.rs, level, k.key(i))
-        key = keyfn(tree.rs, obs, sym)
+        raw_key = keyfn(tree.rs, obs, sym)
+        if sym is None:
+            key, g = raw_key, 0
+        else:
+            cached = canonical_cache.get(raw_key)
+            if cached is None:
+                cached = canonical_cache[raw_key] = _coarse_canonical(sym, keyfn, raw_key)
+            key, g = cached
+        l1_to_symmetry[i] = g
         groups.setdefault(key, []).append(i)
     # Sets must be numbered so that every tree level's sets are contiguous, as
     # `compile_tree`'s own keyings are by construction ("in order of first
@@ -217,15 +253,22 @@ def coarsen(tree: CompiledTree, keyfn: Callable[..., CoarseKey], level: Level = 
     l1_to_coarse = np.full(k.n_info, -1, dtype=np.int32)
     ia_action_chunks: list[np.ndarray] = []
     ia_orbit_chunks: list[np.ndarray] = []
+    stabilizer_cache: dict[CoarseKey, tuple[int, ...]] = {}
+
+    def mapped_actions(m: int) -> tuple[int, ...]:
+        actions = k.actions(m)
+        if sym is None:
+            return tuple(sorted(actions))
+        return tuple(sorted(int(sym.actions[l1_to_symmetry[m], a]) for a in actions))
 
     for c, key in enumerate(keys_sorted):
         members = groups[key]
         representative[c] = members[0]
         for m in members:
             l1_to_coarse[m] = c
-        acts_sorted = tuple(sorted(k.actions(members[0])))
+        acts_sorted = mapped_actions(members[0])
         for m in members:
-            if tuple(sorted(k.actions(m))) != acts_sorted:
+            if mapped_actions(m) != acts_sorted:
                 raise ValueError(f"coarse key merges sets with different legal actions: {key!r}")
             if k.info_level[m] != k.info_level[members[0]]:
                 raise ValueError(f"coarse key merges sets at different tree levels: {key!r}")
@@ -233,7 +276,13 @@ def coarsen(tree: CompiledTree, keyfn: Callable[..., CoarseKey], level: Level = 
         info_level[c] = k.info_level[members[0]]
         n_actions[c] = len(acts_sorted)
         ia_action_chunks.append(np.array(acts_sorted, dtype=np.int32))
-        orbit_ids = np.arange(len(acts_sorted), dtype=np.int32) if not tree.symmetric else _union_find_orbits(k, members, acts_sorted)
+        if sym is None:
+            orbit_ids = np.arange(len(acts_sorted), dtype=np.int32)
+        else:
+            stabilizer = stabilizer_cache.get(key)
+            if stabilizer is None:
+                stabilizer = stabilizer_cache[key] = _coarse_stabilizer(sym, keyfn, key)
+            orbit_ids = np.array(sym.action_orbits(stabilizer, acts_sorted), dtype=np.int32)
         ia_orbit_chunks.append(orbit_ids)
 
     info_start = np.zeros(n_coarse + 1, dtype=np.int32)
@@ -255,14 +304,17 @@ def coarsen(tree: CompiledTree, keyfn: Callable[..., CoarseKey], level: Level = 
     if len(ia_action):
         pos_table[ia_info, ia_action] = pos_within_set
 
+    l1_info = k.ia_info
+    coarse_of_l1_ia = l1_to_coarse[l1_info]
+    mapped_l1_action = k.ia_action.copy()
+    if sym is not None:
+        mapped_l1_action = sym.actions[l1_to_symmetry[l1_info], mapped_l1_action].astype(np.int32)
+    l1_ia_to_coarse_ia = info_start[coarse_of_l1_ia] + pos_table[coarse_of_l1_ia, mapped_l1_action]
+    if np.any(l1_ia_to_coarse_ia < 0):
+        raise RuntimeError("an L1 action has no image in its coarse set")
+
     node_coarse = np.where(k.node_info >= 0, l1_to_coarse[np.maximum(k.node_info, 0)], -1).astype(np.int32)
-    arc_coarse = node_coarse[tree.arc_node]
-    arc_l1_ia = k.arc_ia
-    valid = arc_l1_ia >= 0
-    arc_action_canonical = np.where(valid, k.ia_action[np.maximum(arc_l1_ia, 0)], -1)
-    arc_ia = np.full(tree.m, -1, dtype=np.int32)
-    ok = valid & (arc_coarse >= 0)
-    arc_ia[ok] = info_start[arc_coarse[ok]] + pos_table[arc_coarse[ok], arc_action_canonical[ok]]
+    arc_ia = np.where(k.arc_ia >= 0, l1_ia_to_coarse_ia[np.maximum(k.arc_ia, 0)], -1).astype(np.int32)
 
     keying = Keying(
         level=level,
@@ -279,7 +331,17 @@ def coarsen(tree: CompiledTree, keyfn: Callable[..., CoarseKey], level: Level = 
         orbit_size=orbit_size,
         info_orbit_start=info_orbit_start,
     )
-    return Coarsening(keying=keying, representative=representative, l1_to_coarse=l1_to_coarse)
+    return Coarsening(
+        keying=keying,
+        keyfn=keyfn,
+        keys=tuple(keys_sorted),
+        key_to_info={key: i for i, key in enumerate(keys_sorted)},
+        symmetry=sym,
+        representative=representative,
+        l1_to_coarse=l1_to_coarse,
+        l1_to_symmetry=l1_to_symmetry,
+        l1_ia_to_coarse_ia=l1_ia_to_coarse_ia.astype(np.int32),
+    )
 
 
 def project_onto_coarse(tree: CompiledTree, coarsening: Coarsening, l1_sigma: np.ndarray) -> np.ndarray:
@@ -289,27 +351,80 @@ def project_onto_coarse(tree: CompiledTree, coarsening: Coarsening, l1_sigma: np
     strategy is *actually* constant across every coarse group's members, which is
     not checked here (K0-measurable agents guarantee it).
 
-    On a symmetric tree the representative's own values need not already be uniform
-    within the *coarse* keying's own action orbits (the transitive join across every
-    merged L1 set, module docstring): they are only guaranteed uniform within the
-    representative's own, possibly finer, orbits. `orbit_mean` enforces the coarser
-    requirement, as `tabulate` / `cfr` do elsewhere whenever a strategy must be
-    symmetric for the compiled tree's machinery to treat it as one well-defined
-    real-game strategy (docs/spec.md section 18); skipping it reproduces the
-    historical "pure choice on an orbit scores above the true value" bug there."""
+    On a symmetric tree the representative's actions are first mapped from its L1
+    canonical frame into the independently canonical coarse frame. `orbit_mean`
+    then enforces the coarse key's own stabilizer, as required for a deployable
+    equivariant policy (docs/spec.md section 18)."""
     k1 = tree.keyings[Level.L1]
     kc = coarsening.keying
     sigma = np.zeros(kc.n_ia)
     for c in range(kc.n_info):
         m = int(coarsening.representative[c])
         s1, e1 = k1.info_start[m], k1.info_start[m + 1]
-        acts_m, vals_m = k1.ia_action[s1:e1], l1_sigma[s1:e1]
-        sc, ec = kc.info_start[c], kc.info_start[c + 1]
-        acts_c = kc.ia_action[sc:ec]
-        order = np.argsort(acts_m)
-        pos = np.searchsorted(acts_m[order], acts_c)
-        sigma[sc:ec] = vals_m[order][pos]
+        mapped = coarsening.l1_ia_to_coarse_ia[s1:e1]
+        sigma[mapped] = l1_sigma[s1:e1]
     return kc.orbit_mean(sigma)
+
+
+def lift_to_l1(tree: CompiledTree, coarsening: Coarsening, sigma: np.ndarray) -> np.ndarray:
+    """Lift a coarse strategy into the tree's ordinary L1 action layout.
+
+    This is an exact gather through the action-coordinate map built by `coarsen`.
+    On a quotient tree the result is a symmetric L1 strategy, suitable for
+    `CompiledAgent`, `evaluate`, and cross-checking the coarse keying's value.
+    """
+    if len(sigma) != coarsening.keying.n_ia:
+        raise ValueError("sigma must be a strategy over the coarse keying")
+    out = np.asarray(sigma)[coarsening.l1_ia_to_coarse_ia]
+    k1 = tree.keyings[Level.L1]
+    if tree.symmetric and not k1.is_symmetric(out):
+        raise ValueError("the coarse strategy is not uniform within its coarse stabilizer")
+    return out
+
+
+class CoarseAgent:
+    """Play a strategy as a function of its declared raw coarse observation.
+
+    Unlike lifting through a full-L1 table, this is the direct deployment path:
+    canonicalise K0/K1/K2 itself, query one coarse set, and map the distribution
+    back to the observation's real labels. Equal raw keys therefore take exactly
+    equal distributions, including when their full histories choose different L1
+    canonical frames.
+    """
+
+    def __init__(self, tree: CompiledTree, coarsening: Coarsening, sigma: np.ndarray, name: str = "coarse") -> None:
+        if len(sigma) != coarsening.keying.n_ia:
+            raise ValueError("sigma must be a strategy over the coarse keying")
+        if coarsening.symmetry is not None and not coarsening.keying.is_symmetric(sigma):
+            raise ValueError("a quotient coarse policy must be uniform within every coarse action orbit")
+        self.rs = tree.rs
+        self.level = coarsening.keying.level
+        self.coarsening = coarsening
+        self.sigma = sigma
+        self.name = name
+        self.misses = 0
+        self._canonical_cache: dict[CoarseKey, tuple[CoarseKey, int]] = {}
+
+    def policy(self, obs: Observation, legal: tuple[int, ...]) -> dict[int, float]:
+        if obs.level is not self.level:
+            raise ValueError(f"{self.name} needs {self.level.name} observations, got {obs.level.name}")
+        c = self.coarsening
+        raw_key = c.keyfn(self.rs, obs, c.symmetry)
+        mapped = self._canonical_cache.get(raw_key)
+        if mapped is None:
+            mapped = self._canonical_cache[raw_key] = c.canonical(raw_key)
+        key, g = mapped
+        i = c.key_to_info.get(key)
+        if i is None:
+            self.misses += 1
+            return {legal[0]: 1.0}
+        s, e = c.keying.info_start[i], c.keying.info_start[i + 1]
+        out = {int(a): float(p) for a, p in zip(c.keying.ia_action[s:e], self.sigma[s:e]) if p > 0}
+        if g:
+            assert c.symmetry is not None
+            out = c.symmetry.map_policy(int(c.symmetry.inverse[g]), out)
+        assert all(a in legal for a in out), "coarse keying and game disagree on legal actions"
+        return out
 
 
 def _profile(seat: int, mine: Strategy, opp: Strategy) -> tuple[Strategy, Strategy]:

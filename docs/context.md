@@ -1,23 +1,19 @@
 # UNO RL v5: project context
 
-**Planning update, 2026-09-17:** work through 10a.2 is complete. The accepted
-sequence now inserts **10a.3** (repair the coarse-memory evidence, specify learner
-observation arms, and calibrate LBR) before **10B → 10C → Step 11**. See
-[the execution plan](10-to-11-plan.md) for scope and exit criteria and
-[the review](results/10-review.md) for the reproduced K1 measurability problem.
-These changes are planned, not implemented; older status and memory-sufficiency
-claims below must be read with this update.
+**Status update, 2026-09-17:** work through **10a.3A** is complete. The
+coarse-memory evidence has been repaired and refreshed; 10a.3B (learner
+observation arms) and 10a.3C (LBR) remain before **10B → 10C → Step 11**. See
+[the execution plan](10-to-11-plan.md), [the review](results/10-review.md), and
+[the repair results](results/10a3a-results.md). Older memory-sufficiency claims
+below must be read with this update.
 
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 10a, 2026-09-17** (on top of commit
-`29bccad`): the contract step 11's checkpoints will be measured against -- the seed
-registry, the batched tabulation and the report card (section 5.22). Before it, step
-9.5f and its follow-ups: the belief ladder against a second column, the world ladder
-re-run under `voids`, and the batched-leaf speed-up of section 5.21. Next is the rest of
-step 10 (10a.2: shaping artifacts, the two missing ladder rows, the training target, LBR;
-then 10b figures, 10c the distilled rulebot).
+with no access to the repo. State as of **step 10a.3A, 2026-09-17** (on top of
+commit `3a4c782`): the seed, reporting, training-target, shaping, belief,
+column-free-player, and corrected toy-memory contracts are complete. Next are
+10a.3B/C, then 10B figures and 10C's distilled rulebot.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -641,11 +637,10 @@ attribution), and a state → tree lookup that step 9.5b's AIVAT will also need.
   size, pile size, phase, drawn card, plus the tree level so a coarse set never
   spans two levels), K1 (+ discard multiset), K2 (+ a void hint). `coarsen`
   builds a new `Keying` over a tree's own nodes/arcs by grouping L1 sets under
-  a key function; on a symmetric tree, several L1 sets' own (possibly
-  different) action orbits are combined by their **transitive join**, never
-  asking for less uniformity than any one of them independently requires,
-  which is what keeps the result achievable (never an over-estimate, the
-  section 5.8 bug one level up). `memoryless_response` is an iterated greedy
+  a key function. Step 9.5a combined constituent L1 action orbits by their
+  transitive join; 10a.3A supersedes that construction after finding that the
+  L1 coordinate frames themselves leaked discarded history (section 5.24).
+  `memoryless_response` is an iterated greedy
   best response with `own` (below) fixed at the current iterate: every step is
   a real, history-free policy, so the best value seen is a valid lower bound.
 - **`own`** (`best_response(..., own=...)`, spec section 21): the responder's
@@ -695,9 +690,12 @@ against `"heuristic"` as soon as both sides are available and immediately
 slimming the trace away, the same pattern `uno.experiments.transfer` already
 used elsewhere.
 
-**What it bought:** `docs/results/09.5a-results.md`. K1 (hand, top, discard
-multiset -- no play-by-play history) already recovers 96-99.8 % of BR L1's edge
-on the forced toys; the void hint (K2) buys almost nothing on top of it. On
+**What it bought at the time:** `docs/results/09.5a-results.md`. Its claim that
+K1 recovered 96-99.8 % of BR L1's edge is historical and superseded by 5.24:
+the policy was not strictly K1-measurable, and the ratio used return relative to
+zero instead of skill relative to the same-seat Random baseline. The qualitative
+finding that K2 buys little over K1 survives the corrected achieved-score table.
+On
 `TOY`, the Heuristic's seat-1 weakness against Random is 71 % wild-colour
 decisions specifically (not hold-vs-spend); on `TOY2_SKIP` the skip-timing
 kind is 24-40 % of the gap at both seats, both a genuine sharpening of the
@@ -1255,6 +1253,34 @@ files (`docs/results/10a2-results.md`).
   block 01 it gives 0.7860 / 0.7685. The selection did not materially inflate it -- which is
   reassuring rather than guaranteed, and is why 5.22 kept the blocks apart in the first place.
 
+### 5.24 Step 10a.3A: the coarse-memory coordinate leak
+
+**Problem:** step 9.5a grouped quotient L1 sets after their full histories had
+already selected canonical color/rank coordinates. Equal raw K1 inputs could
+therefore land in different groups or attach the same coarse action probabilities
+to different real actions. The policy was valid at L1, but not measurable from K1.
+The review reproduced this at a positive-reach `TOY` set: two equal K1 inputs
+returned `{1: 1}` and `{3: 1}`.
+
+**Repair:** `coarsen` now canonicalizes K0 / K1 / K2 from their own fields and
+maps every legal action and arc through that same group element. Action orbits
+come from the coarse key's own stabilizer. `CoarseAgent` is the direct deployed
+path; `lift_to_l1` maps the same strategy into the ordinary compiled L1 layout.
+On the reproduced collision both paths return `{1: 0.5, 3: 0.5}` at the same
+on-policy reach (`0.0017460317460317458`). On `SMALL`, quotient coarse groups are
+exactly the symmetry orbits of the full-tree groups, and the same lifted K0 / K1 /
+K2 policy has the same exact value on both representations at both seats.
+
+**What changed:** the corrected quotient has fewer coarse sets because symmetric
+copies no longer remain separated by discarded history. The effect is largest at
+K0 (up to about 5.3 score points in the refreshed rows), while K1 moves by at most
+about 0.6 points. Those are intended removals of undeclared information; the
+Heuristic and BR L1 controls are unchanged. The refreshed K1 gaps to BR L1 remain
+small on several toys but are nonzero, including 1.49 / 1.66 points against Random
+on `TOY2_SKIP` and 0.39 / 0.46 on `TOY2_FULL`. They are gaps of an achieved local
+iterate, not proofs of representational loss or of the K1 optimum. Full-UNO K1
+sufficiency remains untested. Results: `docs/results/10a3a-results.md`.
+
 ## 6. Results: what we know
 
 All exact unless marked sampled. Scores of the first-named player, seat 0 /
@@ -1511,7 +1537,7 @@ Kept because they show where this kind of analysis goes wrong.
 | (9.5b) "a PIMC value is a candidate V for AIVAT" | a rollout V costs more games than it saves and its noise makes the estimator worse than raw (ratio 3.99 at n = 16); PIMC is the *teacher* of a fitted network (step 9.5c) |
 | (9.5b) "a better full-UNO V has up to twice the gain to collect" | the floor is 0.086-0.090, not ~0.4, so up to 11x; the fitted network takes 2.2x of it (step 9.5c) |
 | (9.5c plan) teacher targets at n = 8 rollouts per state | at a fixed budget, n = 2 on four times as many games fits better (step 9.5c) |
-| (step 9.5a plan) "one `best_response` pass with `own` fixed gives the same value on the quotient as on the full tree" (K0 / K1 / K2) | only true for `identity_key` (no merging ambiguity); K0/K1/K2 group by whichever canonical L1 representative `compile_tree` picked for each set (history included), not one re-minimised for the coarse key's own fields, so the two trees' partitions can differ and need not agree numerically (step 9.5a) |
+| (step 9.5a plan) "one `best_response` pass with `own` fixed gives the same value on the quotient as on the full tree" (K0 / K1 / K2) | step 9.5a correctly withdrew the claim because its quotient partition leaked the full-L1 coordinate frame; 10a.3A repairs the partition and checks the **same lifted policy's** value across full and quotient trees. Separate local optimization runs still need not choose the same iterate. |
 | (9.5 brainstorm) the toys' PIMC-n curve anchors the full-UNO world budget | it does not: a toy belief holds 2-23 consistent worlds at the decisions actually faced and full UNO's holds astronomically more, so "n = 8 recovers nearly all of PIMC-infinity" is a statement about toy belief sizes (step 9.5d) |
 | (9.5d) PIMC-n "converges to PIMC-infinity from below" | not always: it overshoots on `TOY` vs the Heuristic at seat 1, because PIMC-infinity maximises the belief-weighted *perfect-information* score and not the true value, so the deterministic limit need not be the best member of its own family (step 9.5d) |
 | (9.5d, first draft) "worlds help; depth hurts" | the first half holds at many sigma (0.415 -> 0.595 -> 0.695 for 2 -> 8 -> 32 worlds); the second was read off differences of about **one standard error** at 200 unpaired deals. Retested paired: depth 4 is 7.5 / 6.0 points below depth 2 at w = 32 for 8.3x the cost, monotone in depth, but only z -1.7 / -1.3 -- so depth is *dominated*, not *proven harmful* (step 9.5d section 3a) |

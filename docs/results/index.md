@@ -388,6 +388,29 @@ compromising (`voids` at 89.7 % against an honest one); 0.1 is the answer to "on
 unknown", which is what step 11 needs when an RL agent may or may not have learned to hold a
 playable drawn card.
 
+## Corrected coarse-memory evidence ([step 10a.3A](10a3a-results.md))
+
+The step 9.5a quotient policy retained discarded L1 history through its color/rank coordinate
+frame. The repaired construction canonicalizes each coarse key and its actions together. The
+review's positive-reach collision now returns `{1: 0.5, 3: 0.5}` for both equal raw K1 inputs,
+through both the direct coarse agent and its lifted L1 strategy. A full-tree `SMALL` oracle checks
+the K0 / K1 / K2 partitions and exact same-policy values against the quotient.
+
+Corrected K1 achieved score, seat 0 / seat 1, followed by its absolute gap to BR L1 in score
+points. These are the best of 20 local-response iterations, not certified K1 optima:
+
+| ruleset | vs Random: score (gap) | vs Heuristic: score (gap) |
+|---|---:|---:|
+| `TOY` | 0.7927 / 0.5490 (0.07 / 0.23) | 0.7378 / 0.4313 (0.00 / 0.48) |
+| `TOY_FULL` | 0.8017 / 0.5768 (0.00 / 1.15) | 0.7446 / 0.4613 (0.00 / 1.19) |
+| `TOY2` | 0.7289 / 0.5650 (0.16 / 0.43) | 0.6928 / 0.4917 (0.31 / 0.20) |
+| `TOY2_SKIP` | 0.7276 / 0.5753 (1.49 / 1.66) | 0.6776 / 0.5193 (1.64 / 1.63) |
+| `TOY2_FULL` | 0.7440 / 0.6118 (0.39 / 0.46) | 0.7051 / 0.5287 (0.67 / 0.84) |
+
+K1 moved by at most about 0.6 points; K0 moved much more, up to about 5.3 points. K2 still adds
+little over K1. The Heuristic and BR L1 controls are unchanged. This is trustworthy toy evidence,
+not evidence that K1 is sufficient on full UNO or that the local solver found the K1 optimum.
+
 ## The report card and the seed registry ([step 10a](10a-results.md))
 
 `uv run uno report [ruleset] [agent]` prints one agent's card -- score, normalised skill and

@@ -1,5 +1,10 @@
 # Step 10 second opinion: memory, LBR, and readiness for RL
 
+> **Follow-up:** 10a.3A implemented the memory repair and refreshed the evidence;
+> see [10a.3A results](10a3a-results.md). The diagnosis and reproduction below
+> remain the historical motivation. Observation-contract and LBR recommendations
+> remain pending as 10a.3B/C.
+
 Review on 2026-09-17 at `f12ffaf`. No learner or algorithm changes made.
 Sources: `context.md`, the results index, Step 9.5a–10a.2 results, relevant spec
 sections, and the coarse-key, belief, search, target, and evaluator code.

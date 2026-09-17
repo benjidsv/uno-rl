@@ -823,61 +823,39 @@ as `compile_tree` does for its own keyings, and raises if it ever fails.
 information sets by `keyfn` applied to each set's own canonical observation,
 into a new `Keying` (section 16) over the tree's own nodes and arcs -- usable
 directly with `best_response`, `tree.weights` / `tree.reach` / `tree.values`
-and `evaluate` (`CompiledTree.keying_of`), but with no `.keys` (no
-byte-encoding exists for K0 / K1 / K2 shapes, unlike the L1 / L2 / L3 keys of
-`uno.game.keys`): those functions never touch a keying's `.keys`, so this is
-enough for everything here, but `tabulate` / `CompiledAgent` do not work on a
-coarse keying. Sets are numbered by `(tree level, key)`, not by key alone: a
-plain sort by key value need not group same-level sets together (K0 / K1 / K2
-sort by hand before level, and `identity_key`, section 21's tests, does not
-carry a level field at all), and `best_response`'s per-level loop silently
-assumes sets are numbered contiguously per level, as `compile_tree`'s own
-keyings are by construction ("in order of first appearance"). Numbering by key
-value alone passed every small-ruleset unit test (which never happened to
-interleave two sets from different levels under the wrong id order) and still
-produced a self-consistent-looking `BestResponse` (same value from
-`best_response` and from replaying its own `sigma` through `evaluate`) on
-`SMALL`'s *non*-symmetric tree, and was only caught by comparing an
-`own`-weighted best response's value against its `own=None` value.
+and `evaluate` (`CompiledTree.keying_of`). K0 / K1 / K2 have no compact byte
+encoding like the L1 / L2 / L3 keys, so `Coarsening.keys` and
+`Coarsening.key_to_info` hold their typed lookup. `CoarseAgent` queries that
+lookup from a real observation; `lift_to_l1` maps the same policy into an
+ordinary L1 strategy for `CompiledAgent`, `tabulate`, and exact replay. Sets are
+numbered by `(tree level, key)`, not by key alone, because `best_response`'s
+per-level loop requires each level's sets to occupy one contiguous id range.
 
-**Orbits.** On a symmetric tree, several L1 sets can merge into one coarse
-set, each carrying its own action-orbit partition (section 18) -- possibly a
-*different* one, since a set's orbit structure depends on the stabilizer of
-its whole canonical key (history included), not only on K0 / K1 / K2. A coarse
-policy is one distribution per coarse set, so for it to be valid for every
-merged L1 set at once, it must be uniform within the **transitive join** of
-their orbit partitions (union two actions whenever *any* merged set's own
-orbits group them together): the join is never finer than any single
-constituent's partition (so it never asks for *less* uniformity than a
-constituent independently requires), which is what keeps the resulting
-strategy achievable and never an over-estimate (section 18, "a best response
-above the maximum is not a strategy"). It can force a little *more* uniformity
-than the coarse-optimal strategy strictly needs -- `coarsen` picks the safe
-join rather than search for the tightest valid partition, which only matters
-for `memoryless_response`'s value as a lower bound, never for its validity.
-`project_onto_coarse` (a starting L1-level strategy, e.g. a K0-measurable
-agent's tabulation, restricted to a coarse keying via one representative L1
-set per coarse set) must itself be averaged within these joined orbits before
-use (`Keying.orbit_mean`), for the same reason: skipping it reproduces the
-section 18 bug on the coarse keying.
+**Coarse canonicalization and action mapping.** On a quotient tree, an L1 set
+arrives in coordinates selected by canonicalising its whole L1 history. Reusing
+that frame for K0 / K1 / K2 is invalid: histories with equal raw coarse fields
+can choose different frames, letting the policy recover discarded information
+from the action labels. For every L1 set, `coarsen` therefore:
 
-**Known limitation on a symmetric tree**: K0 / K1 / K2 read their fields off
-whichever canonical L1 representative `compile_tree` happened to pick for each
-L1 set (minimising the *whole* key, history included) -- not a representative
-re-minimised for K0 / K1 / K2's own, smaller field set. The same abstract
-coarse position can therefore land in different coarse groups depending on
-which L1 representative reached it, so the quotient tree's K0 / K1 / K2
-partition can be a *finer* (less merged) one than the "ideal" quotient of the
-abstract K0 / K1 / K2 partition, and `coarsen(quotient_tree, k0)`'s value is
-not expected to numerically match `coarsen(full_tree, k0)`'s (unlike
-`identity_key`, where every group has one member and no such gap can arise:
-`tests/compiled/test_coarse.py` checks this exact contrast). Properly
-re-canonicalising K0 / K1 / K2 under the group would need every constituent's
-action list remapped through its own canonicalising element at the arc level,
-not just the key; not done (this was step 9.5a's plan, which expected the two
-to agree -- a correction logged in `docs/results/09.5a-results.md`). The value
-computed here is still a valid, achievable lower bound on *that tree's* own BR
-L1 either way; only the full/quotient comparison is affected.
+1. computes the raw coarse key;
+2. minimizes that key over the color/rank group, using only its declared fields;
+3. records the group element reaching the minimum; and
+4. maps every legal action and every tree arc through the same element.
+
+Raw-key canonicalization is cached, so repeated L1 histories with one coarse
+input pay for the group enumeration once. A custom key function is accepted on
+a full tree; on a quotient it must declare a group action rather than silently
+falling back to the source L1 frame.
+
+The action orbits of a canonical coarse set come directly from the stabilizer
+of its own coarse key. `project_onto_coarse` maps the representative's action
+probabilities into that frame and averages within those orbits.
+`lift_to_l1` gathers them back through the stored per-set/action map. Thus a
+deployed policy is equivariant and equal raw K0 / K1 / K2 inputs induce equal
+distributions in real action labels, regardless of which discarded history
+produced them. On `SMALL`, the quotient coarse keys equal exactly the symmetry
+orbits of the full tree's raw coarse keys, and the same lifted K0 / K1 / K2
+policies have equal exact values on the two representations.
 
 **`memoryless_response(tree, coarsening, opponent, seat, start_l1_sigma,
 iterations)`**: an iterated greedy best response. From a starting policy
@@ -896,13 +874,14 @@ repeats an earlier iterate exactly.
 Checks (`tests/compiled/test_coarse.py`): the identity coarsening (`identity_key`
 = the full L1 key) reproduces `best_response` L1 exactly, on both the full and
 the quotient tree, and the pinned `TOY` BR-to-random values (0.7934 / 0.5513);
-Random and the Heuristic tabulations are constant within every K0 set; a coarse
-response replays to its value through `evaluate` and never exceeds BR L1, on
-both trees independently; brute force over every pure K0 policy (at most 4,096
-of them, else the example is skipped) bounds `memoryless_response`'s result;
-one `best_response` pass with `own` fixed agrees between the full and the
-quotient tree on `identity_key` (not on K0 / K1 / K2, the known limitation
-above).
+Random and the Heuristic tabulations survive K0 projection and lifting; the
+review's positive-reach raw-K1 collision returns the same `{1: 0.5, 3: 0.5}`
+distribution through both `CoarseAgent` and the lifted `CompiledAgent`; a
+coarse response replays to its value and never exceeds BR L1; the corrected
+`TOY` K0 / K1 responses are pinned; full and quotient `SMALL` partitions and
+same-policy values agree for K0 / K1 / K2; brute force over every pure K0
+policy (at most 4,096, else the example is skipped) bounds
+`memoryless_response`; and the existing `own`-weighting regressions remain.
 
 ## 21. Edge attribution and the sampled cross-check (`uno/compiled/edge.py`, `uno/compiled/lookup.py`)
 

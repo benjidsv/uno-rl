@@ -1,12 +1,12 @@
 # Steps 10–11: revised execution plan
 
-Agreed direction, 2026-09-17; implementation pending. Based on the
+Agreed direction, 2026-09-17; 10a.3A complete and B/C pending. Based on the
 [Step 10 review](results/10-review.md) and Benji's request to retain the existing
-10B → 10C → 11 sequence. Existing work through 10a.2 remains complete.
+10B → 10C → 11 sequence.
 
 ## Placement and scope
 
-**10a.2 (done) → 10a.3 (repair memory evidence + add LBR) → 10B → 10C → 11.**
+**10a.3A (done) → 10a.3B/C → 10B → 10C → 11.**
 
 This preserves milestone order and purpose. It adds work before 10B, so it is
 not a promise of unchanged elapsed time. Keep 10a.3 bounded: no RL training,
@@ -23,7 +23,13 @@ paths, with measured throughput and bounded memory.
 | 11 phase 2 | Full-UNO training with sampled measurements | Compare memory choices and measure attacks on checkpoints |
 | 11 phase 3 | Further iterations guided by measured failures | Improve whichever component limits learning |
 
-## 10a.3A: repair the memory measurement
+## 10a.3A: repair the memory measurement (done)
+
+Completed on 2026-09-17; see [the results](results/10a3a-results.md). The
+implementation canonicalizes coarse fields and actions together, pins the
+review's positive-reach collision, checks the same lifted policies across full
+and quotient `SMALL` trees, and refreshes all five planned rulesets. The
+remaining 10a.3 work starts at B below.
 
 1. Turn the review's positive-reach K1 counterexample into a bounded regression:
    identical raw K1 observations must induce identical action distributions.
