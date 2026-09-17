@@ -52,7 +52,9 @@ remaining 10a.3 work starts at B below.
 exact values replay correctly; refreshed rows and remaining limitations are
 documented. This establishes trustworthy toy evidence, not full-UNO sufficiency.
 
-## 10a.3B: define the observation contract
+## 10a.3B: define the observation contract (done)
+
+Completed on 2026-09-17; the contract is defined in [observation-contract.md](observation-contract.md). Tests verify the extraction fields and invariance properties.
 
 Specify three Step 11 comparison arms without building the learner yet:
 

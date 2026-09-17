@@ -1,8 +1,10 @@
 # UNO RL v5: project context
 
-**Status update, 2026-09-17:** work through **10a.3A** is complete. The
-coarse-memory evidence has been repaired and refreshed; 10a.3B (learner
-observation arms) and 10a.3C (LBR) remain before **10B → 10C → Step 11**. See
+**Status update, 2026-09-17:** work through **10a.3B** is complete. The
+coarse-memory evidence has been repaired and refreshed (10a.3A); the learner
+observation contract is defined with three comparison arms (10a.3B,
+[docs/observation-contract.md](observation-contract.md)). 10a.3C (LBR) remains
+before **10B → 10C → Step 11**. See
 [the execution plan](10-to-11-plan.md), [the review](results/10-review.md), and
 [the repair results](results/10a3a-results.md). Older memory-sufficiency claims
 below must be read with this update.
@@ -10,10 +12,10 @@ below must be read with this update.
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 10a.3A, 2026-09-17** (on top of
-commit `3a4c782`): the seed, reporting, training-target, shaping, belief,
-column-free-player, and corrected toy-memory contracts are complete. Next are
-10a.3B/C, then 10B figures and 10C's distilled rulebot.
+with no access to the repo. State as of **step 10a.3B, 2026-09-17** (on top of
+commit `aee9384`): the seed, reporting, training-target, shaping, belief,
+column-free-player, corrected toy-memory contracts, and learner observation
+contract are complete. Next is 10a.3C, then 10B figures and 10C's distilled rulebot.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the

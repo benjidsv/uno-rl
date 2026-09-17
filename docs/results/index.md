@@ -411,6 +411,14 @@ K1 moved by at most about 0.6 points; K0 moved much more, up to about 5.3 points
 little over K1. The Heuristic and BR L1 controls are unchanged. This is trustworthy toy evidence,
 not evidence that K1 is sufficient on full UNO or that the local solver found the K1 optimum.
 
+## Learner observation contract (step 10a.3B)
+
+Defined in [`docs/observation-contract.md`](observation-contract.md). Specifies the
+three comparison arms that Step 11 will implement and compare (K1 feed-forward,
+K1+structured evidence, and recurrent public/private history), with explicit
+field lists, legality masks, equivariance requirements, and evaluator
+compatibility invariants. Tests verify the contract's field extractions.
+
 ## The report card and the seed registry ([step 10a](10a-results.md))
 
 `uv run uno report [ruleset] [agent]` prints one agent's card -- score, normalised skill and

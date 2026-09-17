@@ -1940,3 +1940,36 @@ row. Since a name identifies a policy (section 13) and the two constructions are
 they share a name and therefore a world-sampling stream, so the per-game scores must be
 **array-equal** -- which they are, at both columns. Reported on **EVAL block 01**; block 00 is
 spent (section 27.1).
+
+## 31. Observation contract for Step 11 learner arms (`docs/observation-contract.md`)
+
+Step 10a.3B. Three comparison arms for the Step 11 learner, with explicit field
+lists, legality masks, equivariance requirements, seat conventions, and
+evaluator compatibility:
+
+- **Arm A (K1 feed-forward):** position + discard multiset, no sequential
+  history. The explicit memory ablation.
+- **Arm B (K1 + structured evidence):** Arm A plus a fixed-size summary of
+  draw/play evidence extending the measured `voids` signal — per-colour void
+  counts, penalty/voluntary distinction, evidence age. A new representation,
+  not K2.
+- **Arm C (recurrent history):** current position plus the full public event
+  sequence and private draw history. The arm that can recover any L1-measurable
+  policy.
+
+All arms share: the static action space, a legality mask derived from
+(hand, top, color, phase, drawn), color/rank equivariance under the group of
+section 18, the seat-0 input frame of section 24, and the turn clock / reshuffle
+count. The actor is always L1; the training critic may use L2 (section 23–24);
+the training target is chance + opponent + deal, never the row (section 28).
+
+Arms A and B are fully compatible with `determinize_l1` (section 25) and all
+existing evaluator paths. Arm C reads only the actor's own L1 information state
+and is compatible with ordinary game evaluation and AIVAT. Querying a recurrent
+target inside determinized worlds requires consistent private history
+reconstruction; this is a Step 11 integration gate, not a prerequisite for
+10a.3C's baseline LBR instrument.
+
+The full contract is in [observation-contract.md](observation-contract.md);
+invariance tests in `tests/game/test_observation_contract.py`.
+
