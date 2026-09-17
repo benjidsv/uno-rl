@@ -24,17 +24,33 @@ they have drawn `k` cards since, at most `k` cards of their hand *now* can be pl
 that board -- a necessary condition, exact, and checkable against a current hand with no
 propagation at all.
 
-On a **forced-play** ruleset the statement needs no policy assumption whatever: `legal_actions`
-offers `Draw` only when nothing is playable, so a draw *proves* the void by the rules rather than
-merely implying it. The rung therefore has teeth on every toy, not only the free-play ones --
+On a **forced-play** ruleset the *pre-draw* half of the statement is a fact of the rules rather
+than an inference about policy: `legal_actions` offers `Draw` only when nothing is playable. That
+does **not** make the rung assumption-free -- see the scope below. The rung has teeth on every toy,
+not only the free-play ones --
 decisions carrying at least one constraint: `TOY` 16.5 %, `TOY2` 23.3 %, `TOY2_SKIP` 18.3 %,
 `TOY_FULL` 16.5 %, `FULL_UNO` 73.4 %. (`TOY` and `TOY_FULL` agree to the digit because neither
 rulebot ever draws voluntarily, so the two rulesets play out identically under this profile.)
 
-It needs **no opponent policy**, so unlike the `response` continuation it does
-not make the row opponent-specific; it is the half that survives into a general player. Measured:
-it alone rules out **79.9 %** of `determinize_l1`'s worlds on full UNO (median surviving share
-15.6 %, so w = 64 is effectively w = 10), with the true hand violating it 0 times in 2,487.
+**Its scope, which is narrower than it looks.** The count above is of cards drawn *strictly after*
+the void, so the constraint assumes the card drawn **at** the void did not stay in hand as a
+playable one -- i.e. that a playable drawn card is played at once. Every play-first rulebot does
+exactly that. It is not a rule: `draw_then_may_play` lets the drawer keep it by passing, and a
+`Pass` writes no public event, so nothing in the history distinguishes the two. The assumption
+cannot simply be dropped, because the version without it is **provably vacuous**: at the void the
+hand holds nothing playable and every card that could be playable since was drawn since, so
+"playable now <= drawn since" is a tautology (measured on the `TOY` world tree: it keeps 100 % of
+worlds at both seats, excluding nothing at all).
+
+So the rung reads no policy *probabilities* -- which is what separates it from `"window"`, and what
+keeps it cheap and portable -- but it is **not** policy-free, and the claim that it therefore
+survives unchanged into a general player does not hold. Measured against an opponent that keeps a
+playable drawn card half the time, it rules out the hand they really hold at **12.1 %** of
+constrained decisions (0 % against either rulebot). Against the opponents it assumes it is exact:
+over 5,001 constrained `TOY` sets per seat it contradicts their posterior **0 times**, and it
+closes 89-91 % of the distance from the uniform split to that posterior
+(`uv run uno pimc closure`). Measured on full UNO: it alone rules out **79.9 %** of
+`determinize_l1`'s worlds (median surviving share 15.6 %, so w = 64 is effectively w = 10).
 
 **Rung `"window"`: the policy likelihood, exactly, where it is computable.** Over the opponent's
 **trailing run of plays with no draw in between**, their hand at each of those decisions is
@@ -44,8 +60,24 @@ action probabilities -- the genuine posterior restricted to the window, not an a
 it. The window stops at the first draw going back, because a draw is exactly the point where the
 hand stops being recoverable, which is what defeated the filter above.
 
-Both rungs fall back to the uniform prior when no consistent hand is found, and both **count** it
+**Rung `"soft"`: the same constraint, believed rather than enforced.** `"voids"` is a hard filter,
+so it puts probability **zero** on any hand that breaks its assumption -- and once the truth is
+excluded no amount of search recovers it. Measured, that is not hypothetical: against an opponent
+that keeps a playable drawn card it rules out the real hand at 12.1 % of constrained decisions, and
+against one that voluntarily draws holding a playable card, at 69 %. `"soft"` weights instead of
+rejecting:
+
+    w(hand) = product over voids of  decay ** max(0, playable(hand, board) - since)
+
+`decay = 0` reproduces `"voids"` exactly and `decay = 1` the uniform prior, so the rung is a
+one-parameter family spanning the two. Because every weight is positive, **the hand the opponent
+really holds is never excluded**, whatever they do. The recovery over time is already there: each
+further draw raises `since`, shrinking the exponent, which is the "every draw is another chance
+they picked one up" intuition expressed against the counter the constraint already keeps.
+
+The rungs fall back to the uniform prior when no consistent hand is found, and they **count** it
 (`Belief.fallbacks`): a report that hides that number is hiding whether the belief was available.
+`"soft"` only falls back when every candidate weighs zero, which at `decay > 0` cannot happen.
 """
 
 from __future__ import annotations
@@ -59,7 +91,7 @@ from uno.game.engine import Phase, playable_table
 from uno.game.observe import Level, Observation
 from uno.game.rules import Kind, Play, Ruleset
 
-BELIEFS = ("prior", "voids", "window")
+BELIEFS = ("prior", "voids", "window", "soft")
 
 
 @dataclass(slots=True)
@@ -170,13 +202,23 @@ class Belief:
     # against an older copy of this module -- still answers rather than raising an AttributeError.
     _cache_key: tuple | None = None
     _cached: tuple[list[Void], list] | None = None
+    decay: float = 0.1  # `"soft"` only, and here for the same reason: a pickled instance predating it
 
-    def __init__(self, rs: Ruleset, kind: str = "window", opponent: Agent | None = None, tries: int = 32) -> None:
+    def __init__(self, rs: Ruleset, kind: str = "window", opponent: Agent | None = None, tries: int = 32, decay: float = 0.1) -> None:
         if kind not in BELIEFS:
             raise ValueError(f"unknown belief {kind!r}: one of {BELIEFS}")
         if kind == "window" and opponent is None:
             raise ValueError("the 'window' belief needs the opponent's policy; 'voids' does not")
+        if not 0.0 <= decay <= 1.0:
+            raise ValueError(f"decay must be in [0, 1], got {decay!r}")
         self.rs, self.kind, self.opponent, self.tries = rs, kind, opponent, tries
+        # `"soft"` only. 0.25 -- the rough odds a drawn card is playable against a given board --
+        # was the first guess and is the one value measured to *cost* score (-2.25 +- 1.05 at seat
+        # 0 over 2,400 DEV deals). At 0.02 / 0.05 / 0.1 the difference from `"voids"` is inside
+        # noise at both seats, so the default is the softest setting with no measurable cost.
+        # Not the argmax of that sweep: +0.42 / +1.54 at 0.1 is not significant, and picking the
+        # best of four DEV configs is the winner's curse. The tie-break is robustness, not score.
+        self.decay = decay
         self.fallbacks = 0  # decisions where no consistent hand was found and the prior was used
         self.draws = 0
         # One decision asks for `worlds` hands and every one of them read the same history to
@@ -202,6 +244,8 @@ class Belief:
 
         opp = obs.seat ^ 1
         vs, window = self._constraints(obs, opp)
+        if self.kind == "soft":
+            return self._soft_hand(pool, k, vs, rng)
         cands: list[tuple[int, ...]] = []
         weights: list[float] = []
         for _ in range(self.tries):
@@ -232,6 +276,48 @@ class Belief:
             return cands[-1]
         self.fallbacks += 1
         return tuple(sorted(rng.sample(pool, k)))
+
+    def _soft_hand(self, pool: list[int], k: int, vs: list[Void], rng: random.Random) -> tuple[int, ...]:
+        """`"soft"`: keep every candidate, weight it by `_void_weight`, draw one proportionally.
+
+        No candidate is discarded, so unlike `"voids"` this cannot exclude the hand the opponent
+        really holds -- the whole point of the rung. The fallback below is reachable only at
+        `decay = 0`, where the rung *is* `"voids"` and every candidate can weigh zero."""
+        cands: list[tuple[int, ...]] = []
+        weights: list[float] = []
+        total = 0.0
+        for _ in range(self.tries):
+            h = tuple(sorted(rng.sample(pool, k)))
+            w = self._void_weight(h, vs)
+            cands.append(h)
+            weights.append(w)
+            total += w
+        if total <= 0.0:
+            self.fallbacks += 1
+            return cands[rng.randrange(len(cands))]
+        r = rng.random() * total
+        acc = 0.0
+        for h, w in zip(cands, weights):
+            acc += w
+            if r < acc:
+                return h
+        return cands[-1]
+
+    def _void_weight(self, hand: tuple[int, ...], vs: list[Void]) -> float:
+        """How much a hand is believed given the voids: `decay ** excess` per constraint, where
+        `excess` is how many more cards are playable against that board than the opponent has
+        drawn since. A satisfied void contributes 1.0, so a hand `"voids"` would have accepted is
+        unweighted and the rung only differs on the hands `"voids"` would have thrown away."""
+        table = playable_table(self.rs)
+        w = 1.0
+        for v in vs:
+            playable = table[v.top][v.colour]
+            # `satisfies` may stop at the first card past the budget; this needs the *size* of the
+            # overshoot, not just whether there is one, so it counts the hand out.
+            excess = sum(1 for c in hand if c in playable) - v.since
+            if excess > 0:
+                w *= self.decay**excess
+        return w
 
     def _constraints(self, obs: Observation, opp: int) -> tuple[list[Void], list]:
         """`(voids, trailing window)` for this decision, derived once per public history."""

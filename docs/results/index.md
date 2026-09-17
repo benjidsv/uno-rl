@@ -229,14 +229,32 @@ points from w = 8 to w = 32 and then flatten -- w = 128 is ~+1.1 over w = 32 at 
 scores *below* w = 128 at both seats. Depth at w = 32 moves nothing (every difference within 1.5
 sigma of zero) for 3.7x the cost at d = 3 and 13.5x at d = 4, which also disposes of 9.5d's
 odd-even-artefact worry. At equal compute worlds beat depth: w = 128 d = 2 (530 ms/game) scores
-0.7677 / 0.7403 against w = 32 d = 4 (1766 ms/game) at 0.7427 / 0.7170. The usable setting is
-**64-128 worlds at depth 2**. Because this held after the continuation rule and the seat networks
-were both fixed, the flattening is **not** an artefact of those approximations, as 9.5d supposed.
-Step 9.5e concluded the binding constraint is therefore the off-profile leaf value network (outcome
-R^2 0.07-0.25 on these games); [step 9.5f](09.5f-results.md) supplies a **competing explanation not
-ruled out by that grid** -- 79.9 % of the worlds being sampled were impossible, so w = 32 was
-effectively ~6 real worlds, well inside the steep part of this very ladder. Which of the two binds
-is settled by re-running the ladder with `voids` on, which has not been done.
+0.7677 / 0.7403 against w = 32 d = 4 (1766 ms/game) at 0.7427 / 0.7170. Because this held after the
+continuation rule and the seat networks were both fixed, the flattening is **not** an artefact of
+those approximations, as 9.5d supposed. Step 9.5e concluded the binding constraint is therefore the
+off-profile leaf value network (outcome R^2 0.07-0.25 on these games); [step 9.5f](09.5f-results.md)
+supplied a **competing explanation not ruled out by that grid** -- 79.9 % of the worlds being
+sampled were impossible, so w = 32 was effectively ~6 real worlds, well inside the steep part of
+this very ladder.
+
+**That ladder has since been re-run with `voids` on** ([09.5f](09.5f-results.md) section 7.2, 3,000
+EVAL deals, unpaired), and the answer is neither of the two things the question expected. The
+belief is a **level shift of ~+3.5 points at every world count, not a change of slope**: both
+ladders climb hard to w = 32 and flatten after (`voids` 32 -> 64 is +1.20 / +0.77, z ~ 1). So
+flatness never could have separated the explanations -- it is what both predict. What separates
+them is a comparison the question did not ask for: **`voids` at w = 32 (0.7813 / 0.7603) outscores
+`prior` at w = 128 (0.7677 / 0.7403) and at w = 256 (0.7660 / 0.7347)**, for a quarter and an eighth
+of the cost. 9.5e's plateau was therefore **not a ceiling imposed by the leaf network** -- better
+worlds went straight through it -- and the leaf network is demoted from "the residual explanation"
+to one constraint among several.
+
+**The usable setting is now w = 32 with `voids`**, superseding 9.5e's "64-128 worlds at depth 2".
+For measuring *differences between variants* w = 32 is also the better instrument: w = 64 is 1.97x
+the cost for an unestablished +1.20 / +0.77, and at a fixed wall clock w = 32 buys twice the deals,
+so a 3-point effect reaches z ~ 3.2 where w = 64 reaches z ~ 2.2. It also sits on the flat part of
+the ladder, where a comparison is insensitive to the exact world count. Standing caveat: this
+ladder has been reopened twice (9.5e by the continuation rule, 9.5f by the belief), both times
+because something changed what a *world is* -- re-check the shape whenever world quality changes.
 
 | row | seat 0 | seat 1 | ms/game |
 |---|---|---|---|
@@ -266,10 +284,10 @@ it did no opponent modelling at all.
 Paired against the prior: `voids` **+2.83 +- 0.95 (z +3.0) / +4.40 +- 0.99 (z +4.4)**, `window`
 **+3.77 +- 0.94 (z +4.0) / +3.53 +- 1.02 (z +3.5)**. Inference is established at **both** seats and
 is the second-largest full-UNO lever after the continuation rule. But `window - voids` is
-+0.93 / -0.87 (z +1.0 / -0.9), **within noise and of opposite sign at the two seats**: the soft
-policy likelihood adds nothing measurable over the hard constraints. `voids` is therefore the
-setting -- it costs +10 % against `window`'s +29 %, and it reads **no opponent policy**, so unlike
-the `response` continuation it does not make the row opponent-specific. (The `prior` row here,
++0.93 / -0.87 (z +1.0 / -0.9), **within noise and of opposite sign at the two seats**: against this
+column the soft policy likelihood adds nothing measurable over the hard constraints. `voids` is the
+setting -- it costs +10 % against `window`'s +29 %, and it reads no policy *probabilities*, unlike
+`window`. It is **not** policy-free, though: see the scope correction below. (The `prior` row here,
 0.7530 / 0.7163, reproduces step 9.5e's w = 32 figures of 0.7567 / 0.7167 within noise: the two runs
 share a configuration, which is the cross-check that the rewiring left that path alone.)
 
@@ -279,3 +297,35 @@ if it holds the played card, ~7/98 -- and the built version scored *worse than t
 0.167 against 0.085); and the void constraint alone rules out **79.9 %** of the uniform split's
 worlds, so **w = 64 was effectively w = 10**, with the opponent's true hand violating it 0 times in
 2,487 decisions.
+
+**The belief against the Heuristic column** ([09.5f](09.5f-results.md) section 7.3,
+`uv run uno pimc belief 4000 32 2 "" heuristic`): 4,000 EVAL deals, w = 32, d = 2, paired. Against
+Random the column is nearly uniform, so its *play* choices say little and only its draws inform;
+the exact toys put the belief axis at 0.0-0.6 points there but up to **2.6 against the Heuristic**,
+which is the column that tests the soft rung.
+
+| row | seat 0 | seat 1 | ms/game * |
+|---|---|---|---|
+| PIMC response w=32 d=2, uniform (`prior`) | 0.6175 | 0.5897 | 16.0 |
+| **PIMC response w=32 d=2, `voids`** | **0.6402** | **0.6268** | 19.7 |
+| PIMC response w=32 d=2, `window` | **0.6663** | **0.6332** | 47.3 |
+
+\* post-optimisation (context.md 5.21); not comparable with the vs-Random table above.
+
+Paired: `voids - prior` **+2.27 (z +2.7) / +3.70 (z +4.2)**, `window - prior` **+4.88 (z +5.6) /
++4.35 (z +4.9)**, `window - voids` **+2.60 (z +3.1) / +0.65 (z +0.8)**. Two readings:
+
+- **`voids` carries to a second column** at much the size it had against Random, at both seats --
+  which is what a rung reading no policy *probabilities* should do. Both columns satisfy the
+  behavioural assumption it does make (below). Argued in 9.5f, measured here.
+- **The column was indeed why `window` looked worthless**, and the toys' "up to 2.6 against the
+  Heuristic" is matched at seat 0 (+2.60). But it is **one seat** (seat 1 is +0.65, z +0.8), so by
+  this project's both-seats standard `window` over `voids` is **indicated, not established** -- and
+  it cannot be settled on held-out data, since all 4,000 `EVAL_SEEDS` are spent. Meanwhile batching
+  repriced it: the leaf batch sped `prior` / `voids` by 4.4-4.5x and `window` by only 2.6x (its
+  likelihood is Python-side), so `window` now costs **2.4x** `voids` where it used to cost 1.29x.
+
+**`voids` at w = 32 is the working set.** `window` is the better player against a known rulebot
+column and stays available as a ladder instrument, but it is unestablished at seat 1, costs 2.4x,
+and reads the opponent's policy -- so like the `response` continuation it makes the row
+opponent-specific, which rules it out of a general player whatever the score says.

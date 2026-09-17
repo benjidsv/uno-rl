@@ -3,8 +3,10 @@
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 9.5f, 2026-09-16**, plus the batched-leaf
-speed-up of section 5.21; next step is **10, formalising the toy results for RL**.
+with no access to the repo. State as of **step 9.5f and its follow-ups, 2026-09-17** (on top of
+commit `8c87cad`): the belief ladder against a second column, the world ladder re-run under
+`voids`, and the batched-leaf speed-up of section 5.21; next step is **10, formalising the toy
+results for RL**.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -963,10 +965,10 @@ consistency is automatic, and using the history only to constrain or score it:
 
 - **`voids`**: a draw proves the drawer held nothing playable against the board then in force; if
   they have drawn `k` cards since, at most `k` of their cards now may be playable against it. It
-  reads **no opponent policy**, so unlike the `response` continuation it does not make the row
-  opponent-specific. On a *forced-play* ruleset the statement needs no policy assumption at all --
-  `legal_actions` offers `Draw` only when nothing is playable, so the draw proves the void by the
-  rules.
+  reads no policy *probabilities*, which is what separates it from `window` and keeps it cheap and
+  column-portable. It is **not** policy-free, though: the count excludes the card drawn *at* the
+  void, so it assumes a playable drawn card is played at once (every rulebot does; `Pass` is legal
+  and writes no public event). Corrected after the fact -- see the follow-ups below.
 - **`window`**: plus the opponent's real action probabilities over their trailing run of plays
   with no draw in between, where their hand is exactly recoverable as "the hand now plus the cards
   played since". Sampled by importance-resampling, never by argmax.
@@ -975,7 +977,8 @@ consistency is automatic, and using the history only to constrain or score it:
 **+2.83 / +4.40** points (z +3.0 / +4.4) and `window` **+3.77 / +3.53** (z +4.0 / +3.5) -- the
 second-largest full-UNO lever after 9.5e's continuation rule. `voids` costs +10 % and `window`
 +29 %, and `window - voids` is +0.93 / -0.87, **within noise at both seats**: the hard constraints
-carry the whole measured gain, so the cheap, policy-free rung is the one to keep.
+carry the whole measured gain, so the cheap rung -- the one needing no policy *probabilities* -- is
+the one to keep.
 
 **What it taught:**
 
@@ -992,7 +995,37 @@ carry the whole measured gain, so the cheap, policy-free rung is the one to keep
   value needed different instruments.
 - **Most of PIMC's worlds were impossible** (median surviving share 15.6 %: w = 64 was effectively
   w = 10). That is a second explanation for 9.5e's world ladder staying flat past 32, competing
-  with the off-profile leaf network that step promoted to "the residual explanation". Untested.
+  with the off-profile leaf network that step promoted to "the residual explanation". **Tested
+  since** (below) -- and the answer is neither of them, quite.
+
+**Follow-ups (results section 7).** Two of the step's open items needed the harness
+parameterising first: `sweep` could not climb a ladder *under* a belief, and the belief ladder
+hardcoded Random as its column. Both are now arguments.
+
+- **The ladder re-run with `voids`** (3,000 EVAL deals): the belief is a **level shift of ~+3.5
+  points at every world count, not a change of slope**. Both ladders climb hard to w = 32 and
+  flatten after (`voids` 32 -> 64 is +1.20 / +0.77, z ~ 1). So flatness never could have separated
+  the two explanations -- it is what *both* predict, which made the test a non-test as scoped. What
+  does separate them was not asked for: **`voids` at w = 32 (0.7813 / 0.7603) outscores `prior` at
+  w = 128 (0.7677 / 0.7403) and at w = 256**, for a quarter and an eighth of the cost. 9.5e's
+  plateau was therefore not a ceiling imposed by the leaf network -- better worlds went straight
+  through it. **The working set is now w = 32 with `voids`**, replacing 9.5e's "64-128 worlds".
+- **The belief against the Heuristic column** (4,000 EVAL deals, paired): `voids - prior` is
+  +2.27 / +3.70, so the rung carries to a second column at both seats, as one reading no policy
+  *probabilities* should -- both columns satisfy the behavioural assumption it does make.
+  `window - voids` is **+2.60 (z +3.1) at seat 0 and +0.65
+  (z +0.8) at seat 1**: the column *was* why `window` looked worthless against Random, and the
+  toys' "up to 2.6 against the Heuristic" is matched at seat 0. But one seat is not this project's
+  standard; `EVAL_SEEDS` is spent, so seat 1 cannot be settled on held-out data; and 5.21's
+  speed-up repriced the rung from 1.29x `voids` to **2.4x**, its likelihood being Python-side and
+  batching with nothing. `voids` stays the default, `window` a ladder instrument.
+- **A method note worth reusing.** The `prior` rows kept 9.5e's agent names, hence its
+  world-sampling key, and reproduced that step **to the digit including the standard errors** -- a
+  free regression test that the rewiring left the baseline alone. The same device verified 5.21:
+  the batched agent *replays* the unbatched one's games rather than merely scoring like them, which
+  matters because a `voids` world costs a **variable** number of rng draws (rejection sampling), so
+  any reordering of the loop changes which worlds are drawn without changing how many -- a drift
+  that would have moved scores by a point or two with nothing visibly broken.
 
 Results: `docs/results/09.5f-results.md`.
 
@@ -1335,8 +1368,8 @@ Kept because they show where this kind of analysis goes wrong.
 
 | (`plan.md`, from the start) sampled L1/L2 inference is a **particle filter over the deal** | it collapses: 64 particles survive the opponent's first five plays 0.156 -> 0.018 -> 0.002 -> 0.0004 -> 0, because a particle lives only if it holds the played card (~7/98). The built version scored *worse than the prior it replaced* (Brier 0.167 against 0.085). Replaced by rungs that condition instead of weighting (step 9.5f) |
 | (9.5e) inference is worth deferring: the toys put it at 0.0-0.6 points against Random, the headline column | +2.83 / +4.40 measured on full UNO against Random, established at both seats. Toy games are too short to accumulate the draw evidence the constraint feeds on (step 9.5f) |
-| (9.5f scoping) the soft policy likelihood is the point, the hard constraints a cheap approximation of it | reversed: `window - voids` is +0.93 / -0.87, within noise at both seats. The policy-free rung carries the whole measured gain, at +10 % cost instead of +29 % (step 9.5f) |
-| (9.5f) the `voids` rung can only bite on free-play rulesets, since forced play has no voluntary draw | wrong, and for a better reason: on forced play `legal_actions` offers `Draw` only when nothing is playable, so a draw *proves* the void by the rules instead of implying it by policy. Live at 16.5-23.3 % of decisions on the forced toys (step 9.5f) |
+| (9.5f scoping) the soft policy likelihood is the point, the hard constraints a cheap approximation of it | reversed: `window - voids` is +0.93 / -0.87, within noise at both seats. The rung needing no policy *probabilities* carries the whole measured gain, at +10 % cost instead of +29 % (step 9.5f) |
+| (9.5f) the `voids` rung can only bite on free-play rulesets, since forced play has no voluntary draw | wrong: on forced play `legal_actions` offers `Draw` only when nothing is playable, so the *pre-draw* void is a rules fact rather than a policy inference. Live at 16.5-23.3 % of decisions on the forced toys (step 9.5f). **Half-right only**: the constraint's arithmetic still assumes the card drawn *at* the void was not kept, which is policy, not rules (follow-ups) |
 | (9.5f) the belief costs 3.4x the search | that measured a harness calling it 64 times at *every* decision; the agent calls it once per world at its own decisions only, so the real cost is +10 % / +29 % (step 9.5f) |
 
 ## 8. Dead ends and things deliberately not done
@@ -1382,7 +1415,7 @@ Kept because they show where this kind of analysis goes wrong.
 | 9.5c | PIMC values as a teacher: determinized rollouts against the exact toys, the deal floor, a symmetric value network as AIVAT's V (full UNO 0.71/0.76 → 0.46/0.47), the Monte Carlo deal mean, the cost of rollouts as V (`docs/results/09.5c-results.md`) | done |
 | 9.5d | PIMC agent: exact PIMC-∞ on the toy world trees vs BR L1 / L2 (with and without opponent-reach weighting), PIMC-n, the full-UNO PIMC **search** row evaluated with 9.5c's network (the rollout player is a weaker comparator), full-UNO D2 with a search Q, and the worlds-versus-depth budget study (MCTS deferred) (`docs/results/09.5d-results.md`) | done |
 | 9.5e | the `response` continuation (each determinized world solved as a best response to the known column: +10.2 / +5.2 points on full UNO, and *cheaper* than two-sided), per-seat leaf networks (9.5d used the seat-0 one at both seats), AIVAT on the new row; inference deferred to a particle-filter sub-step (`docs/results/09.5e-results.md`) | done |
-| 9.5f | **PIMC inference**: the particle filter over the deal that `plan.md` specified **does not work** (survival 0.156 -> 0 over the opponent's first five plays; the built version scored worse than the prior it replaced). Replaced by rungs that condition instead of weighting -- `voids` (a draw proves the drawer held nothing playable; no opponent policy, so the row stays general) and `window` (plus the opponent's real probabilities over their trailing no-draw run of plays). **+2.83 / +4.40** points against Random at both seats for `voids`, where the toys predicted 0.0-0.6; the soft rung adds nothing measurable on top (`window - voids` +0.93 / -0.87) (`docs/results/09.5f-results.md`) | done |
+| 9.5f | **PIMC inference**: the particle filter over the deal that `plan.md` specified **does not work** (survival 0.156 -> 0 over the opponent's first five plays; the built version scored worse than the prior it replaced). Replaced by rungs that condition instead of weighting -- `voids` (a draw proves the drawer held nothing playable; no policy *probabilities*, though it assumes a playable drawn card is played at once, so the row does **not** stay general unchanged) and `window` (plus the opponent's real probabilities over their trailing no-draw run of plays). **+2.83 / +4.40** points against Random at both seats for `voids`, where the toys predicted 0.0-0.6; the soft rung adds nothing measurable on top (`window - voids` +0.93 / -0.87) (`docs/results/09.5f-results.md`) | done |
 | **10** | **formalise the toy results: figures and tables that RL relies on** | **next** |
 | 11 | RL | |
 

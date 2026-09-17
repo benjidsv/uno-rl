@@ -1498,10 +1498,10 @@ hand **now** may be playable against that board -- a necessary condition, exact,
 against a current hand with no propagation at all (`Void(top, colour, since)`, `voids`,
 `satisfies`). Penalty draws from a +2 / +4 are excluded: they are not decisions.
 
-On a **forced-play** ruleset the statement needs no policy assumption at all: `legal_actions`
-(section 6) offers `Draw` only when nothing is playable, so a draw *proves* the void by the rules.
-The rung therefore has teeth on every toy, not only the free-play ones. Share of decisions
-carrying at least one constraint:
+On a **forced-play** ruleset the *pre-draw* half of the statement is a fact of the rules rather
+than an inference about policy: `legal_actions` (section 6) offers `Draw` only when nothing is
+playable. The other half is still an assumption (below). The rung has teeth on every toy, not only
+the free-play ones. Share of decisions carrying at least one constraint:
 
 | ruleset | `TOY` | `TOY2` | `TOY2_SKIP` | `TOY_FULL` | `FULL_UNO` |
 |---|---|---|---|---|---|
@@ -1511,11 +1511,23 @@ carrying at least one constraint:
 `TOY` and `TOY_FULL` agree to the digit because neither rulebot ever draws voluntarily, so under
 that profile the free-play toy plays out exactly as the forced one.
 
-It reads **no opponent policy**, so unlike the `response` continuation it does not make the row
-opponent-specific; it is the half that would survive into a general player. Measured on full UNO:
-it alone rules out **79.9 %** of `determinize_l1`'s worlds (median surviving share 15.6 %, so
-w = 64 is effectively w = 10), and the opponent's real hand violated it **0 times in 2,487**
-decisions.
+**Scope (corrected after 9.5f).** The count is of cards drawn *strictly after* the void, so the
+constraint assumes the card drawn **at** the void did not stay in hand as a playable one -- that a
+playable drawn card is played at once. Every play-first rulebot does; it is not a rule, since
+`draw_then_may_play` allows keeping it by passing and a `Pass` writes no public event. The
+assumption cannot be dropped, because the version without it is **provably vacuous**: "playable
+now <= drawn since" is then a tautology, and on the `TOY` world tree it keeps 100 % of worlds at
+both seats.
+
+So the rung reads no policy *probabilities* -- the distinction from `"window"`, and what keeps it
+cheap and column-portable -- but it is **not** policy-free, and does not survive unchanged into a
+general player. Against an opponent keeping a playable drawn card half the time it rules out the
+real hand at **12.1 %** of constrained decisions (0 % against either rulebot, reproducing the
+**0 in 2,487** measured when the rung was written). Against the opponents it does assume it is
+exact: 0 contradictions of their posterior over 5,001 constrained `TOY` sets per seat, closing
+89-91 % of the distance from the uniform split to it (section 26.6). Measured on full UNO: it
+alone rules out **79.9 %** of `determinize_l1`'s worlds (median surviving share 15.6 %, so
+w = 64 is effectively w = 10).
 
 ### 26.3 `"window"`: the policy likelihood, exactly, where it is computable
 
@@ -1583,3 +1595,70 @@ worse than the exact prior, and no populated reliability bin may miss by more th
 refuted filter missed by 0.89). Measured: Brier 0.0846 / 0.0828 / 0.0825 for prior / `voids` /
 `window`, worst bin gap 0.088 / 0.093 / 0.135. `window` is the least calibrated of the three while
 being marginally the sharpest, as a *windowed* posterior should be.
+
+### 26.6 Closure against the exact toys (`uv run uno pimc closure [ruleset] [sets] [samples] [min_support]`)
+
+The belief is the one sampled method of 9.5b-9.5f not checked against an exact toy value before
+being trusted on full UNO. This closes it.
+
+**What it closes against.** Not `uno.compiled.pimc`'s `"prior"`. The rung encodes an assumption
+about the opponent, so the exact object it targets is the `"posterior"` weighting -- the prior
+times that opponent's reach. Scored against the prior the test measures the *assumption* rather
+than the implementation and calls a correct rung broken (it did, at 0.23 against 0.13). The noise
+scale is two independent draws of the **same** rung; using the `prior` rung as a control is
+mis-specified, since the distance from the uniform split to the truth is exactly what the rung
+exists to close. A vacuity guard requires prior and posterior to be at least 4 noise widths apart.
+
+**The full tree, not the quotient.** Member worlds of a quotient set are each canonicalised by
+their own group element, so an opponent hand read off a member's L3 key would be in that member's
+coordinates, and per-hand multiplicities would not survive. `TOY` is compiled with
+`symmetric=False`. Hands are a marginal over members: several worlds share a hand and differ only
+in pile order, so mass is summed, never read off one member.
+
+**Result** (`TOY`, 20 constrained sets per seat, 4,000 draws, `min_support` 3): total variation to
+the exact posterior falls from **0.4325 / 0.4496** (uniform split) to **0.0502 / 0.0407** (`voids`)
+against a sampling noise of 0.0070 / 0.0041 -- the rung closes **89-91 %** of the distance. 0
+failed checks.
+
+**What it found.** Two things the score alone could not.
+
+- The rung's count is of cards drawn *strictly after* the void, so it assumes the card drawn **at**
+  the void was not kept as a playable one (26.2). Dropping the assumption is not an option: the
+  version without it is a tautology and excludes nothing (100 % of `TOY` worlds kept). Against an
+  opponent that keeps a playable drawn card it rules out the real hand at **12.1 %** of constrained
+  decisions; against the opponents it assumes it contradicts their posterior **0 times** in 5,001
+  constrained sets per seat.
+- **On a free-play ruleset the uniform split is exactly the conditional.** Measured on a matched
+  7-card pair differing only in `forced_play`, over every set following an opponent draw: free play
+  shows **0.0 %** hands absent, **0.0 %** unequal weights and **0.0000** total variation to uniform
+  across ~94,000 sets, where forced play shows 6.1-22.9 % and 0.9-3.0 %. Since `FULL_UNO` is free
+  play, the rules carry **no** information about the opponent's hand beyond card conservation and
+  the public hand sizes, both already conditioned on. There is therefore **no sound alternative to
+  a policy assumption** there: `voids` is not a correctable approximation but the only kind of
+  inference available on the ruleset that matters.
+
+### 26.7 `"soft"`: the void believed rather than enforced
+
+Since the assumption cannot be removed (26.2) and has no sound alternative on free play (26.6), the
+remaining move is to stop treating it as certain. `"soft"` weights a candidate hand by
+`decay ** max(0, playable(hand, board) - since)` per void instead of rejecting it, and draws one
+proportionally. `decay = 0` reproduces `"voids"` exactly and `decay = 1` the uniform prior, so the
+rung is a one-parameter family between them; every weight is positive, so **the hand the opponent
+really holds is never excluded**, whatever they do. The recovery over time is already present --
+each further draw raises `since` and shrinks the exponent.
+
+Default `decay = 0.1`. Measured against `"voids"` over 2,400 DEV deals on an honest column, 0.02 /
+0.05 / 0.1 all sit inside noise at both seats while 0.25 costs -2.25 +- 1.05 at seat 0; among the
+indistinguishable settings the default takes the softest rather than the best-scoring one, since
+taking the argmax of four DEV configs is the winner's curse of section 25.
+
+It never excludes the truth (0 %, where `"voids"` excludes it at 12.1 % against an opponent that
+keeps a playable drawn card and 68.5 % against one that draws holding one), never falls back (0 %
+against 4.8 %), and is the best-calibrated rung (Brier 0.0826, worst reliability-bin gap 0.080,
+against `"voids"`' 0.0828 / 0.093). It is nonetheless the **worse** belief by the exact target: TV
+to the posterior 0.1838 / 0.1528 against `"voids"`' 0.0502 / 0.0407, closing 58-66 % of the
+distance where `"voids"` closes 88-91 %. Marginal calibration and joint accuracy disagree here for
+the reason 26.2 gives -- the constraint acts on joint combinations while barely moving any single
+card's marginal -- so Brier remains the right *correctness* test and the wrong *value* test.
+`"voids"` therefore stays the default against honest columns, and `"soft"` is the rung for an
+opponent that may not be.

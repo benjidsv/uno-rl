@@ -7,8 +7,12 @@ the cards the observer has not seen, and the choice is then driven by solving ea
 **Determinization at L1.** The observer knows its own hand, the discard (rebuilt from the public
 history) and, until the first reshuffle, the cards skipped at setup, which sit at the bottom of
 the pile and are public. Everything else -- the opponent's hand and the pile -- is a uniformly
-random split of the unseen multiset, which is the conditional the deal model implies once the
-public history is fixed. `determinize_l1` deals `opp_hand_size` of them to the opponent, shuffles
+random split of the unseen multiset. On a **free-play** ruleset -- which `FULL_UNO` is -- that is
+*exactly* the conditional the deal model implies once the public history is fixed: measured at
+0.0000 total variation over ~94,000 information sets following an opponent draw (docs/spec.md
+section 26.6). On a **forced-play** ruleset it is not, because drawing is legal only with nothing
+playable, so the pile order and the hand are coupled: 6-23 % of post-draw sets there exclude hands
+this split still proposes. `determinize_l1` deals `opp_hand_size` of them to the opponent, shuffles
 the rest into the pile above the known tail, and sets `draws="pile"` with a fresh seed, so
 reshuffles and rollouts inside the search are independent of the real game.
 

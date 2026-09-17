@@ -7,6 +7,7 @@
     uv run uno pimc sweep  [deals=200] [workers] [configs=s2x2,s8x2,...]  (s<worlds>x<depth>[r][v|w], r<worlds>x<rollouts>, heu)
     uv run uno pimc belief [deals=1000] [worlds=32] [depth=2] [workers] [column=random|heuristic]
     uv run uno pimc calibration [deals=120] [samples=64]
+    uv run uno pimc closure [ruleset=TOY] [sets=40] [samples=2000] [min_support=3]
 
 A trailing `r` on a search config (`s32x2r`), and the `cont=r` argument of `uno`, select step
 9.5e's **response** continuation: each determinized world is solved as a best response to the
@@ -44,7 +45,7 @@ that were simply impossible (9.5f measured 79.9 % of them so, making w = 32 abou
 
 `belief`: step 9.5f's ladder over what the agent believes about the opponent's hand -- `prior` (the
 uniform split, i.e. the 9.5e row unchanged), `voids` (the hard constraints a *voluntary draw*
-implies, needing no opponent policy, so this rung does not make the row opponent-specific) and
+implies, needing no policy *probabilities*, though not assumption-free -- see `closure`) and
 `window` (plus the opponent's real action probabilities over their trailing run of plays, where
 their hand is exactly recoverable) -- all at one budget, so the difference is the belief alone.
 The particle filter over the deal that docs/plan.md originally specified **collapses**: a particle
@@ -63,6 +64,16 @@ and is wrong, and nothing downstream notices. Sharpness cannot detect that; cali
 is the check that refuted the deal-time particle filter (Brier 0.167 against the uniform prior's
 0.085, its "probability 1.000" bin observed at 0.112) while that design's *score* still looked
 unremarkable, so it lives in the repo rather than in a scratch file.
+
+`closure`: the toy closure test 9.5f went without -- the one place that step fell short of the
+project's standard of checking a sampled method against an exact toy value before trusting it on
+full UNO. The obstacle recorded then was that `window` is a *windowed* posterior with no exact
+counterpart; but `voids` is the rung that ships, and it does have one. It is **not**
+`uno.compiled.pimc`'s `"posterior"`: the constraint is a *necessary condition*, so what the rung
+targets is the prior **restricted to the worlds the history does not rule out**. The `prior` rung
+runs alongside as a control, and the distance it achieves is the sampling noise that sizes the
+bound on `voids` -- with the gap between the two exact distributions printed next to both, because
+without it a rung that ignored its constraints would pass whenever they happen not to bite.
 
 `exact`: PIMC-infinity (`uno.compiled.pimc`) on the toy **world trees**, i.e. the n -> infinity
 limit of "sample worlds consistent with what you know, solve each with perfect information,
@@ -604,7 +615,7 @@ def belief_section(games: int, worlds: int, depth: int, workers: int | None, col
     print(f"   {'belief':10s} {'seat 0':>16s} {'seat 1':>16s} {'ms/game':>9s}")
     scores: dict[str, np.ndarray] = {}
     beliefs: dict[str, object] = {}
-    for label in ("prior", "voids", "window"):
+    for label in ("prior", "voids", "window", "soft"):
         belief = None if label == "prior" else Belief(rs, kind=label, opponent=col if label == "window" else None)
         beliefs[label] = belief
         # A name identifies a policy (docs/context.md section 3). A response row is already a
@@ -636,8 +647,9 @@ def belief_section(games: int, worlds: int, depth: int, workers: int | None, col
         print(f"      {f'{hi} - {lo}':24s} {cells[0]:>20s} {cells[1]:>20s}")
         return zs
 
-    zs = {label: diff_row("prior", label) for label in ("voids", "window")}
+    zs = {label: diff_row("prior", label) for label in ("voids", "window", "soft")}
     diff_row("voids", "window")
+    diff_row("voids", "soft")  # `soft` believes the void where `voids` enforces it: what that costs
 
     # Real checks. Step 9.5f shipped this section with none, so its "0 failed checks" line was
     # vacuous (09.5f-results.md item 5). Both are sized to catch a *broken* belief, not to police
@@ -655,7 +667,7 @@ def belief_section(games: int, worlds: int, depth: int, workers: int | None, col
     # whether the rung ran at all. The counters live on the agent, which `pmap` pickles into each
     # worker, so they only come back when everything ran in this process.
     if workers == 1:
-        for label in ("voids", "window"):
+        for label in ("voids", "window", "soft"):
             b = beliefs[label]
             print(f"   {label:7s}: fallbacks {b.fallbacks:,}/{b.draws:,} draws ({100 * b.fallbacks / max(b.draws, 1):.1f} %)")
     else:
@@ -704,8 +716,8 @@ def calibration_section(games: int, samples: int) -> None:
     rs = rules.FULL_UNO
     heu, rnd = Heuristic(rs), PlayFirstRandom(rs)
     seat = 0
-    kinds = ("prior", "voids", "window")
-    beliefs = {"voids": Belief(rs, kind="voids"), "window": Belief(rs, kind="window", opponent=rnd)}
+    kinds = ("prior", "voids", "window", "soft")
+    beliefs = {"voids": Belief(rs, kind="voids"), "window": Belief(rs, kind="window", opponent=rnd), "soft": Belief(rs, kind="soft")}
     n = dict.fromkeys(kinds, 0)
     brier = dict.fromkeys(kinds, 0.0)
     bins = {k: [[0, 0.0, 0.0] for _ in range(10)] for k in kinds}
@@ -773,6 +785,163 @@ def calibration_section(games: int, samples: int) -> None:
     sys.stdout.flush()
 
 
+def closure_section(name: str, sets: int, samples: int, min_support: int = 3) -> None:
+    """Step 9.5f item 2: close the *sampled* belief against the exact toys.
+
+    Every other sampled method in 9.5b-9.5e was checked against an exact toy value before being
+    trusted on full UNO, and the belief was not. The obstacle recorded at the time was that
+    `window` is a *windowed* posterior with no exact counterpart, so there is no equality to
+    assert -- but that is an argument about `window`, and `voids` is the rung that ships. `voids`
+    does have an exact counterpart, and it is not `uno.compiled.pimc`'s `"posterior"`: the
+    constraint is a **necessary condition**, so what the rung targets is the prior *restricted to
+    the worlds the history does not rule out*. That object is computable on a toy world tree.
+
+    **The three-way test.** Comparing a sampler against a distribution needs a noise scale, or the
+    bound is arbitrary. So the `prior` rung is run as a **control**: it must reproduce the exact
+    unrestricted belief, and the total-variation distance it achieves *is* the sampling noise at
+    this many draws. `voids` must then match its own exact target to the same scale. The third
+    number is the **separation** -- how far the two exact distributions are apart -- and without it
+    the whole test is vacuous, since a rung that ignored its constraints entirely would pass the
+    first two whenever the constraints happen not to bite (the step 9.5e lesson).
+
+    **The full tree, not the quotient.** Member worlds of a set on a symmetric tree are each
+    canonicalised by their *own* group element, so an opponent hand read off a member's L3 key
+    would be in that member's coordinates and not the observation's -- the trap `uno.compiled.pimc`
+    documents for arcs, one field over. `TOY` is compiled with `symmetric=False` here, where a
+    member's key is a raw key of the real game.
+
+    Several worlds give the opponent the same hand and differ only in the pile order, so the
+    belief over *hands* is a marginal: it is summed over members, never read off one.
+    """
+    import random
+    from collections import Counter
+
+    from uno.compiled.pimc import _members
+    from uno.compiled.pimc import belief as exact_belief
+    from uno.eval.belief import Belief, satisfies, voids
+    from uno.eval.play import stable_hash
+    from uno.eval.search import unseen_cards
+    from uno.game.keys import decode_key
+    from uno.game.observe import observation_from_key
+
+    rs = getattr(rules, name)
+    print(f"\n== {name} belief closure: the sampled rungs against the exact belief on the full world tree.")
+    t0 = time.perf_counter()
+    tree = compile_tree(rs, (L1, L3), False, cache=store.CACHE)
+    k1, k3 = tree.keyings[L1], tree.keyings[L3]
+    inv3 = {i: kb for kb, i in k3.keys.items()}
+    inv1 = {i: kb for kb, i in k1.keys.items()}
+    print(f"   {len(tree.roots):,} worlds, {k1.n_info:,} L1 sets, loaded in {time.perf_counter() - t0:.1f}s; comparing sets with >= {min_support} consistent hands")
+
+    def tv(p: dict, q: dict) -> float:
+        return 0.5 * sum(abs(p.get(h, 0.0) - q.get(h, 0.0)) for h in set(p) | set(q))
+
+    # The world prior, which is what `uno.compiled.pimc.belief(..., "prior")` reduces to: with both
+    # players' weights identically one, `reach(...)[:, 2]` is the chance column alone. Computed
+    # directly so the full tree never needs a tabulated opponent.
+    prior = tree.reach(np.ones(tree.m), np.ones(tree.m))[:, 2]
+    # The target for `voids` is **not** the policy-free prior. The rung encodes an assumption about
+    # the opponent -- that a playable drawn card is played at once -- so the exact object it moves
+    # towards is the *posterior* given such an opponent: `uno.compiled.pimc`'s `"posterior"`
+    # weighting, the prior times the opponent's reach, which is what `uno.eval.belief` says the
+    # module is for. Scored against the prior instead, the test measures the assumption rather than
+    # the implementation and reports a correct rung as broken (it did, at 0.23 against 0.13).
+    opp_strategy = (L1, store.load_or_tabulate(tree, L1, PlayFirstRandom(rs)))
+    for seat in (0, 1):
+        post = exact_belief(tree, opp_strategy, seat, "posterior")
+        nodes, w, counts, starts = _members(tree, k1, seat, prior)
+        live = [i for i in range(k1.n_info) if k1.info_player[i] == seat and counts[i] > 1]
+        rng0 = random.Random(0)
+        rng0.shuffle(live)
+        rows, empty, impossible = [], 0, 0
+        for i in live:
+            kb = inv1[i]
+            obs = observation_from_key(rs, L1, decode_key(L1, kb))
+            vs = voids(rs, obs.public, seat ^ 1)
+            if not vs:
+                continue
+            exact_p: dict = {}
+            exact_q: dict = {}
+            for j in range(starts[i], starts[i + 1]):
+                hand = tuple(sorted(decode_key(L3, inv3[k3.node_info[nodes[j]]])[0][seat ^ 1]))
+                exact_p[hand] = exact_p.get(hand, 0.0) + float(w[j])
+                exact_q[hand] = exact_q.get(hand, 0.0) + float(post[nodes[j]])
+            tot, tq = sum(exact_p.values()), sum(exact_q.values())
+            if tq <= 0.0:
+                continue  # the opponent never allows this set: there is no posterior to close against
+            exact_p = {h: m / tot for h, m in exact_p.items()}
+            exact_q = {h: m / tq for h, m in exact_q.items()}
+            kept = {h: m for h, m in exact_p.items() if satisfies(rs, h, vs)}
+            if not kept:
+                # Over-pruning, and the thing this test exists to find: the rung has ruled out
+                # every world the observation allows, so the truth is certainly among the excluded.
+                empty += 1
+                continue
+            s = sum(kept.values())
+            exact_v = {h: m / s for h, m in kept.items()}
+            # Most `TOY` sets admit one or two opponent hands, where every sampler agrees and the
+            # comparison says nothing -- at `min_support = 1` the measured separation came out at
+            # 1.6x the sampling noise and the vacuity guard below fired, correctly. Compare only
+            # where there is something to discriminate.
+            if len(exact_p) < min_support:
+                continue
+            try:
+                unseen, _ = unseen_cards(rs, obs)
+            except ValueError:
+                continue
+            emp = {}
+            for kind, tag in (("prior", "a"), ("voids", "a"), ("voids", "b"), ("soft", "a")):
+                bel = Belief(rs, kind=kind)
+                rng = random.Random(stable_hash((name, seat, i, kind, tag)))
+                c = Counter(bel.hand(obs, unseen, rng) for _ in range(samples))
+                emp[kind + tag] = {h: n / samples for h, n in c.items()}
+            # Not an invariant, and it was wrongly written as one. The uniform split is not a
+            # *sound* sampler: it proposes hands that no consistent world holds, because it
+            # conditions on the hand sizes and the discard but never on the opponent's draw
+            # *events*. Measured on `TOY` over a uniform sample of constrained sets, that happens
+            # at 5 % (seat 0) and 16 % (seat 1) of them, and on every one of those the split does
+            # walk into it. As an `assert` this would have killed the run the first time it drew
+            # such a set; as a statistic it is the sound pruning `voids` does not do.
+            if set(emp["priora"]) - set(exact_p):
+                impossible += 1
+            # The truth is `exact_p`: the tree's own conditional over the opponent's hand, which is
+            # the prior over the *worlds the set actually contains*. Both rungs are scored against
+            # it, so "does the belief help" is TV(voids) < TV(prior) -- a comparison, not a bound.
+            #
+            # The noise scale is two independent draws of the *same* rung, not the prior rung: an
+            # earlier version used `prior` as the control and that is mis-specified, because the
+            # distance from the uniform split to the truth is precisely what `voids` exists to
+            # close. Using it as "noise" would have compared the rung against its own target.
+            rows.append((tv(emp["priora"], exact_q), tv(emp["voidsa"], exact_q), tv(emp["voidsa"], emp["voidsb"]), tv(exact_p, exact_q), tv(emp["softa"], exact_q), len(exact_p), len(exact_v)))
+            if len(rows) >= sets:
+                break
+        # The severe failure first: a set where the rung kept *nothing*. The opponent's real hand
+        # is one of the worlds the set contains, so ruling out all of them rules out the truth --
+        # over-pruning, which is exactly what calibration alone would not necessarily catch.
+        over = check(empty == 0, f"closure {name} seat {seat}: `voids` excluded every consistent world at {empty} set(s): over-pruning, the opponent's real hand among them")
+        if empty:
+            print(f"   seat {seat}: **over-pruned at {empty} constrained set(s)** {over}")
+        if not rows:
+            print(f"   seat {seat}: no constrained set survived to be compared")
+            continue
+        a = np.array([r[:5] for r in rows])
+        d_prior, d_voids, noise, sep, d_soft = (a[:, j].mean() for j in range(5))
+        sup = np.array([r[5:] for r in rows]).mean(axis=0)
+        print(f"   seat {seat}: {len(rows)} constrained sets compared, {samples} draws each, support {sup[0]:.1f} -> {sup[1]:.1f} hands")
+        print(f"      TV(uniform split, exact posterior)   {d_prior:.4f}   <- the belief PIMC held before 9.5f")
+        print(f"      TV(voids, exact posterior)           {d_voids:.4f}   <- the belief it holds now")
+        print(f"      TV(soft, exact posterior)            {d_soft:.4f}   <- believed, not enforced")
+        print(f"      TV(exact prior, exact posterior)     {sep:.4f}   <- the distance the rung is trying to close")
+        print(f"      sampling noise, two draws of voids   {noise:.4f}")
+        print(f"      uniform split proposed an impossible hand: {impossible}/{len(rows)} of the sets compared")
+        print("         (`min_support` selects against these -- more hands means less chance any is impossible;")
+        print("          over a uniform sample of constrained TOY sets the rate is 5 % at seat 0, 16 % at seat 1)")
+        ok = check(d_voids < d_prior - 2.0 * noise, f"closure {name} seat {seat}: `voids` sits {d_voids:.4f} from the exact posterior against the uniform split's {d_prior:.4f}, so it does not move the belief towards the posterior -- which is the one thing the rung claims to do")
+        ok += check(sep >= 4.0 * noise, f"closure {name} seat {seat}: prior and posterior are only {sep:.4f} apart, {sep / max(noise, 1e-9):.1f}x the noise -- there is nothing here to close, so the test is near-vacuous")
+        print(f"      {ok}{over if empty else ''}")
+        sys.stdout.flush()
+
+
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     section = argv[0] if argv else "exact"
@@ -813,8 +982,15 @@ def main(argv: list[str] | None = None) -> None:
         )
     elif section == "calibration":
         calibration_section(int(args[0]) if args else 120, int(args[1]) if len(args) > 1 else 64)
+    elif section == "closure":
+        closure_section(
+            args[0] if args else "TOY",
+            int(args[1]) if len(args) > 1 else 40,
+            int(args[2]) if len(args) > 2 else 2000,
+            int(args[3]) if len(args) > 3 else 3,
+        )
     else:
-        raise SystemExit(f"unknown section {section!r}: exact, pimcn, uno, d2, sweep, belief, calibration")
+        raise SystemExit(f"unknown section {section!r}: exact, pimcn, uno, d2, sweep, belief, calibration, closure")
     print(f"\n== {len(au.FAILS)} failed checks" + (": " + "; ".join(au.FAILS) if au.FAILS else ""))
 
 

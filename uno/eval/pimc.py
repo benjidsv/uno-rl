@@ -255,7 +255,8 @@ class Targets:
         )  # fmt: skip
 
 
-def _teacher_chunk(rs: Ruleset, agents, seeds, n: int, features: Callable, exhaustion: str, off_path: bool) -> Targets:
+def _teacher_chunk(rs: Ruleset, agents, seeds, n: int, features: Callable, exhaustion: str, off_path: bool, rollout_agents=None) -> Targets:
+    roll = agents if rollout_agents is None else rollout_agents
     rows, ys, noise, us, gs, on = [], [], [], [], [], []
     g = 0
     for seed in seeds:
@@ -277,7 +278,7 @@ def _teacher_chunk(rs: Ruleset, agents, seeds, n: int, features: Callable, exhau
             for state, visited, label in todo:
                 if state.terminal:
                     continue
-                m, v = rollout_value(state, agents, n, rollout_rng(seed, label), exhaustion)
+                m, v = rollout_value(state, roll, n, rollout_rng(seed, label), exhaustion)
                 rows.append(features(state))
                 ys.append(m)
                 noise.append(v)
@@ -288,13 +289,27 @@ def _teacher_chunk(rs: Ruleset, agents, seeds, n: int, features: Callable, exhau
     return Targets(np.asarray(rows, dtype=np.float32), np.asarray(ys), np.asarray(noise), np.asarray(us), np.asarray(gs, dtype=np.int64), np.asarray(on, dtype=bool), n)
 
 
-def teacher_targets(rs: Ruleset, agents, seeds, n: int, features: Callable, exhaustion: str = "hand", off_path: bool = True, workers: int | None = None) -> Targets:
+def teacher_targets(rs: Ruleset, agents, seeds, n: int, features: Callable, exhaustion: str = "hand", off_path: bool = True, workers: int | None = None, rollout_agents=None) -> Targets:
     """Play one game per seed (`agents` = (seat 0, seat 1)) and value, by `n` rollouts each, every
     decision state and (`off_path`) two siblings AIVAT also asks about: the child of one non-taken
     action of the support and another chance outcome of the taken action when it draws (both from a
     determinization of the state, so drawn from the true chance model). `features(state)` must be a
     module-level function (it crosses processes). Rollout rngs are keyed on the seed and the state's
-    label, so the targets do not depend on `workers`."""
+    label, so the targets do not depend on `workers`.
+
+    `rollout_agents` plays the **rollouts** when the profile that generates the *states* is too
+    expensive to also play them out. A game contributes ~3 states per decision and each is valued
+    by `n` rollouts, so a 39-decision full-UNO game costs ~230 rollouts against one played game:
+    the rollouts, not the games, are the budget. Measured single-core on `FULL_UNO`, a PIMC
+    w = 32 game is **469x** a rulebot game (543 ms against 1.16 ms), which puts 20,000 fit games
+    with PIMC in the rollouts at ~43 hours on eight cores against ~30 minutes with rulebots there.
+
+    Passing it makes V estimate the value of the state **under the rollout profile**, on the state
+    distribution of the playing profile. That is the right trade when the complaint is
+    distributional -- an "off-profile" leaf network is one whose R^2 was measured on states it was
+    never fitted on -- and the wrong one if the continuation itself is what is being estimated. It
+    is a different estimand, so a net fitted this way is labelled with both profiles.
+    """
     k = (os.cpu_count() or 1) * 32 if workers is None or workers > 1 else 1  # small chunks: full-UNO game lengths are heavy-tailed
-    parts = pmap(_teacher_chunk, [(rs, agents, c, n, features, exhaustion, off_path) for c in chunks(seeds, k)], workers)
+    parts = pmap(_teacher_chunk, [(rs, agents, c, n, features, exhaustion, off_path, rollout_agents) for c in chunks(seeds, k)], workers)
     return Targets.concat([p for p in parts if len(p.y)])
