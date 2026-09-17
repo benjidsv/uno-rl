@@ -525,3 +525,63 @@ opponent. Assuming a clairvoyant opponent instead costs 3.6-6.7 points (z 3.9-7.
 **Cross-block check:** the instrument is the published working-set row, selected on the now-spent
 block 00 where it scored 0.7813 / 0.7603 against Random. On the fresh block 01 it gives 0.7860 ±
 0.0065 / 0.7685 ± 0.0067 -- consistent, so that selection did not materially inflate it.
+
+## The attack instrument: NashConv lower bounds ([step 10a.3C](10a3c-results.md))
+
+An attack's **achieved score in real games** lower-bounds the best-response score against a frozen
+target. With `b0` the attacker's score at seat 0 against the target's seat-1 policy and `b1` the
+seat-1 score, the unknown Nash seat values cancel in the sum:
+`NashConv >= b0 + b1 - 1` (score units; x100 for points). This is a **lower** bound: a small or
+negative one is a weak attack, never evidence that a target is safe, and 0.5 is never substituted
+for an unknown full-UNO Nash seat value. Uncertainty comes from the per-deal *sum*, so the seat
+covariance is carried. Contract: [spec section 32](../spec.md).
+
+**Full UNO, EVAL block 02** (1,008,000-1,011,999, 4,000 deals, both seatings; `response`
+continuation, w = 32, d = 2, `voids` belief, attacker seed 0, frozen from the DEV pilot before the
+block was claimed). The **first exploitability-style numbers this project has on full UNO**:
+
+| target | b0 | b1 | NashConv >= | reported (1.96σ lower) |
+|---|---|---|---|---|
+| random | 0.7730 ± 0.0066 | 0.7692 ± 0.0067 | **+54.22 ± 0.90** | 52.46 |
+| heuristic | 0.6390 ± 0.0076 | 0.6268 ± 0.0076 | **+26.57 ± 0.96** | 24.69 |
+
+The DEV pilot read the same two bounds ~7.8 and ~3.9 points higher (+62.00 ± 3.72, +30.50 ± 4.02),
+which is why the reported figures come off a block nothing was selected on. The attacker *is* the
+published working-set PIMC row, so against Random it also cross-checks three disjoint blocks:
+0.7730 / 0.7692 (block 02), 0.7860 / 0.7685 (block 01), 0.7813 / 0.7603 (spent block 00).
+Against the column-free PIMC row the attack finds **nothing** (+1.00 ± 6.11 on 100 DEV deals) --
+too wide to bound anything, and reported as a weak bound rather than as safety.
+
+**Toy calibration** (`TOY`, exact: the attacker is tabulated, so the attack score, the BR L1 ceiling
+and the gap are all exact). Share of each target's *known* NashConv that the attack recovers:
+
+| target | true NashConv | best bound | recovered | weakest family (rollout) |
+|---|---|---|---|---|
+| random | 34.47 | 33.47 | **97.1 %** | 91.2 % |
+| heuristic | 17.39 | 15.33 | 88.1 % | 77.4 % |
+| passer0.5 | 40.08 | 38.80 | 96.8 % | 92.7 % |
+| nash | 0.00 | **-0.51** | — (negative, clamps to 0) | -4.88 |
+| nash_never_pass (near-Nash) | 1.60 | 0.40 | 24.9 % | -3.86 |
+| nash_always_pass | 12.07 | 10.02 | 83.0 % | 35.4 % |
+| nash_never_wild_play | 27.47 | 26.07 | 94.9 % | 78.6 % |
+
+So the instrument recovers **77-97 %** of a known NashConv on the toys, correctly returns a negative
+(clamped) bound against Nash, and separates a deliberately flawed target from a near-Nash one by
+**24.08 points** -- the check a vacuous detector fails while passing every validity test. Exact
+NashConv of the grafted flaws (`uno.compiled.flaws`, one symmetry-closed action class forced on or
+off over Nash), score points:
+
+| flaw | `TOY` | `TOY_FULL` | `TOY2_SKIP` |
+|---|---|---|---|
+| `never_pass` | 1.60 | 1.63 | 1.90 |
+| `always_pass` | 12.07 | 24.51 | 26.20 |
+| `always_wild_play` | 13.98 | 12.50 | 10.81 |
+| `never_wild_play` | 27.47 | 80.10 | 23.33 |
+| `never_action_card` | -- | -- | 36.01 |
+
+The report card prints the same instrument per checkpoint (89 % of the exact NashConv recovered for
+the Heuristic, 94 % for Random on `TOY`). The attacker's own world-sampling seed is a reported
+uncertainty of 0.1-0.8 points, and its mean over seeds matches `uno.compiled.pimc.pimc_n`, the exact
+behavioural average. Only the `response` continuation reads the target, so only it is restricted to
+position-only targets: a tabulated target answers "first legal action" at **79.5 %** of
+fabricated-history queries instead of raising.

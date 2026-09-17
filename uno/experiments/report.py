@@ -1,6 +1,6 @@
 """Step 10a: the report card -- one command, one checkpoint, a fixed format (item A3).
 
-    uv run uno report [ruleset=TOY] [agent=heuristic|random|nash] [iterations=1000]
+    uv run uno report [ruleset=TOY] [agent=heuristic|random|nash] [iterations=1000] [attack_worlds]
 
 Step 11 will produce checkpoints. This decides, **before any of them exist**, what gets
 measured about one, on which seeds, and what counts as better -- the project's whole
@@ -26,6 +26,16 @@ checkpoint and runs every instrument on it.
 
 Two numbers carry the card -- position on the range against the training column, and
 exploitability. Everything else is diagnosis.
+
+**The attack block** (step 10a.3C, `uno.eval.attack`): per-seat attack scores against this
+checkpoint, the compute budget that produced them, the spread across the attacker's own
+world-sampling seeds, and the two-seat NashConv **lower** bound `b0 + b1 - 1`. On a toy this is
+instrument validation rather than news -- the exact exploitability is printed two lines above, and
+the bound must come out below it -- but it is the same instrument that will carry the only luck-free
+quality number a full-UNO checkpoint can have, so the card exercises it here where the truth is
+known. It runs by default only on trees small enough for an attacker tabulation to be cheap (one
+tabulation per seed; ~4 s on `TOY`, minutes on `TOY2_SKIP`); pass `attack_worlds` explicitly to
+force it on or `0` to skip it.
 
 **The checks.** Run on the two agents whose values are pinned (`random`, `heuristic`),
 every printed number must reproduce the published one *to the digit*
@@ -101,11 +111,75 @@ def seat_scores(tree, row, column) -> tuple[float, float]:
     return (score(evaluate(tree, row, column)[0]), score(evaluate(tree, column, row)[1]))
 
 
+# Attacker tabulation is one Python call per information set, so the attack block is cheap on the
+# small toys and minutes long on the big ones. Default it on only where it is cheap, and say so.
+ATTACK_SET_LIMIT = 50_000
+ATTACK_SEEDS = 2
+
+
+def attack_block(tree, rs, row_sigma, who: str, target_agent, true_nashconv: float, worlds: int) -> None:
+    """Per-seat attack scores, budget, seed spread, and the two-seat NashConv lower bound.
+
+    The attacker is tabulated on the quotient tree, so on a toy every number here is exact and the
+    only uncertainty is the attacker's own world-sampling seed (a built attacker is one realization
+    of it, not the averaged behavioural policy -- `uno.eval.attack`). The pre-declared check is that
+    the bound stays **below** the exact NashConv it bounds: an attack that claimed more than the
+    truth would mean the attacker is seeing something it must not."""
+    from uno.agents.symmetrized import Symmetrized
+    from uno.agents.tabular import CompiledAgent
+    from uno.compiled.strategies import tabulate
+    from uno.eval import attack as atk
+    from uno.eval.attack import Budget
+
+    # A checkpoint stored as a strategy over the keying reads its own L1 history, so it cannot be
+    # queried inside a determinized world; the `response` continuation is then refused and a fixed
+    # surrogate opponent is used instead. Where a position-only agent exists, `response` is allowed.
+    probe_target = target_agent if target_agent is not None else CompiledAgent(tree, L1, row_sigma, name=f"target_{who}")
+    sup = atk.supports(rs, probe_target, games=20)
+    family = "response" if sup.position_only else "surrogate"
+    depth = 40  # always terminal on the toys, so no value network is involved
+
+    def no_leaf(s):
+        raise AssertionError("the attack search hit its depth limit on a toy")
+
+    kw = {} if family == "response" else dict(surrogate=Heuristic(rs))
+    per_seed = []
+    for k in range(ATTACK_SEEDS):
+        att = atk.build(rs, probe_target, Budget(continuation=family, worlds=worlds, depth=depth, belief="prior", seed=k), leaf=no_leaf, **kw)
+        sigma = tabulate(tree, L1, Symmetrized(att, rs, name=f"sym_{att.name}"))
+        per_seed.append(
+            (
+                score(evaluate(tree, (L1, sigma), (L1, row_sigma))[0]),
+                score(evaluate(tree, (L1, row_sigma), (L1, sigma))[1]),
+            )
+        )
+    b0 = np.array([p[0] for p in per_seed])
+    b1 = np.array([p[1] for p in per_seed])
+    bounds = 100 * (b0 + b1 - 1)
+    best = float(bounds.max())  # the strongest attack found is the best bound available
+    print(
+        f"   attack (LBR)                                {b0.mean():.4f} / {b1.mean():.4f}"
+        f"   NashConv >= {max(0.0, best):.2f} pts   ({family}, w={worlds}, {ATTACK_SEEDS} seeds)"
+    )
+    print(
+        f"   {'':13s} seed spread {100 * b0.std(ddof=0):.2f} / {100 * b1.std(ddof=0):.2f} pts"
+        f"   exact NashConv {true_nashconv:.2f}, so the bound recovers "
+        + (f"{best / true_nashconv:.0%}" if true_nashconv > 0.05 else "n/a (the target is unexploitable)")
+    )
+    if not sup.position_only:
+        print(f"   {'':13s} `response` refused: this target reads its own private history, so a fixed surrogate opponent was used instead")
+    check(
+        best <= true_nashconv + 1e-6,
+        f"the attack bound ({best:.2f}) exceeds the exact NashConv it bounds ({true_nashconv:.2f}) for {who} on {tree.rs!r}",
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     name = argv[0] if len(argv) > 0 else "TOY"
     who = argv[1] if len(argv) > 1 else "heuristic"
     iterations = int(argv[2]) if len(argv) > 2 else 1000
+    attack_worlds = int(argv[3]) if len(argv) > 3 else None
     rs = getattr(rules, name)
 
     tree = compile_tree(rs, (L1,), True, cache=store.CACHE)
@@ -151,6 +225,14 @@ def main(argv: list[str] | None = None) -> None:
         ok = check(reproduces(per_seat[0], pin[0], 1) and reproduces(per_seat[1], pin[1], 1), f"exploitability of {who} on {name} ({per_seat[0]:.4f} / {per_seat[1]:.4f} against the published {pin[0]} / {pin[1]})")
         line += f"  {ok}"
     print(line)
+
+    # -- the attack instrument (step 10a.3C) -----------------------------------------
+    n_sets = tree.keyings[L1].n_info
+    worlds = attack_worlds if attack_worlds is not None else (8 if n_sets <= ATTACK_SET_LIMIT else 0)
+    if worlds:
+        attack_block(tree, rs, row[1], who, {"random": rnd, "heuristic": heu}.get(who), per_seat[0] + per_seat[1], worlds)
+    else:
+        print(f"   attack (LBR)                                skipped: {n_sets:,} sets above the {ATTACK_SET_LIMIT:,} default limit; pass attack_worlds to run it")
 
     # -- edge by decision ------------------------------------------------------------
     kinds, sits, actions = store.load_or_label(tree)

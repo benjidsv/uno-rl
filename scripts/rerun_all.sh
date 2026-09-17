@@ -23,7 +23,8 @@
 # that `transfer`, `toy2_columns`, `validate`, `deal_model` (TOY_FULL / TOY2_FULL) and `memory`
 # load. The TOY2_FULL steps come last: each holds 2-5 GB of tree in memory. Trees are compiled on
 # first use into .cache/ (files from before CACHE_VERSION 1 are stale and recompiled). The report's
-# failed-check summary greps every validate, robustness, pairing, edge, memory, deal_model, aivat, pimc_value and report log.
+# failed-check summary greps every validate, robustness, pairing, edge, memory, deal_model, aivat, pimc_value, report and lbr log.
+# The lbr steps need the cached FULL_UNO value networks, like colfree, so they sit beside it.
 set -u -o pipefail
 cd "$(dirname "$0")/.."
 export PYTHONUNBUFFERED=1
@@ -71,6 +72,10 @@ shaping_TOY2          2  uv run uno shaping TOY2
 shaping_TOY2_SKIP     3  uv run uno shaping TOY2_SKIP
 rungs_TOY             4  uv run uno rungs TOY
 colfree              45  uv run uno colfree
+lbr_exact_TOY         4  uv run uno lbr exact TOY
+lbr_games_TOY         1  uv run uno lbr games TOY 200 4
+lbr_pilot             5  uv run uno lbr pilot 200 32 2 "" 100
+lbr_eval             10  uv run uno lbr eval 4000
 memory_TOY            1  uv run uno memory TOY 20
 memory_TOY_FULL       1  uv run uno memory TOY_FULL 20
 memory_TOY2           1  uv run uno memory TOY2 20
@@ -141,7 +146,7 @@ report() {  # report <how the run ended>
             t="$out/$(tag "$j").timings"
             [ -s "$t" ] && sed 's/^\[[0-9:]*\] /      /' "$t"
         done
-        checks=$(ls "$out"/*validate*.log "$out"/*robustness*.log "$out"/*pairing*.log "$out"/*edge*.log "$out"/*memory*.log "$out"/*deal_model*.log "$out"/*aivat*.log "$out"/*pimc_value*.log "$out"/*report*.log "$out"/*target*.log "$out"/*shaping*.log "$out"/*rungs*.log "$out"/*colfree*.log 2> /dev/null)
+        checks=$(ls "$out"/*validate*.log "$out"/*robustness*.log "$out"/*pairing*.log "$out"/*edge*.log "$out"/*memory*.log "$out"/*deal_model*.log "$out"/*aivat*.log "$out"/*pimc_value*.log "$out"/*report*.log "$out"/*target*.log "$out"/*shaping*.log "$out"/*rungs*.log "$out"/*colfree*.log "$out"/*lbr*.log 2> /dev/null)
         if [ -n "$checks" ]; then
             echo
             grep -H "failed checks" $checks | sed "s|$out/||"

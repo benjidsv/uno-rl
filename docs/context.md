@@ -1,21 +1,28 @@
 # UNO RL v5: project context
 
-**Status update, 2026-09-17:** work through **10a.3B** is complete. The
-coarse-memory evidence has been repaired and refreshed (10a.3A); the learner
-observation contract is defined with three comparison arms (10a.3B,
-[docs/observation-contract.md](observation-contract.md)). 10a.3C (LBR) remains
-before **10B → 10C → Step 11**. See
+**Status update, 2026-09-18:** all of **10a.3** is complete. The coarse-memory
+evidence has been repaired and refreshed (10a.3A); the learner observation
+contract is defined with three comparison arms (10a.3B,
+[docs/observation-contract.md](observation-contract.md)); and the **LBR attack
+instrument** is built and calibrated (10a.3C, [spec section 32](spec.md),
+[results](results/10a3c-results.md)). **10B → 10C → Step 11** follow. See
 [the execution plan](10-to-11-plan.md), [the review](results/10-review.md), and
 [the repair results](results/10a3a-results.md). Older memory-sufficiency claims
 below must be read with this update.
 
+The project now has a luck-free quality measure that does not need an exact tree:
+an attack's achieved score bounds NashConv from below (`NashConv >= b0 + b1 - 1`),
+calibrated on the toys at 77-97 % of each target's *exact* NashConv. It is a
+**lower** bound — a small one means a weak attack, never a safe checkpoint.
+
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 10a.3B, 2026-09-17** (on top of
-commit `aee9384`): the seed, reporting, training-target, shaping, belief,
-column-free-player, corrected toy-memory contracts, and learner observation
-contract are complete. Next is 10a.3C, then 10B figures and 10C's distilled rulebot.
+with no access to the repo. State as of **step 10a.3C, 2026-09-18** (on top of
+commit `b00c2f7`): the seed, reporting, training-target, shaping, belief,
+column-free-player, corrected toy-memory contracts, the learner observation
+contract, and the calibrated attack instrument are complete. Next is 10B figures,
+then 10C's distilled rulebot.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -1283,6 +1290,87 @@ on `TOY2_SKIP` and 0.39 / 0.46 on `TOY2_FULL`. They are gaps of an achieved loca
 iterate, not proofs of representational loss or of the K1 optimum. Full-UNO K1
 sufficiency remains untested. Results: `docs/results/10a3a-results.md`.
 
+### 5.25 Steps 10a.3B and 10a.3C: the observation contract, and an attack instrument
+
+**10a.3B** wrote down what a Step 11 learner sees, before building one: three comparison arms (K1
+feed-forward, K1 plus structured draw/play evidence, recurrent public/private history), each with an
+explicit field list, the shared legality mask, colour/rank equivariance, the seat-0 frame, and what
+the evaluator can query. Its load-bearing clause is negative: a recurrent target **cannot** be
+queried through fabricated private history as though that were its real conditional policy
+(docs/observation-contract.md, spec section 31).
+
+**Problem for 10a.3C.** On full UNO there was still **no exploitability number of any kind**. Every
+quality measure was "score against a fixed column", which cannot distinguish "learned to beat this
+league" from "learned to play well" -- and that was iterations 1-4's diagnosis. LBR had been deferred
+twice (the step 10 brainstorm scoped it and flagged it as the first thing to cut; 10a.2 cut it).
+
+**Techniques** (spec section 32). An attack is a frozen-target responder whose **achieved score in
+real games** lower-bounds the best-response score against that target, so it needs neither an exact
+belief nor an exact Q. Four continuations, of which only `response` reads the target; a fixed
+`surrogate` (the column-free construction of 10a.2), `minimax`, and a `PimcRollout` family read
+nothing about it. Reported as `NashConv >= b0 + b1 - 1`, where the two unknown Nash seat values
+cancel in the sum, with the standard error taken from the per-deal *sum* so the seat covariance is
+carried and 0.5 is never substituted for an unknown seat value.
+
+Calibration is exact, which is the point of having toys: an attacker is a deterministic function of
+its information state, so it can be **tabulated** and scored by one `evaluate` (0.1-0.8 ms per
+information set). The attack score, the BR L1 ceiling and the gap between them are then all exact.
+`uno.compiled.flaws` supplies the targets that make the calibration sharp: one symmetry-closed
+action class forced on or off over a Nash strategy, so the exploitability is **localized** and cannot
+be collected without finding that class. Random and the Heuristic are weak everywhere and cannot
+tell a sharp attack from a blunt one.
+
+**What it bought.** On `TOY` the instrument recovers **77-97 % of each target's exact NashConv**
+(missing 0.12-4.19 points of BR L1 per seat), returns a **negative** bound against Nash (-0.51 to
+-4.88, clamped to the trivial zero), and separates a grafted flaw from a near-Nash target by **24.08
+points**. A played attack matches the exact value on the same deals at z -0.52 / +0.26. The report
+card gained an attack block (89 % and 94 % of the exact NashConv recovered for the Heuristic and
+Random). On full UNO, **EVAL block 02** gives the project's first exploitability-style numbers there:
+Random's NashConv is at least **54.22 +- 0.90** points and the Heuristic's at least **26.57 +- 0.96**
+(4,000 deals, both seatings, at a configuration frozen from the DEV pilot before the block was
+claimed). The pilot itself read those ~7.8 and ~3.9 points *higher*, which is exactly why a reported
+number comes off a block nothing was selected on; the pilot also showed the bound climbing +7.0
+points from w = 8 to w = 32, so it is budget-limited rather than target-limited. Against the
+column-free PIMC row the attack finds nothing (+1.00 +- 6.11 on 100 DEV deals): a reported result,
+not a safety claim. Results: `docs/results/10a3c-results.md`.
+
+**What it taught.**
+
+- **An invalid query fails silently, so the refusal has to be enforced.** The `response` continuation
+  evaluates the target *inside* a determinized world, where its private history is fabricated. Asked
+  there, the tabulated Nash strategy missed the keying at **233 of 293 queries (79.5 %) and every
+  miss returned a point mass on the first legal action**. Nothing raises; the attack simply becomes
+  insensitive. So support is *measured* per target rather than declared. Note the asymmetry: the
+  **exact** instrument takes the target as a strategy over the keying and can respond to a memoryful
+  target perfectly well. The restriction belongs to *sampling*, not to best response.
+- **"Reads its own private history" and "reads the hidden state" are different properties, and
+  conflating them fails the wrong thing.** An L1 policy is *entitled* to read its own initial hand
+  and draws -- and since those plus the public plays determine its current hand, any policy that
+  rebuilds its position from the L1 key answers differently when they are perturbed. My own attacker
+  failed that probe when it was first used as an L1-validity test. L1 validity is the other
+  direction: swap a different hidden world behind an identical L1 observation.
+- **A pre-declaration can sit below the instrument's own resolution.** The world ladder was first
+  declared monotone *per seat*; it failed, on wobbles of 0.12-0.29 points, against an attacker whose
+  own world-sampling seed moves a single seat by 0.6-0.8 points. On the quantity actually reported --
+  the two-seat sum -- it is cleanly monotone (5.16 -> 3.73 -> 2.18). Checking noise is not a check.
+- **A built attacker is one realization, not the averaged policy.** Because the sampling is keyed on
+  the information state, the deployed attacker is a single draw; `uno.compiled.pimc.pimc_n` is the
+  average over that key. Six seeds straddle it (mean within 0.03-0.12 points of `pimc_n`), so the
+  seed is a *reported* uncertainty beside the deal noise, not a formality.
+- **Search Q and achieved score are different objects, and comparing them takes care.** Only the Q at
+  the attacker's first decision is comparable to a whole-game score, and the pair must be collected
+  per game. Two drafts were wrong -- one averaged Q over decisions at every depth, one paired 52 Q
+  values against 60 games' scores -- and the surviving comparison is unresolved anyway
+  (-2.70 +- 5.06, z -0.53), so its sign carries no finding.
+- **A coincidence is indistinguishable from an aliasing bug without a guard.** A 120-deal pilot row
+  printed b0 and b1 identical to four decimals with identical standard errors. Checked directly the
+  seatings are genuinely separate (13 of 40 deals disagree), but the guard is now permanent rather
+  than a diagnosis to be repeated by hand.
+- **The weakest attacker family earns its place by being weakest.** `PimcRollout` recovers 77-92 %
+  where the searches reach 91-97 %, and it is the only family that returns a *negative* bound against
+  a genuinely flawed target. Keeping a family that visibly fails is what stops one attack's blind spot
+  from being read as a property of the target.
+
 ## 6. Results: what we know
 
 All exact unless marked sampled. Scores of the first-named player, seat 0 /
@@ -1731,12 +1819,23 @@ Planned design and checks (from the plan and step 8.9):
   rungs choose different actions against a re-seeding control, the cheap pre-check before any rung
   comparison is taken to the score ladder; and `pimc decay` sweeps `soft`'s decay against both
   columns at once, scoring each by total variation to that column's exact posterior.
-  Since step 10a `report [ruleset] [agent] [iterations]` prints the report card of one
+  Since step 10a `report [ruleset] [agent] [iterations] [attack_worlds]` prints the report card of one
   agent (spec section 27.2) and checks every number against the published one to the
   digit, and `uno.eval.seeds` holds the eval-block registry (section 27.1) -- a new
   reported number claims a block there rather than reusing `EVAL_SEEDS`, which 9.5d-9.5f
   spent on selection.
-  Tests: `uv run pytest` (**269 tests, 6 min 54 s** at step 10a; 249 in 6 min 43 s after the 9.5f follow-ups; 206 in 7 min 27 s at
+  Since step 10a.3C `lbr exact | games | pilot | eval` is the attack instrument (spec section 32,
+  `uno.eval.attack`): `exact` calibrates it on the toys by *tabulating* the attacker, so the attack
+  score, the BR L1 ceiling and the gap between them are all exact; `games` checks the played score
+  against `scores_on_seeds` (the exact value on the *same* deals, never the whole-game value, which
+  differs by 1-2 points of deal luck); `pilot` is the bounded full-UNO DEV cost/sensitivity run; and
+  `eval` is the frozen confirmatory measurement on EVAL block 02. The report card grew an attack
+  block from the same module. Only the `response` continuation reads the target, so only it is
+  restricted to position-only targets -- a tabulated target answers "first legal action" at 79.5 % of
+  fabricated-history queries instead of raising. `uno.compiled.flaws` grafts one symmetry-closed
+  action class onto Nash to make a target whose flaw is *localized*, which is what a vacuous
+  attacker cannot pass.
+  Tests: `uv run pytest` (**340 tests, 8 min 0 s** at step 10a.3C; 269 in 6 min 54 s at step 10a; 249 in 6 min 43 s after the 9.5f follow-ups; 206 in 7 min 27 s at
   step 9.5f, 154 in 6 min 44 s at 9.5c, 197 at 9.5e). Suite time is noisy on a loaded machine rather
   than monotone in the test count -- 9.5e logged an unexplained +3 min 40 s jump with no cause
   established, 9.5f ran four minutes *faster* with nine more tests, and 249 tests now run faster

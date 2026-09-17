@@ -85,6 +85,18 @@ REGISTRY: dict[str, Block] = {
             "continuation and belief read nothing of the column's real policy, against the "
             "`response` row it must reproduce when handed its own column",
         ),
+        Block(
+            "02",
+            1_008_000,
+            1_012_000,
+            "10a.3C",
+            "the LBR attack baseline on FULL_UNO: per-seat attack scores and the two-seat "
+            "NashConv lower bound against Random and the Heuristic, at the configuration frozen "
+            "by the 10a.3C DEV pilot (response continuation, w = 32, d = 2, voids belief, "
+            "attacker seed 0). The pilot put the bound's standard error at ~4.0 points on 200 "
+            "deals, so one block takes it to ~0.9; the column-free PIMC target is not on this "
+            "block, since at 8.11 s/game it would need ~1,340 deals for a 5-point bound",
+        ),
     )
 }
 

@@ -9,6 +9,7 @@
     uv run uno pimc calibration [deals=120] [samples=64]
     uv run uno pimc closure [ruleset=TOY] [sets=40] [samples=2000] [min_support=3] [opp=rulebot|passer]
     uv run uno pimc divergence [deals=300] [worlds=32] [depth=2] [workers] [column=random|heuristic]
+    uv run uno pimc concentration [deals=200] [worlds=64] [depth=2] [workers] [column] [nested=8x8] [stride=8]
     uv run uno pimc decay   [ruleset=TOY] [sets=20] [samples=4000] [min_support=3] [decays=0,0.02,...]
 
 A trailing `r` on a search config (`s32x2r`), and the `cont=r` argument of `uno`, select step
@@ -116,8 +117,10 @@ from __future__ import annotations
 
 import math
 import os
+import random
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -132,7 +135,7 @@ from uno.compiled.tree import compile_tree
 from uno.eval.belief import Belief
 from uno.eval.critic import CriticValues
 from uno.eval.pimc import chunks, pmap
-from uno.eval.search import PimcRollout, PimcSearch
+from uno.eval.search import PimcRollout, PimcSearch, batched_search_q, determinize_l1, leaf_for, unseen_cards
 from uno.eval.value_net import ValueNet
 from uno.experiments import aivat_uno as au
 from uno.game import rules
@@ -1159,6 +1162,360 @@ def divergence_section(games: int, worlds: int, depth: int, workers: int | None,
     sys.stdout.flush()
 
 
+# -- step 9.5g: where the world budget actually goes ----------------------------------------------
+
+
+class _Probe(PimcSearch):
+    """`PimcSearch` that keeps, per decision, the full `(worlds, legal)` matrix of per-world
+    searched action values and the opponent hand it dealt in each world.
+
+    The recording sits inside `_worlds_q`; `policy` and `_scores` are inherited untouched, so the
+    matrix kept here is *the* matrix the agent averaged in order to choose -- not a re-probe of
+    the same decision with fresh worlds. The override restates the parent's body, and
+    `determinize_l1` consumes a variable number of rng draws under `voids`, so any reordering
+    would silently redraw the worlds without changing how many: `concentration_section` therefore
+    checks the probe replays a plain `PimcSearch` action for action before reading anything off it.
+    """
+
+    def __init__(self, *a, **kw) -> None:
+        super().__init__(*a, **kw)
+        self.log: list = []
+        self.record = False
+
+    def _worlds_q(self, obs, rng, n):
+        split = unseen_cards(self.rs, obs)
+        worlds = [determinize_l1(self.rs, obs, rng, self.belief, split) for _ in range(n)]
+        qs = batched_search_q(worlds, obs.seat, self.depth, leaf_for(self.leaf, obs.seat), self.exhaustion, self.opponent)
+        if self.record:
+            self.log.append((obs, worlds, qs))
+        return qs
+
+
+# Cheap statistics of the *hidden* hand a world proposes -- what a human names when they imagine
+# one ("what if he has a +2"). Each is a coarse function of the opponent's dealt hand and the
+# board, so the worlds sharing a bucket are the ones the sampler is accused of distinguishing for
+# nothing. Section 3 asks how much of the per-world spread in the top-two value difference they
+# explain: that share is exactly the variance a stratified sampler could remove for free.
+FEATURES = ("playable now", "holds a +4", "holds a +2", "in the colour", "action cards", "the three jointly")
+
+
+def _world_features(rs, obs, world) -> tuple[int, ...]:
+    """One bucket id per entry of `FEATURES`, for the opponent hand `world` deals."""
+    from uno.game.engine import playable_table
+
+    hand = world.hands[obs.seat ^ 1]
+    types = rs.card_types
+    playable = playable_table(rs)[obs.top][obs.current_color]
+    p = min(sum(1 for c in hand if c in playable), 3)
+    w4 = int(any(types[c].kind is rules.Kind.WILD_DRAW_FOUR for c in hand))
+    d2 = int(any(types[c].kind is rules.Kind.DRAW_TWO for c in hand))
+    col = min(sum(1 for c in hand if not types[c].is_wild and types[c].color == obs.current_color), 3)
+    act = min(sum(1 for c in hand if types[c].kind in (rules.Kind.SKIP, rules.Kind.REVERSE, rules.Kind.DRAW_TWO)), 2)
+    return (p, w4, d2, col, act, 4 * p + 2 * w4 + d2)
+
+
+def _nested_worlds(rs, obs, rng, belief, split, leaf, depth, opponent, exhaustion, n_hands, n_piles):
+    """`n_hands` hands from the belief, each under `n_piles` orders of the cards left over: the
+    `(n_hands, n_piles, legal)` value matrix, searched in one batch.
+
+    The point is a variance decomposition the flat sample cannot make. A world is a hand *and* a
+    pile order, and only the hand is hidden information an abstraction could ever bucket -- the
+    pile is chance the agent is sampling over, not an opponent hypothesis. Holding the hand fixed
+    and re-shuffling the remainder separates the two, and the hand's share is the ceiling on what
+    *any* hand statistic, however clever, can explain (section 4 measures how near a cheap one
+    gets to it). The known tail sits at the bottom of the pile and must stay there
+    (`unseen_cards`), so only the part above it is re-shuffled.
+    """
+    tail = split[1]
+    worlds = []
+    for _ in range(n_hands):
+        w = determinize_l1(rs, obs, rng, belief, split)
+        worlds.append(w)
+        body = list(w.draw_pile[: len(w.draw_pile) - len(tail)])
+        for _ in range(n_piles - 1):
+            shuffled = body[:]
+            rng.shuffle(shuffled)
+            worlds.append(replace(w, draw_pile=(*shuffled, *tail), seed=rng.getrandbits(62)))
+    qs = batched_search_q(worlds, obs.seat, depth, leaf_for(leaf, obs.seat), exhaustion, opponent)
+    legal = tuple(qs[0].keys())
+    q = np.array([[d[a] for a in legal] for d in qs], dtype=np.float32)
+    f = np.array([_world_features(rs, obs, worlds[h * n_piles]) for h in range(n_hands)], dtype=np.int16)
+    return q.reshape(n_hands, n_piles, len(legal)), f
+
+
+def _concentration_chunk(rs, leaves, col, worlds, depth, seeds, nested=(8, 8), stride=8):
+    """Per decision of the probe's own games: `(seat, node_kind, Q, features)`, with `Q` the
+    `(worlds, legal)` matrix of per-world action values in the observer's return units and
+    `features` the `(worlds, len(FEATURES))` bucket ids of the hand each world dealt.
+
+    Every `stride`-th decision also gets `_nested_worlds`, returned as a second list of
+    `(hands, piles, legal)` matrices for the variance decomposition."""
+    from uno.eval.decisions import node_kind
+    from uno.eval.play import play_game, stable_hash
+
+    out, deep = [], []
+    n_hands, n_piles = nested
+    for seat in (0, 1):
+        row = _Probe(rs, leaves, worlds=worlds, depth=depth, name="pimc_probe", opponent=col, belief=Belief(rs, kind="voids"))
+        pair = (row, col) if seat == 0 else (col, row)
+        for seed in seeds:
+            row.log.clear()
+            row.record = True
+            try:
+                play_game(rs, seed, pair)
+            except ValueError:
+                continue
+            finally:
+                row.record = False
+            for i, (obs, ws, qs) in enumerate(row.log):
+                legal = tuple(qs[0].keys())
+                if len(legal) < 2:
+                    continue  # `policy` short-circuits; there is no choice to concentrate on
+                q = np.array([[d[a] for a in legal] for d in qs], dtype=np.float32)
+                f = np.array([_world_features(rs, obs, w) for w in ws], dtype=np.int16)
+                out.append((seat, node_kind(rs, obs, legal), q, f))
+                if n_hands and i % stride == 0:
+                    rng = random.Random(stable_hash(("nested", seed, seat, i)))
+                    deep.append(_nested_worlds(rs, obs, rng, row.belief, unseen_cards(rs, obs), leaves, depth, col, row.exhaustion, n_hands, n_piles))
+    return out, deep
+
+
+def _best_two(m: np.ndarray) -> tuple[int, int]:
+    """(leader, runner-up) indices under `PimcSearch.policy`'s rule: highest mean, ties to the
+    lowest action id -- and `legal_actions` returns action ids ascending, so the lowest id is the
+    lowest index and `argmax` already breaks ties that way."""
+    i = int(np.argmax(m))
+    m2 = m.copy()
+    m2[i] = -np.inf
+    return i, int(np.argmax(m2))
+
+
+def _race(q: np.ndarray, t: float, block: int) -> tuple[int, int]:
+    """(worlds used, leader index) under "stop when the leader's t-statistic over the runner-up
+    clears `t`", checked every `block` worlds. This is pure post-processing of a recorded
+    decision: the worlds are the ones the agent drew, in the order it drew them."""
+    w = q.shape[0]
+    for k in range(block, w + 1, block):
+        pre = q[:k]
+        i, j = _best_two(pre.mean(0))
+        d = pre[:, i] - pre[:, j]
+        sd = float(d.std(ddof=1))
+        if sd <= 0 or float(d.mean()) / (sd / math.sqrt(k)) >= t:
+            return k, i
+    return w, _best_two(q.mean(0))[0]
+
+
+def _r2(d: np.ndarray, g: np.ndarray) -> tuple[float, float]:
+    """What a sampler stratified on `g` would remove from `Var(d)`, under proportional and under
+    optimal (Neyman) allocation.
+
+    Proportional allocation leaves `sum_k p_k var_k`, which is the one-way residual, so the gain
+    is the ordinary R2. Neyman allocation -- more draws where the stratum is more variable --
+    leaves `(sum_k p_k sd_k)^2` instead, and is the honest upper bound on the idea, because the
+    worry that motivates stratifying here is a rare stratum with a large effect ("what if he has
+    a +2"): proportional allocation would under-sample exactly that one.
+
+    Both are plug-in ratios and both are upward biased with few draws per stratum, so both are
+    read against a permutation control on the same grouping rather than against zero.
+    """
+    v = float(d.var())
+    if v <= 0:
+        return 0.0, 0.0
+    ps, vs = [], []
+    for u in np.unique(g):
+        dk = d[g == u]
+        ps.append(len(dk) / len(d))
+        vs.append(float(dk.var()))
+    prop = 1.0 - sum(p * x for p, x in zip(ps, vs)) / v
+    ney = 1.0 - sum(p * math.sqrt(x) for p, x in zip(ps, vs)) ** 2 / v
+    return prop, ney
+
+
+def concentration_section(games: int, worlds: int, depth: int, workers: int | None, column: str = "random", nested: tuple[int, int] = (8, 8), stride: int = 8) -> None:
+    """Where does the world budget go? (step 9.5g)
+
+    9.5f left the working set at w = 32 with `voids` and one unanswered question behind it: the
+    belief bought its points by deleting 79.9 % of the worlds as *impossible*, and nothing has
+    asked whether the survivors are then spent on anything. A world earns its search only if it
+    changes which action comes out on top; worlds that agree cost the same and decide nothing.
+
+    Three measurements on one run, all of them post-processing of the `(worlds, legal)` value
+    matrix the agent actually averaged at each of its own decisions:
+
+    - **concentration** -- how many distinct per-world argmaxes a decision has at all;
+    - **settling** -- how early the prefix of the sample already names the full sample's action,
+      and what an adaptive stopping rule would cost and save (offline, on the recorded worlds);
+    - **stratification** -- how much of the per-world spread in the top-two value difference is
+      explained by a coarse statistic of the hand the world deals, against a permutation control.
+
+    The third is the one that decides whether a stratified (Rao-Blackwellised) sampler is worth
+    building: whatever share a cheap statistic explains is variance that can be removed by
+    weighting buckets with their exact belief probability instead of sampling them.
+
+    DEV seeds: a diagnostic, and `EVAL_SEEDS` is spent (09.5f-results.md section 7.3).
+    """
+    from uno.eval.play import DEV_SEEDS, play_game
+
+    if column not in ("random", "heuristic"):
+        raise SystemExit(f"unknown concentration column {column!r}: random or heuristic")
+    rs = rules.FULL_UNO
+    nets = [net_for(rs, "heuristic", "random", s) for s in (0, 1)]
+    leaves = (nets[0].leaf, nets[1].leaf)
+    col = PlayFirstRandom(rs) if column == "random" else Heuristic(rs)
+    seeds = list(DEV_SEEDS[:games])
+    k = (os.cpu_count() or 1) * 4 if workers != 1 else 1
+
+    print(f"\n== FULL_UNO: where the world budget goes. w={worlds}, d={depth}, response continuation, `voids` belief, vs {col.name}.")
+    print(f"   {games} DEV deals, both seatings. Every decision is the probe agent's own and the")
+    print("   matrix read below is the one it averaged to choose, not a re-probe with fresh worlds.")
+    sys.stdout.flush()
+
+    # Fidelity: the probe restates `_worlds_q`'s body, so first check it replays the plain agent.
+    def build(cls):
+        return cls(rs, leaves, worlds=worlds, depth=depth, name="pimc_probe", opponent=col, belief=Belief(rs, kind="voids"))
+
+    same = all(
+        play_game(rs, s, (build(_Probe), col) if seat == 0 else (col, build(_Probe))).actions
+        == play_game(rs, s, (build(PimcSearch), col) if seat == 0 else (col, build(PimcSearch))).actions
+        for s in seeds[:4]
+        for seat in (0, 1)
+    )
+    ok = check(same, "concentration: the probe does not replay a plain PimcSearch, so its recorded worlds are not the agent's")
+    print(f"   probe replays a plain PimcSearch on 8 games, action for action  {ok}")
+    sys.stdout.flush()
+
+    t0 = time.perf_counter()
+    parts = pmap(_concentration_chunk, [(rs, leaves, col, worlds, depth, c, nested, stride) for c in chunks(seeds, k)], workers)
+    rows = [r for p, _ in parts for r in p]
+    deep = [r for _, d in parts for r in d]
+    secs = time.perf_counter() - t0
+    n = len(rows)
+    ok = check(n > 1000, f"concentration: only {n} decisions recorded, too few to read a share from")
+    print(f"   {n:,} decisions with a choice, {secs:.0f}s  {ok}")
+
+    # -- 1. concentration -------------------------------------------------------------------
+    print("\n   1. How many of the w worlds disagree about the best action?")
+    print(f"      {'node kind':10s} {'decisions':>10s} {'legal':>6s} {'distinct argmaxes':>18s} {'unanimous':>10s} {'winner share':>13s}")
+    groups = [("all", lambda r: True)] + [(kk, (lambda x: (lambda r: r[1] == x))(kk)) for kk in ("wild", "action", "color", "drawn", "other")]
+    unanimous_all = 0.0
+    for label, sel in groups:
+        sub = [r for r in rows if sel(r)]
+        if not sub:
+            continue
+        dis, share, nleg = [], [], []
+        for _, _, q, _ in sub:
+            am = np.argmax(q, axis=1)
+            cnt = np.bincount(am, minlength=q.shape[1])
+            dis.append(int((cnt > 0).sum()))
+            share.append(float(cnt.max()) / q.shape[0])
+            nleg.append(q.shape[1])
+        u = 100.0 * sum(1 for d in dis if d == 1) / len(sub)
+        if label == "all":
+            unanimous_all = u
+        print(f"      {label:10s} {len(sub):10,d} {np.mean(nleg):6.2f} {np.mean(dis):18.2f} {u:9.1f}% {100 * np.mean(share):12.1f}%")
+
+    # -- 2. settling and adaptive stopping --------------------------------------------------
+    print(f"\n   2. How early is the w = {worlds} answer already there?")
+    ks = [k for k in (1, 2, 4, 8, 16, 32, 64, 128) if k <= worlds]
+    agree = [100.0 * np.mean([_best_two(q[:kk].mean(0))[0] == _best_two(q.mean(0))[0] for _, _, q, _ in rows]) for kk in ks]
+    print("      prefix of k worlds names the full sample's action:")
+    print("         " + "  ".join(f"k={kk}: {a:.1f}%" for kk, a in zip(ks, agree)))
+    settle = np.array([max([kk for kk in range(1, worlds + 1) if _best_two(q[:kk].mean(0))[0] != _best_two(q.mean(0))[0]], default=0) + 1 for _, _, q, _ in rows])
+    print(f"      worlds needed before the answer stops changing: median {int(np.median(settle))}, mean {settle.mean():.1f}, 90th pct {int(np.percentile(settle, 90))}")
+    # The reference is itself a sample, so a prefix "disagreeing" may only be the reference moving.
+    # Two disjoint halves of the same budget bound that: whatever they disagree about, no stopping
+    # rule could have got right, because the full sample does not know it either.
+    half = 100.0 * np.mean([_best_two(q[: worlds // 2].mean(0))[0] == _best_two(q[worlds // 2 :].mean(0))[0] for _, _, q, _ in rows])
+    print(f"      two disjoint {worlds // 2}-world halves of the same decision agree {half:.1f} % of the time,")
+    print(f"      which is the reproducibility a w = {worlds // 2} agent has with itself -- the floor the row above sits on.")
+
+    print(f"\n      adaptive stopping, checked every 4 worlds, against the full w = {worlds} answer:")
+    print(f"      {'threshold t':>11s} {'mean worlds':>12s} {'saved':>7s} {'action differs':>15s} {'mean value given up':>20s}")
+    for t in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0):
+        used, diff, loss = [], 0, []
+        for _, _, q, _ in rows:
+            u, i = _race(q, t, 4)
+            used.append(u)
+            m = q.mean(0)
+            f = _best_two(m)[0]
+            if i != f:
+                diff += 1
+                loss.append(float(m[f] - m[i]))
+        print(f"      {t:11.1f} {np.mean(used):12.1f} {100 * (1 - np.mean(used) / worlds):6.1f}% {100 * diff / n:14.1f}% {np.mean(loss) if loss else 0.0:20.4f}")
+    print("      (`value given up` is in return units, under the agent's own full-sample estimate,")
+    print("       averaged over the decisions that changed; it is an upper bound on the per-decision")
+    print("       cost, since the full-sample answer is itself only an estimate.)")
+
+    # -- 3. the ceiling: how much of the spread is the hand at all? --------------------------
+    print(f"\n   3. Of the per-world spread, how much is the *hand* and how much the pile order?")
+    print(f"      {nested[0]} hands from the belief x {nested[1]} orders of the cards left over, at every")
+    print(f"      {stride}th decision. The hand's share is the ceiling on what any hand abstraction can")
+    print("      explain; the rest is chance the agent is sampling over, which no bucketing removes.")
+    acc = np.zeros(4)
+    den = 0.0
+    nd = 0
+    hrng = np.random.default_rng(1)
+    deep_d = []  # (D per world, per-world feature buckets) for section 4, on these same worlds
+    for q, hf in deep:
+        h, pi, _ = q.shape
+        flat = q.reshape(h * pi, -1)
+        i, j = _best_two(flat.mean(0))
+        d = (flat[:, i] - flat[:, j]).astype(np.float64)
+        v = float(d.var())
+        if v <= 0:
+            continue
+        g = np.repeat(np.arange(h), pi)
+        deep_d.append((d, np.repeat(hf, pi, axis=0)))
+        acc += v * np.array((*_r2(d, g), *_r2(hrng.permutation(d), g)))
+        den += v
+        nd += 1
+    net = 0.0
+    if nd:
+        prop, ney, cprop, cney = acc / den
+        net, net_ney = (prop - cprop) / (1 - cprop), (ney - cney) / (1 - cney)
+        print(f"      {nd:,} decisions, {nested[0] * nested[1]} worlds each")
+        print(f"      {'allocation':14s} {'R2':>7s} {'control':>8s} {'net':>7s} {'worlds worth':>13s}")
+        print(f"      {'proportional':14s} {100 * prop:6.1f}% {100 * cprop:7.1f}% {100 * net:6.1f}% {1 / max(1 - net, 1e-9):12.2f}x")
+        print(f"      {'Neyman':14s} {100 * ney:6.1f}% {100 * cney:7.1f}% {100 * net_ney:6.1f}% {1 / max(1 - net_ney, 1e-9):12.2f}x")
+        print(f"      so the pile order carries the other {100 * (1 - prop):.1f} % of the spread.")
+        print("      `worlds worth` is 1/(1 - net): the factor by which a *perfect* hand-stratified")
+        print("      sampler -- one that knew the exact hand's value -- would multiply the effective")
+        print("      world count at the same cost. It is the ceiling for section 4, not a proposal.")
+    else:
+        print("      no usable decisions")
+
+    # -- 4. how near do cheap statistics get to that ceiling? --------------------------------
+    print("\n   4. How near does a cheap statistic of the hand get to that ceiling?")
+    print("      Measured on section 3's own worlds, so `of the ceiling` compares two groupings of one")
+    print("      sample: the exact hand against a coarsening of it. `net` corrects a permutation control.")
+    print(f"      {'statistic':22s} {'buckets':>8s} {'R2':>7s} {'control':>8s} {'net':>7s} {'net Neyman':>10s} {'of the ceiling':>15s}")
+    ds, gs = [d for d, _ in deep_d], [g for _, g in deep_d]
+    flat_dec = sum(1 for _, _, q, _ in rows if q.shape[0] > 1 and (q[:, _best_two(q.mean(0))[0]] - q[:, _best_two(q.mean(0))[1]]).var() <= 0)
+    rng = np.random.default_rng(0)
+    for fi, name in enumerate(FEATURES):
+        a = np.zeros(4)
+        den = 0.0
+        nb = []
+        for d, f in zip(ds, gs):
+            g = f[:, fi]
+            v = float(d.var())
+            nb.append(len(np.unique(g)))
+            if v <= 0:
+                continue
+            a += v * np.array((*_r2(d, g), *_r2(rng.permutation(d), g)))
+            den += v
+        prop, ney, cprop, cney = a / den
+        nf, nf_ney = (prop - cprop) / (1 - cprop), (ney - cney) / (1 - cney)
+        print(f"      {name:22s} {np.mean(nb):8.2f} {100 * prop:6.1f}% {100 * cprop:7.1f}% {100 * nf:6.1f}% {100 * nf_ney:8.1f}% {100 * nf / net if net > 0 else 0:14.0f}%")
+    print(f"      decisions where every world gave the same top-two difference: {100 * flat_dec / n:.1f}%")
+
+    print("\n   Reading: section 1 says how much the worlds disagree at all, section 2 prices")
+    print("   adaptive stopping, section 3 bounds *every* abstraction of the hidden hand, and")
+    print("   section 4 says how much of that bound a statistic a human would name recovers.")
+    print(f"      {ok}")
+    sys.stdout.flush()
+
+
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     section = argv[0] if argv else "exact"
@@ -1223,8 +1580,18 @@ def main(argv: list[str] | None = None) -> None:
             int(args[3]) if len(args) > 3 and args[3] else None,
             args[4] if len(args) > 4 and args[4] else "random",
         )
+    elif section == "concentration":
+        concentration_section(
+            int(args[0]) if args else 200,
+            int(args[1]) if len(args) > 1 else 64,
+            int(args[2]) if len(args) > 2 else 2,
+            int(args[3]) if len(args) > 3 and args[3] else None,
+            args[4] if len(args) > 4 and args[4] else "random",
+            tuple(int(x) for x in args[5].split("x")) if len(args) > 5 and args[5] else (8, 8),
+            int(args[6]) if len(args) > 6 else 8,
+        )
     else:
-        raise SystemExit(f"unknown section {section!r}: exact, pimcn, uno, d2, sweep, belief, calibration, closure, divergence, decay")
+        raise SystemExit(f"unknown section {section!r}: exact, pimcn, uno, d2, sweep, belief, calibration, closure, divergence, decay, concentration")
     print(f"\n== {len(au.FAILS)} failed checks" + (": " + "; ".join(au.FAILS) if au.FAILS else ""))
 
 

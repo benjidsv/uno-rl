@@ -41,8 +41,9 @@ session read `docs/context.md` and `docs/results/index.md`, then relevant code.
   before 10B, then retain 10B → 10C → Step 11's three phases.
 - `docs/results/<step>.md`: historical experiment, command, provenance, caveats.
 - `docs/results/10-review.md`: September 2026 second opinion, including a reproduced
-  K1 measurability problem. Its memory repair is implemented in 10a.3A; its
-  observation-contract and LBR recommendations remain proposals.
+  K1 measurability problem. All three of its recommendations are now implemented:
+  the memory repair in 10a.3A, the observation contract in 10a.3B, and the LBR
+  attack instrument in 10a.3C (`uno/eval/attack.py`, docs/spec.md section 32).
 
 Keep these roles separate: results are not specifications, and old brainstorms
 are not proof that an algorithm has been built or validated.
@@ -55,9 +56,18 @@ are not proof that an algorithm has been built or validated.
   validation, shaping artifacts, belief exploitability, and column-free PIMC built.
 - 10a.3A repaired the coarse-memory measurement: coarse keys and actions now use
   the coarse observation's own symmetry, the positive-reach K1 collision is a
-  regression, and all five toy rows are refreshed. 10a.3B (observation contract)
-  and 10a.3C (LBR) remain; 10b figures/generated tables and 10c distilled rulebot
-  follow in the same order.
+  regression, and all five toy rows are refreshed. 10a.3B wrote the observation
+  contract. **10a.3C built and calibrated the LBR attack instrument**: an attack's
+  achieved score is a NashConv lower bound (`NashConv >= b0 + b1 - 1`), calibrated
+  exactly on the toys against known and deliberately grafted flaws, with EVAL
+  block 02 claimed for the full-UNO baseline. All of 10a.3 is done; **10B**
+  (figures/generated tables) is next, then 10C's distilled rulebot.
+- An attack bound is a **lower** bound. A small or negative one is a weak attack,
+  never evidence that a checkpoint is safe, and 0.5 is never substituted for an
+  unknown full-UNO Nash seat value. The `response` continuation may only attack
+  targets that are a function of the current position: it queries the target inside
+  determinized worlds, where private history is fabricated, and a tabulated target
+  silently answers "first legal action" at 79.5 % of such queries instead of raising.
 - No RL learner yet. Benji's intended Step 11: (1) exact toy measurements to
   validate learning and approach appropriate benchmarks, (2) sampled full-UNO
   training/evaluation, (3) further RL iterations if substantial headroom remains.

@@ -1973,3 +1973,100 @@ reconstruction; this is a Step 11 integration gate, not a prerequisite for
 The full contract is in [observation-contract.md](observation-contract.md);
 invariance tests in `tests/game/test_observation_contract.py`.
 
+## 32. The attack instrument (`uno/eval/attack.py`, `uno/compiled/flaws.py`)
+
+Step 10a.3C. An **attack** takes a frozen target and tries to beat it from one seat; its achieved
+score in real games lower-bounds the best-response score against that target. So a weak or biased
+planner still yields a *valid* bound -- it need only be an admissible L1 policy, with no exact
+belief and no exact Q ([Lisy & Bowling 2017](https://arxiv.org/abs/1612.07547)). What it can be is
+**insensitive**, and a small number from a blunt instrument is indistinguishable from a safe target.
+Hence this section is mostly about calibration, not about the algorithm.
+
+**The interface.** `Budget(continuation, worlds, depth, belief, seed, rollouts)` plus
+`attack.build(rs, target, budget, leaf, surrogate, rollout_agents)`. Four families:
+
+| continuation | reads the target? | supported targets |
+|---|---|---|
+| `response` | yes, inside every determinized world | position-only targets only |
+| `surrogate` | no: a fixed stand-in opponent (section 30's column-free construction) | any |
+| `minimax` | no: assumes a clairvoyant opponent | any |
+| `rollout` | no: worlds played out by fixed L1 policies (`PimcRollout`, no strategy fusion) | any |
+
+**Which targets may be attacked, measured rather than declared.** The `response` continuation
+evaluates the target inside a determinized world, where its `initial_hands` / `own_draws` are
+fabricated (section 25). A target that reads its own private history is then asked about information
+sets that never happened. This does not raise: measured on `TOY` against the tabulated Nash
+strategy, **233 of 293 such queries (79.5 %) miss the keying and silently return a point mass on the
+first legal action**, so the search best-responds to "plays its first legal action". `attack.supports`
+therefore probes the target -- same position, private history altered -- and `check_supported` raises
+`UnsupportedTarget` for `response` unless the target is a function of the current position alone.
+Measured on `TOY`: the four rulebots change at 0 of 105 probes, every tabulated strategy at 81-105.
+
+`supports` is **not** an L1-validity test and must not be used as one: an L1 policy is entitled to
+read its own initial hand and draws, and those plus the public plays *determine* its current hand,
+so any key-rebuilding policy legitimately answers differently. L1 validity -- not reading the
+opponent's hand or the pile order -- is `attack.hidden_state_probe`, which substitutes a different
+hidden world behind an identical L1 observation.
+
+Note the asymmetry: the *exact* instrument (`uno.compiled.pimc.pimc_n`) takes the target as a
+strategy over the keying, correctly keyed, so it can respond to a memoryful target. The refusal is a
+property of **sampling**, not of best response.
+
+**Exact calibration on the toys.** An attacker is a deterministic function of its information state,
+so it can be tabulated (`Symmetrized(attacker)`, then `tabulate`) and scored by one `evaluate`: the
+attack score, the BR L1 ceiling and the gap between them are then all exact, with no game sampling.
+Cost 0.1-0.8 ms per information set (~2-9 s for all of `TOY`, 92-676 s for `TOY_FULL`).
+
+`uno.compiled.flaws` supplies targets whose flaw is *localized*: one symmetry-closed action class
+(`pass`, `wild_play`, `action_card`) forced on or off over a Nash strategy, renormalized per set,
+asserted still orbit-uniform. Random and the Heuristic are weak everywhere, so an attacker can score
+well against them without detecting anything in particular; a graft cannot be collected without
+finding its class. A no-op graft raises rather than returning an unflawed "flawed" target. Exact
+NashConv of the grafts, score points:
+
+| flaw | `TOY` | `TOY_FULL` | `TOY2_SKIP` |
+|---|---|---|---|
+| `never_pass` | 1.60 | 1.63 | 1.90 |
+| `always_pass` | 12.07 | 24.51 | 26.20 |
+| `always_wild_play` | 13.98 | 12.50 | 10.81 |
+| `never_wild_play` | 27.47 | 80.10 | 23.33 |
+| `never_action_card` | -- | -- | 36.01 |
+
+`never_pass` is the *near-Nash* case (declining a playable drawn card is nearly free), where a
+correct attack must report a small number.
+
+**The reportable bound.** On full UNO the seat-specific Nash value is unknown, so an attack score
+minus 0.5 is not exploitability and must never be printed as one. With `b0` the attacker's score at
+seat 0 against the target's seat-1 policy and `b1` the seat-1 score, the unknown Nash seat values
+sum to 1 and cancel:
+
+    NashConv(target) >= b0 + b1 - 1        (score units; x100 for score points)
+
+`nashconv_bound` takes paired per-deal arrays and draws its standard error from the per-deal **sum**,
+so the seat covariance is carried whatever its sign and independence is never assumed (measured mild:
+-0.30 on `TOY`, -0.10 on `FULL_UNO` for a rulebot row, +0.10 +- 0.16 for one attacker over 40 deals).
+Zero is always a valid lower bound, so a negative point estimate is a **weak attack**, never evidence
+of safety; `reported` clamps there while `estimate` stays visible.
+
+**The attacker's own seed is an uncertainty.** `PimcSearch` keys world sampling on the information
+state, so a built attacker is *one realization*, not the averaged behavioural policy that `pimc_n`
+computes. Measured on `TOY` vs Random: six seeds at w = 4 spread with sd 0.84 / 0.58 score points and
+their mean matched `pimc_n` (256 realizations) to 0.03 / 0.12 points; three seeds at w = 16 spread
+0.12 / 0.72. An attack score therefore carries two independent uncertainties -- the deals and the
+attacker's seed -- and the world ladder is pre-declared on the **two-seat sum**, not per seat, since a
+per-seat wobble of a few tenths is below the instrument's own resolution.
+
+**Integration.** The report card (section 27.2) prints per-seat attack scores, the budget, the seed
+spread, and the NashConv lower bound, with the pre-declared check that the bound stays below the
+exact NashConv it bounds. It runs by default only where an attacker tabulation is cheap
+(<= 50,000 information sets); `attack_worlds` forces or skips it.
+
+Checks (`tests/eval/test_attack.py`, `uv run uno lbr exact | games | pilot`): the attack never
+exceeds exact BR L1 at either seat; a localized flaw is separated from the near-Nash target by a wide
+margin (a vacuous attacker passes every validity test and fails this); the largest budget misses less
+than the smallest on the seat sum; the mean over attacker seeds equals `pimc_n`; the attacker is
+L1-valid and a deterministic, repeatable function of its information state (AIVAT's row correction
+needs this); the bound never exceeds the exact NashConv; the two seatings are not aliased; and a
+played attack matches `scores_on_seeds` -- the exact value **on the same deals**, which is the
+calibrated scale, since the whole-game value differs from it by ~1-2 points of pure deal luck.
+

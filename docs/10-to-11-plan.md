@@ -1,12 +1,12 @@
 # Steps 10–11: revised execution plan
 
-Agreed direction, 2026-09-17; 10a.3A complete and B/C pending. Based on the
+Agreed direction, 2026-09-17; **all of 10a.3 complete as of 2026-09-18**, 10B next. Based on the
 [Step 10 review](results/10-review.md) and Benji's request to retain the existing
 10B → 10C → 11 sequence.
 
 ## Placement and scope
 
-**10a.3A (done) → 10a.3B/C → 10B → 10C → 11.**
+**10a.3A (done) → 10a.3B (done) → 10a.3C (done) → 10B → 10C → 11.**
 
 This preserves milestone order and purpose. It adds work before 10B, so it is
 not a promise of unchanged elapsed time. Keep 10a.3 bounded: no RL training,
@@ -78,7 +78,20 @@ that were its real conditional policy.
 are written down. Full-UNO sufficiency remains a Step 11 experiment. A redesigned
 particle filter is a possible later arm, not a dependency of 10B or 10C.
 
-## 10a.3C: build and calibrate LBR
+## 10a.3C: build and calibrate LBR (done)
+
+Completed on 2026-09-18; see [the results](results/10a3c-results.md) and
+[spec section 32](spec.md). All six items below were built: the interface with an
+explicitly enforced (and *measured*) rejection of unsupported private-history
+queries, response-PIMC plus a rollout comparator, exact toy calibration against
+Random, the Heuristic, `passer0.5`, Nash, a near-Nash graft and deliberately
+localized flaws, scoring by actual games validated against `scores_on_seeds`, a
+bounded full-UNO DEV cost/sensitivity pilot with the configuration frozen before
+EVAL block 02 was claimed, and the attack block in the report card. The exit
+criterion's caveat held in both directions: the instrument recovers 77-97 % of a
+known toy NashConv, and against the column-free PIMC row on full UNO it finds
+nothing — reported as a weak bound, not as safety. Recurrent-target support
+remains a Step 11 integration gate, as scoped.
 
 1. Define an approximate-response interface taking a frozen target, responder seat,
    belief/continuation configuration, and computation budget. Record supported
