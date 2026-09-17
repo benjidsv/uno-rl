@@ -3,10 +3,13 @@
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 9.5f and its follow-ups, 2026-09-17** (on top of
-commit `8c87cad`): the belief ladder against a second column, the world ladder re-run under
-`voids`, and the batched-leaf speed-up of section 5.21; next step is **10, formalising the toy
-results for RL**.
+with no access to the repo. State as of **step 10a, 2026-09-17** (on top of commit
+`29bccad`): the contract step 11's checkpoints will be measured against -- the seed
+registry, the batched tabulation and the report card (section 5.22). Before it, step
+9.5f and its follow-ups: the belief ladder against a second column, the world ladder
+re-run under `voids`, and the batched-leaf speed-up of section 5.21. Next is the rest of
+step 10 (10a.2: shaping artifacts, the two missing ladder rows, the training target, LBR;
+then 10b figures, 10c the distilled rulebot).
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
@@ -1134,6 +1137,51 @@ Beyond that the remaining ~90 % is Python, which is where a Rust engine would st
 the binding constraint on what the agent is *worth* is the leaf network (R^2 0.07-0.25) and the
 share of impossible worlds, neither of which more speed answers.
 
+### 5.22 Step 10a: the contract, and two items the measurement changed
+
+**Problem:** step 11 will produce checkpoints, and nothing decided in advance what gets
+measured about one, on which seeds, or what counts as better. Three items
+(`docs/results/10a-results.md`); the other three of the brainstorm's six, plus LBR,
+follow in 10a.2.
+
+- **The seed registry** (`uno.eval.seeds`, spec section 27.1). `EVAL_POOL` is partitioned
+  into disjoint blocks claimed per step, checked for overlap at import. The load-bearing
+  entry is the admission: **`EVAL_SEEDS` is spent.** 9.5d-9.5f chose the full-UNO working
+  set (`response`, w = 32, `voids`) on 3,000-4,000-deal runs over those 4,000 seeds, so by
+  this project's own rule they had been a dev range for three sub-steps and nothing
+  noticed. 9.5f said it for `window` at seat 1 and stopped there. The range is kept
+  unchanged (every number of steps 7-9.5c is on it) as a block marked spent, which raises
+  if asked for.
+- **The batched tabulation** (spec section 16). Scoped as "batch the policy call";
+  profiling said that is an eighth of the cost. `observation_from_key` is **57-62 %** of
+  `tabulate` (of which `_hand`'s five `Counter` objects per set are half), the policy call
+  12 % with a rulebot. So both halves were built: `batch_l1_observations` (2.6-3.0x,
+  array-equal field by field) and `tabulate_batched` (array-equal to `tabulate`). A
+  network at batch 1 costs 69-92 us a row against 2.4-3.3 at batch 256, so for a
+  *network* the two together are **~10x** on `TOY`, and `TOY2_FULL`'s 3.75M sets project
+  at **~200 s -> ~21 s**. That repairs 6.9's "milliseconds to seconds", which was a claim
+  about tabular rows and false for a network.
+- **The report card** (`uv run uno report`, spec section 27.2), which reproduces the
+  published values to the digit and cross-checks three numbers it was not pinned against
+  (`br_gap` 5.18 / 13.66 against 6.2's independently computed 5.2 / 13.7; 14.41 / 20.06
+  against +14.4 / +20.1; Random normalising to exactly 0.00 / 0.00).
+
+**What it taught:**
+
+- **A refusal is a measurement.** The first network stub was a plain MLP over raw
+  features and `tabulate` *rejected* it as not orbit-uniform. So option B of the encoding
+  choice (plain encoder + `Symmetrized`) does not merely pay orbit averaging per forward
+  pass -- without `Symmetrized` in the path it cannot produce an exact cell on the
+  quotient at all. Decision recorded: **equivariant by construction**, with `Symmetrized`
+  as its test oracle (a correct equivariant net is a fixed point of it). The network is
+  step 11's object; 10a builds only the seam.
+- **Symmetrising a tabulation is nearly free, and that is a property of the quotient.**
+  Every set's key is already canonical, so there is no `canonical` call to make, only one
+  `bincount`. The brainstorm's "A2 is written against whichever encoding it is" was
+  therefore too strong: the pipeline is the same shape either way.
+- Batched float64 agrees to **one ulp, not bit for bit** (BLAS picks its kernel by row
+  count) -- 5.21's lesson, reproduced exactly where that section said it would be.
+
 ## 6. Results: what we know
 
 All exact unless marked sampled. Scores of the first-named player, seat 0 /
@@ -1219,7 +1267,7 @@ Exploitability of row agents (points, row at seat 0 / seat 1):
 |---------|--------|-----------|----------------------------------------|
 | `TOY` | 17.1 / 17.4 | 5.6 / 11.8 | 1.6 / 0.4 (1.4 / 0.3) [1.2 / 0.2] |
 | `TOY_FULL` | 17.5 / 21.5 | 6.0 / 15.8 | 4.6 / 1.3 (3.1 / 2.4) [2.8 / 1.1] |
-| `TOY2` | 14.8 / 15.2 | 7.2 / 11.8 | 1.7 / 2.2 (1.4 / 1.7) [1.4 / 1.6] |
+| `TOY2` | 14.8 / 15.2 | 7.2 / 11.7 | 1.7 / 2.2 (1.4 / 1.7) [1.4 / 1.6] |
 | `TOY2_SKIP` | 16.7 / 16.8 | 11.0 / 11.9 | 1.3 / 1.7 (1.1 / 1.1) [1.0 / 1.0] |
 | `TOY2_FULL` | 17.3 / 19.1 | 9.4 / 15.5 | 6.3 / 4.9 (3.4 / 3.3) [3.1 / 2.6] |
 
@@ -1410,6 +1458,14 @@ Kept because they show where this kind of analysis goes wrong.
 | (9.5f, 8.8) `soft` at decay 0.1 "costs nothing this measurement can resolve", with the score question left open for a larger run | the question was smaller than the instrument, not the other way round: `soft` and `voids` choose the same action at all but ~1 decision in 100 against an honest column (19.5 % against a re-seeding control's 18.4 %), so no affordable score run could have separated them. Closed by `divergence` and the exact closure test rather than by deals (follow-ups) |
 | (9.5f, 8.6) `soft` is the rung "for an opponent that might not be honest" -- on the argument that it never excludes the truth | right, and now measured against that opponent's *exact* posterior rather than argued: against `KeepsDrawn` the rungs swap places, `voids` closing 16-19 % of the distance to the posterior where `soft` closes 52-67 % (follow-ups) |
 | (9.5f, 8.1) the closure test's averages describe what `voids` is worth | they described it only over the sets where its assumption holds: a set where the rung kept *nothing* was dropped from the average, which is exactly the flattering half and exactly the sets a dishonest column reaches. Kept in since the opponent became a parameter; the honest column is unchanged to the digit, so the fix bites only where it should (follow-ups) |
+| (steps 7-9.5f) `EVAL_SEEDS` is held out, "nothing is ever chosen on them" | broken from 9.5d on: the full-UNO working set (`response`, w = 32, `voids`) was *chosen* by 3,000-4,000-deal runs on those seeds, so the range has been a dev range for three sub-steps. Recorded as spent block 00 of the new registry rather than quietly retired (step 10a) |
+| (10a brainstorm, A2) the batched tabulation is "batch the policy call, for a network policy" | the policy call is 12 % of `tabulate`; `observation_from_key` is 57-62 %. Batching the forward alone would have left ~35 s of Python on `TOY2_FULL`. Both halves built (step 10a) |
+| (10a brainstorm, A2) A2's batched tabulation "is written against whichever encoding it is" | it is not: on a quotient tree every key is already canonical, so no `canonical` call is needed and orbit averaging is one `bincount`, the same either way (step 10a) |
+| (10a brainstorm, 3) the Heuristic sits at ~0.4 / ~0.2 on the normalised skill scale | measured, 0.64 / 0.32 vs Random and 0.71 / 0.27 vs the Heuristic on `TOY`. The 2:1 seat ratio is the robust part; the level was quoted before anything computed it (step 10a) |
+| (10a brainstorm, 5.1) option B's cost is orbit averaging at every forward pass | that understates it: a plain encoder is *refused* by `tabulate` as not orbit-uniform, so without `Symmetrized` in the path it yields no exact cell on the quotient at all (step 10a) |
+| (10a, first draft of the results) `batch_l1_observations` is 3.0-3.7x | those were the scratchpad prototype's numbers; the shipped function also rebuilds the discard pile per set (0.3-0.6 us), so it is 2.6-3.0x. Measuring the prototype and shipping the function is how a speed-up quietly becomes a smaller one (step 10a) |
+| (8.7, and section 6.4 / `index.md` since) the Heuristic's `TOY2` seat-1 exploitability is 11.8 | **11.7** (11.7480). The published figure was the difference of two *rounded* values -- BR L1 0.6959 minus Nash 0.5784 is 0.1175 exactly, which rounds up, where the doubles give 0.69587054 - 0.57839081. Double rounding, and only on the one cell that lands on a boundary. Found by the report card on its first run against a ruleset it was not developed on (step 10a) |
+| (10a, during the build) that 11.8 / 11.7 disagreement is the checker's banker's rounding | no: the value really is 11.748 and really does display as 11.7. Diagnosed from a 2-decimal print that showed "11.75", which was itself rounded -- the same double-rounding mistake, made one level up while investigating it (step 10a) |
 
 ## 8. Dead ends and things deliberately not done
 
@@ -1568,7 +1624,12 @@ Planned design and checks (from the plan and step 8.9):
   rungs choose different actions against a re-seeding control, the cheap pre-check before any rung
   comparison is taken to the score ladder; and `pimc decay` sweeps `soft`'s decay against both
   columns at once, scoring each by total variation to that column's exact posterior.
-  Tests: `uv run pytest` (**249 tests, 6 min 43 s** after the 9.5f follow-ups; 206 in 7 min 27 s at
+  Since step 10a `report [ruleset] [agent] [iterations]` prints the report card of one
+  agent (spec section 27.2) and checks every number against the published one to the
+  digit, and `uno.eval.seeds` holds the eval-block registry (section 27.1) -- a new
+  reported number claims a block there rather than reusing `EVAL_SEEDS`, which 9.5d-9.5f
+  spent on selection.
+  Tests: `uv run pytest` (**269 tests, 6 min 54 s** at step 10a; 249 in 6 min 43 s after the 9.5f follow-ups; 206 in 7 min 27 s at
   step 9.5f, 154 in 6 min 44 s at 9.5c, 197 at 9.5e). Suite time is noisy on a loaded machine rather
   than monotone in the test count -- 9.5e logged an unexplained +3 min 40 s jump with no cause
   established, 9.5f ran four minutes *faster* with nine more tests, and 249 tests now run faster

@@ -563,7 +563,24 @@ every set of the keying, both seats, with the observation rebuilt from the
 set's key by `uno.game.observe.observation_from_key` (the key is by definition
 everything the observer knows, section 10; the L3 key is the state). On a
 symmetric tree it raises if the agent is not symmetric (its policy is not
-uniform within some action orbit). `tabulate_table` maps a
+uniform within some action orbit).
+
+`tabulate_batched(tree, level, policy, chunk)` (step 10a) is the same thing for a
+policy that answers a whole batch at once, which is what a *network* checkpoint
+needs: asked one set at a time a network is dominated by its framework's
+per-call dispatch, measured at 69-92 us a row at batch 1 against 2.4-3.3 us at
+batch 256 (the phenomenon of section 25's batched leaves, one level up). It is
+required to be **array-equal** to `tabulate`, not merely close, because the
+report card below reproduces published values to the digit. Its `BatchPolicy`
+protocol works in the keying's own `ia` layout rather than in per-set dicts, so
+the result scatters into `sigma` with no Python loop and `Keying.orbit_mean`
+symmetrises it in one `bincount`. Batching the forward pass alone is not enough:
+`observation_from_key` is **57-62 %** of `tabulate`'s cost (the policy call is
+12 % with a rulebot), so the observations are rebuilt in batch too --
+`uno.game.observe.batch_l1_observations`, L1 only, 2.6-3.0x, array-equal field by
+field, which drops `_hand`'s five `Counter` objects per set and the frozen
+`Observation` in favour of a `(sets, num_types)` multiplicity matrix. Together a
+network over `TOY2_FULL`'s 3.75M sets goes from ~200 s to ~21 s. `tabulate_table` maps a
 `BestResponse.table` onto a keying (on a symmetric tree the chosen action is
 spread over its orbit). `CompiledAgent` plays any strategy over any keying
 through `uno.eval.play`; on a symmetric tree it canonicalises the observation's
@@ -712,7 +729,15 @@ real information set and score above the true best response (0.8065 against
 values) and plays it uniformly, which attains the full game's best-response
 value against a symmetric opponent (a symmetric best response always exists: mix the images of any best response), and CFR averages regrets and
 average-strategy mass within orbits (section 17). `tabulate` refuses an
-agent whose tabulated policy is not orbit-uniform.
+agent whose tabulated policy is not orbit-uniform, and so does
+`tabulate_batched` (section 16), by the same `Keying.is_symmetric` check on the
+finished vector. That refusal is not a formality: a plain (non-equivariant)
+network over raw features **is** rejected, measured in step 10a, so an encoder
+that is not equivariant by construction cannot produce an exact cell on the
+quotient at all unless `Symmetrized` is in the path. Orbit averaging itself is
+nearly free on a quotient tree, because every set's key is already canonical:
+there is no `canonical` call to make, only `Keying.orbit_mean`, one `bincount`
+over the whole strategy.
 
 Checks (`tests/game/test_symmetry.py`): on random games over random rulesets,
 `g . step(s, a) == step(g . s, g . a)`, legal actions, returns and every
@@ -1713,3 +1738,43 @@ the reason 26.2 gives -- the constraint acts on joint combinations while barely 
 card's marginal -- so Brier remains the right *correctness* test and the wrong *value* test.
 `"voids"` therefore stays the default against honest columns, and `"soft"` is the rung for an
 opponent that may not be.
+
+## 27. The seed registry and the report card (`uno/eval/seeds.py`, `uno/experiments/report.py`)
+
+Step 10a: what gets measured about a checkpoint, on which seeds, and what counts as better --
+fixed **before** step 11 produces any checkpoint, the project's thesis being that iterations 1-4
+failed because that was never fixed in advance.
+
+### 27.1 The seed registry
+
+`DEV_POOL` `[0, 10^6)` and `EVAL_POOL` `[10^6, 2 * 10^6)`. The eval pool is partitioned into
+disjoint **blocks**, each claimed by one step for one purpose and recorded in `REGISTRY` in the
+module itself, not in whichever experiment runs first. Overlap and pool containment are checked at
+import; a name cannot be claimed twice.
+
+The rule a block encodes: **a number is reported on a block only if nothing was selected on that
+block.** Block **00** (1,000,000-1,003,999, the original `EVAL_SEEDS`) is marked **spent**: steps
+9.5d-9.5f chose the full-UNO working set -- the `response` continuation, w = 32, the `voids`
+belief -- on 3,000-4,000-deal runs over exactly those seeds, so they have been a dev range since
+9.5d. `seeds.block("00")` raises rather than handing them out. `uno.eval.play.EVAL_SEEDS` is left
+unchanged, because every number steps 7-9.5c reported is on it.
+
+Seeds were never the scarce resource -- the engine is a pure function of a 64-bit seed. The
+declaration was.
+
+### 27.2 The report card
+
+`uv run uno report [ruleset] [agent] [iterations]`: one command, one checkpoint, fixed format.
+Per column and seat, the score, the **normalised skill** (0 = Random at that seat against that
+column, 1 = BR L1 against it) and `br_gap` (section 21's D4 metric); then **exploitability** per
+seat and NashConv; then edge by decision (section 21) by `node_kind`. Two numbers carry it --
+position on the range against the training column, and exploitability, the only measure that can
+separate "learned to exploit the league" from "learned to play well". The rest is diagnosis.
+
+Normalised skill is an affine rescaling **per cell**, so a difference in scale units is *not*
+score points: both are always printed, and nothing is ever *selected* on the normalised number.
+
+The card is its own regression test: for the agents whose values are published
+(`docs/results/index.md`) every printed number must reproduce them **to the digit**, which is the
+step 9.5f device. On a toy every cell is exact and no deals are spent; a full-UNO card claims a
+fresh block from 27.1 rather than re-spending block 00.

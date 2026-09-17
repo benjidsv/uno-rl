@@ -89,11 +89,18 @@ Against the Nash agent on `TOY` (the quotient CFR+ strategy, `uv run uno cfr TOY
 |---------|--------|-----------|---------------------------------------------------------|
 | `TOY` | 17.1 / 17.4 | 5.6 / 11.8 | 1.6 / 0.4 (1.4 / 0.3) [1.2 / 0.2] |
 | `TOY_FULL` | 17.5 / 21.5 | 6.0 / 15.8 | 4.6 / 1.3 (3.1 / 2.4) [2.8 / 1.1] |
-| `TOY2` | 14.8 / 15.2 | 7.2 / 11.8 | 1.7 / 2.2 (1.4 / 1.7) [1.4 / 1.6] |
+| `TOY2` | 14.8 / 15.2 | 7.2 / **11.7** | 1.7 / 2.2 (1.4 / 1.7) [1.4 / 1.6] |
 | `TOY2_SKIP` | 16.7 / 16.8 | 11.0 / 11.9 | 1.3 / 1.7 (1.1 / 1.1) [1.0 / 1.0] |
 | `TOY2_FULL` | 17.3 / 19.1 | 9.4 / 15.5 | 6.3 / 4.9 (3.4 / 3.3) [3.1 / 2.6] |
 
 `uv run uno symmetry`, `uno toy2` and `uno validate` print both rows ([step 8.8](08.8-review.md)).
+
+**Corrected in [step 10a](10a-results.md):** the Heuristic's `TOY2` seat-1 exploitability read
+**11.8** here until the report card recomputed it as **11.7480**. The old figure was the difference
+of two *rounded* values (BR L1 0.6959 minus Nash 0.5784 = 0.1175 exactly, which rounds up), where
+the underlying doubles give 0.69587054 - 0.57839081. Only this cell was affected -- it is the one
+that lands on a rounding boundary. [08.7](08.7-toy2.md) keeps its number as measured then, per the
+convention above.
 
 ## Nash row and column (exact, score of the first-named, seat 0 / seat 1)
 
@@ -380,3 +387,21 @@ the maximin rung over the league. A row that knows its column should switch rung
 compromising (`voids` at 89.7 % against an honest one); 0.1 is the answer to "one rung, opponent
 unknown", which is what step 11 needs when an RL agent may or may not have learned to hold a
 playable drawn card.
+
+## The report card and the seed registry ([step 10a](10a-results.md))
+
+`uv run uno report [ruleset] [agent]` prints one agent's card -- score, normalised skill and
+`br_gap` per column and seat, exploitability and NashConv, edge by decision -- and **checks every
+number on this page to the digit**. `report TOY heuristic` and `report TOY random` both run with
+0 failed checks, and the card's `br_gap` reproduces two numbers it is not pinned against (the
+Heuristic leaves 5.18 / 13.66 points against Random, the table above says 5.2 / 13.7; Random's gap
+to BR L1 is 14.41 / 20.06 against +14.4 / +20.1).
+
+Normalised skill on `TOY`, 0 = Random and 1 = BR L1 at the same seat against the same column:
+the Heuristic is **0.64 / 0.32** against Random and **0.71 / 0.27** against itself. It is an affine
+rescaling per cell, so those are not score points and nothing is ever selected on them.
+
+**`EVAL_SEEDS` (1,000,000-1,003,999) is spent**: steps 9.5d-9.5f chose the full-UNO working set on
+it, so it is block 00 of `uno.eval.seeds`, marked spent, and a new reported number claims a fresh
+block from `EVAL_POOL` `[10^6, 2 * 10^6)` instead. Every number on this page predates that and
+stands.

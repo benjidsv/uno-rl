@@ -33,6 +33,14 @@ from uno.progress import bar
 # seat 0 by ~1.5 points): harmless while every number is compared on the same
 # seeds, a bias as soon as an agent, a value function or a hyperparameter is
 # picked because it scored well on them.
+#
+# **EVAL_SEEDS is spent** (step 10a). Steps 9.5d-9.5f chose the full-UNO working set
+# -- the `response` continuation, w = 32, the `voids` belief -- on 3,000-4,000-deal
+# runs over exactly these 4,000 seeds, so by the rule above they are a dev range now.
+# They are kept here, unchanged, because every number steps 7-9.5c reported is on
+# them. A *new* reported number claims a fresh block from `uno.eval.seeds`, which
+# partitions [10^6, 2 * 10^6) into disjoint blocks and records what each was spent on;
+# this range is its block "00", marked spent.
 DEV_SEEDS = range(4000)
 EVAL_SEEDS = range(1_000_000, 1_004_000)
 # Step 9.5b: games a value function (the AIVAT critic, `uno.eval.critic`) is fitted on. A

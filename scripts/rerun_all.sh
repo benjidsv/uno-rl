@@ -23,7 +23,7 @@
 # that `transfer`, `toy2_columns`, `validate`, `deal_model` (TOY_FULL / TOY2_FULL) and `memory`
 # load. The TOY2_FULL steps come last: each holds 2-5 GB of tree in memory. Trees are compiled on
 # first use into .cache/ (files from before CACHE_VERSION 1 are stale and recompiled). The report's
-# failed-check summary greps every validate, robustness, pairing, edge, memory, deal_model, aivat and pimc_value log.
+# failed-check summary greps every validate, robustness, pairing, edge, memory, deal_model, aivat, pimc_value and report log.
 set -u -o pipefail
 cd "$(dirname "$0")/.."
 export PYTHONUNBUFFERED=1
@@ -59,6 +59,10 @@ edge_TOY_FULL         2  uv run uno edge TOY_FULL 1000
 edge_TOY2             2  uv run uno edge TOY2 1000
 edge_TOY2_SKIP        2  uv run uno edge TOY2_SKIP 1000
 edge_TOY2_FULL       15  uv run uno edge TOY2_FULL 150 light
+report_TOY_heuristic  1  uv run uno report TOY heuristic
+report_TOY_random     1  uv run uno report TOY random
+report_TOY2_heuristic 2  uv run uno report TOY2 heuristic
+report_TOY2_SKIP      3  uv run uno report TOY2_SKIP heuristic
 memory_TOY            1  uv run uno memory TOY 20
 memory_TOY_FULL       1  uv run uno memory TOY_FULL 20
 memory_TOY2           1  uv run uno memory TOY2 20
@@ -129,7 +133,7 @@ report() {  # report <how the run ended>
             t="$out/$(tag "$j").timings"
             [ -s "$t" ] && sed 's/^\[[0-9:]*\] /      /' "$t"
         done
-        checks=$(ls "$out"/*validate*.log "$out"/*robustness*.log "$out"/*pairing*.log "$out"/*edge*.log "$out"/*memory*.log "$out"/*deal_model*.log "$out"/*aivat*.log "$out"/*pimc_value*.log 2> /dev/null)
+        checks=$(ls "$out"/*validate*.log "$out"/*robustness*.log "$out"/*pairing*.log "$out"/*edge*.log "$out"/*memory*.log "$out"/*deal_model*.log "$out"/*aivat*.log "$out"/*pimc_value*.log "$out"/*report*.log 2> /dev/null)
         if [ -n "$checks" ]; then
             echo
             grep -H "failed checks" $checks | sed "s|$out/||"

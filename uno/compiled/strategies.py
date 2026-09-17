@@ -4,13 +4,15 @@ best-response tables. See docs/spec.md sections 16 and 18.
 
 from __future__ import annotations
 
+from typing import Protocol
+
 import numpy as np
 
 from uno.agents.baseline import Agent
 from uno.compiled.solvers import BestResponse, best_response
 from uno.compiled.tree import CompiledTree, Key, Strategy
 from uno.game.keys import decode_key
-from uno.game.observe import Level, observation_from_key
+from uno.game.observe import Level, batch_l1_observations, observation_from_key
 from uno.progress import bar
 
 
@@ -27,6 +29,76 @@ def tabulate(tree: CompiledTree, level: Level, agent: Agent) -> np.ndarray:
             sigma[start + legal.index(a)] = p
     if tree.symmetric and not k.is_symmetric(sigma, 1e-9):
         raise ValueError(f"{agent.name} is not symmetric: it is not uniform within some orbit of a canonical set (docs/spec.md section 18)")
+    return sigma
+
+
+class BatchPolicy(Protocol):
+    """An agent that answers a whole batch of information sets in one call.
+
+    The seam `tabulate_batched` is written against, and the reason it exists: a network
+    asked one set at a time is dominated by its framework's per-call dispatch, not by
+    its arithmetic. Measured in step 10a on this project's own value-network shape,
+    float64 CPU, one thread: **69-92 us a row at batch 1 against 2.4-3.3 us at batch
+    256+**, a 25-30x gap at every ruleset width (`TOY`, `TOY2`, `FULL_UNO`). That is
+    the same phenomenon `uno.eval.value_net.NetLeaf` was built for in step 5.21, one
+    level up: there it was a search's leaves, here it is a report card's information
+    sets.
+
+    `policy_batch` receives the sets' observations as arrays (`L1Batch`) and their
+    actions in the keying's own `ia` layout, and returns one probability per `ia`.
+    Working in `ia` order rather than returning per-set dicts is what keeps the whole
+    path vectorised: the result scatters into `sigma` with no Python loop, and
+    `Keying.orbit_mean` symmetrises it in one `bincount`.
+    """
+
+    name: str
+
+    def policy_batch(self, batch, ia_action: np.ndarray, info_start: np.ndarray) -> np.ndarray:
+        """Probabilities over `ia_action`, summing to 1 within each set's slice of it."""
+        ...
+
+
+def tabulate_batched(tree: CompiledTree, level: Level, policy: BatchPolicy, chunk: int = 65_536) -> np.ndarray:
+    """`tabulate` for an agent that answers a batch at a time (item A2 of step 10a).
+
+    Same result as `tabulate`, and required to be **array-equal** to it for an agent
+    that implements both paths (`tests/compiled/test_strategies.py`) -- a report card
+    that reproduced its pinned values only to a tolerance would not be the step 9.5f
+    "reproduces to the digit" device.
+
+    Two costs are removed, because the measurement said both had to be. Batching the
+    forward pass alone is not enough: with the policy call down from ~78 us to ~3,
+    `observation_from_key` becomes the dominant term (it is already 57-62 % of
+    `tabulate` with a *rulebot*, whose policy costs 1.7 us), so the observations are
+    rebuilt in batch too (`uno.game.observe.batch_l1_observations`, 3.0-3.7x).
+
+    Symmetry is handled exactly as in `tabulate`, and is nearly free here: on a
+    quotient tree every set's key is already canonical, so there is no `canonical`
+    call to make -- only the orbit averaging, which `Keying.orbit_mean` does over the
+    whole vector in one `bincount`. An agent that is equivariant by construction is
+    already a fixed point of it; one that is not is caught by the same
+    `is_symmetric` check the row-at-a-time path applies.
+    """
+    if level is not Level.L1:
+        raise ValueError("tabulate_batched is L1 only (uno.game.observe.batch_l1_observations)")
+    k = tree.keyings[level]
+    sigma = np.zeros(k.n_ia)
+    ids = np.fromiter(k.keys.values(), dtype=np.int64, count=len(k.keys))
+    encoded = list(k.keys.keys())
+    order = np.argsort(ids)  # sets in id order, so a chunk's ia range is contiguous
+    with bar(total=k.n_info, desc=f"tabulate {getattr(policy, 'name', '?')}", unit="sets") as progress:
+        for start in range(0, k.n_info, chunk):
+            sel = order[start : start + chunk]
+            keys = [decode_key(level, encoded[j]) for j in sel]
+            batch = batch_l1_observations(tree.rs, keys)
+            lo, hi = int(k.info_start[ids[sel[0]]]), int(k.info_start[ids[sel[-1]] + 1])
+            probs = policy.policy_batch(batch, k.ia_action[lo:hi], k.info_start[ids[sel]] - lo)
+            if len(probs) != hi - lo:
+                raise ValueError(f"policy_batch returned {len(probs)} probabilities for {hi - lo} set-actions")
+            sigma[lo:hi] = probs
+            progress.update(len(sel))
+    if tree.symmetric and not k.is_symmetric(sigma, 1e-9):
+        raise ValueError(f"{policy.name} is not symmetric: it is not uniform within some orbit of a canonical set (docs/spec.md section 18)")
     return sigma
 
 

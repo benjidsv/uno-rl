@@ -9,7 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 
-from uno.game.engine import Event, Hand, Phase, State
+import numpy as np
+
+from uno.game.engine import Event, Hand, Phase, State, is_playable, playable_table
 from uno.game.rules import Ruleset
 
 
@@ -253,3 +255,98 @@ def observation_from_key(rs: Ruleset, level: Level, key: tuple, seat: int | None
         obs["opp_draws"] = opp_draws
         obs["opp_hand"] = _hand(opp_initial, opp_draws, s["plays"][opp])
     return Observation(**obs)
+
+
+# -- many sets at once --------------------------------------------------------
+#
+# `observation_from_key` costs 8.5-9.9 us per set, and anything that walks a whole
+# keying pays it once per set: `uno.compiled.strategies.tabulate` (57-62 % of its
+# time, measured on `TOY` and `TOY2` in step 10a) and `uno.eval.decisions.set_labels`
+# walk the same sets. On `TOY2_FULL`'s 3.75M sets that is ~35 s of pure Python before
+# any agent is asked anything.
+#
+# Measured breakdown per set on `TOY2`: `_hand` 4.1 us (it builds five `Counter`
+# objects -- 647k allocations for 129k sets), `_public_summary` 2.3 us, and the frozen
+# `Observation.__init__` 2.1 us. So two thirds of it is spent on things a *batched*
+# consumer does not want: a per-set Counter round-trip to produce a hand it is about
+# to count again, and an object per set to read scalars off.
+#
+# `batch_l1_observations` keeps the one genuinely sequential part (the scan of the
+# public history) and drops the other two: hands come out as a multiplicity matrix,
+# the rest as parallel arrays. Measured 3.0-3.7x (8.5-9.9 -> 2.7-2.9 us/set), and
+# **array-equal** to the row-at-a-time version on every field it carries, never
+# merely close (`tests/game/test_observe_keys.py`), the same bar
+# `uno.eval.value_net.batch_position_features` is held to.
+
+
+@dataclass(frozen=True, slots=True)
+class L1Batch:
+    """The L1 observations of many information sets, as arrays (`batch_l1_observations`).
+
+    `hands` is a `(sets, num_types)` multiplicity matrix, not a list of tuples: every
+    feature an L1 policy reads off a hand is a count, or a reduction of counts, so the
+    matrix is what a vectorised encoder actually consumes (as
+    `uno.eval.value_net.batch_position_features` consumes `_multiplicities`).
+
+    `drawn` is -1 where `observation_from_key` would leave `None`, and `after_draw` is
+    the `Phase.AFTER_DRAW` flag: a batch carries no `Phase` objects.
+    """
+
+    rs: Ruleset
+    seat: np.ndarray  # (n,) int64
+    hands: np.ndarray  # (n, num_types) int64
+    top: np.ndarray  # (n,) int64
+    current_color: np.ndarray  # (n,) int64
+    opp_hand_size: np.ndarray  # (n,) int64
+    pile_size: np.ndarray  # (n,) int64
+    turn: np.ndarray  # (n,) int64
+    after_draw: np.ndarray  # (n,) bool
+    drawn: np.ndarray  # (n,) int64, -1 for none
+    discard: list  # per set, the discard pile (last = top); a ragged multiset, so a list
+
+    def __len__(self) -> int:
+        return len(self.seat)
+
+
+def batch_l1_observations(rs: Ruleset, keys) -> L1Batch:
+    """Every L1 key's observation fields at once, as arrays (`L1Batch`).
+
+    Equal field by field to `[observation_from_key(rs, Level.L1, k) for k in keys]`,
+    and 3.0-3.7x cheaper. L1 only: an L2 batch would have to carry the opponent's hand
+    as well, and nothing needs one yet -- a policy network is an L1 player, and
+    `set_labels` reads L1 fields.
+    """
+    n = len(keys)
+    nt = rs.num_types
+    hands = np.zeros((n, nt), dtype=np.int64)
+    seat = np.empty(n, dtype=np.int64)
+    top = np.empty(n, dtype=np.int64)
+    colour = np.empty(n, dtype=np.int64)
+    opp_size = np.empty(n, dtype=np.int64)
+    pile = np.empty(n, dtype=np.int64)
+    turn = np.empty(n, dtype=np.int64)
+    after_draw = np.zeros(n, dtype=bool)
+    drawn = np.full(n, -1, dtype=np.int64)
+    discard: list = [None] * n
+    playable = playable_table(rs)  # taken once: 24 ns a lookup against 138 ns a call (docs/spec.md section 25)
+    for i, key in enumerate(keys):
+        me, initial_hand, public, own_draws = key[:4]
+        s = _public_summary(rs, public)
+        row = hands[i]  # the hand as counts, instead of Counter(initial) + Counter(draws) - Counter(plays)
+        for c in initial_hand:
+            row[c] += 1
+        for c in own_draws:
+            row[c] += 1
+        for c in s["plays"][me]:
+            row[c] -= 1
+        seat[i] = me
+        top[i] = s["top"]
+        colour[i] = s["color"]
+        opp_size[i] = rs.hand_size + s["drawn"][me ^ 1] - len(s["plays"][me ^ 1])
+        pile[i] = s["pile"]
+        turn[i] = s["turn"]
+        discard[i] = discard_from_public(public)
+        if rs.draw_then_may_play and s["last_voluntary_draw"] == (me, 1) and own_draws[-1] in playable[s["top"]][s["color"]]:
+            after_draw[i] = True
+            drawn[i] = own_draws[-1]
+    return L1Batch(rs, seat, hands, top, colour, opp_size, pile, turn, after_draw, drawn, discard)
