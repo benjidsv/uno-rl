@@ -7,7 +7,9 @@
     uv run uno pimc sweep  [deals=200] [workers] [configs=s2x2,s8x2,...]  (s<worlds>x<depth>[r][v|w], r<worlds>x<rollouts>, heu)
     uv run uno pimc belief [deals=1000] [worlds=32] [depth=2] [workers] [column=random|heuristic]
     uv run uno pimc calibration [deals=120] [samples=64]
-    uv run uno pimc closure [ruleset=TOY] [sets=40] [samples=2000] [min_support=3]
+    uv run uno pimc closure [ruleset=TOY] [sets=40] [samples=2000] [min_support=3] [opp=rulebot|passer]
+    uv run uno pimc divergence [deals=300] [worlds=32] [depth=2] [workers] [column=random|heuristic]
+    uv run uno pimc decay   [ruleset=TOY] [sets=20] [samples=4000] [min_support=3] [decays=0,0.02,...]
 
 A trailing `r` on a search config (`s32x2r`), and the `cont=r` argument of `uno`, select step
 9.5e's **response** continuation: each determinized world is solved as a best response to the
@@ -121,7 +123,7 @@ from pathlib import Path
 import numpy as np
 
 from uno import store
-from uno.agents.baseline import Heuristic, PlayFirstRandom
+from uno.agents.baseline import Heuristic, KeepsDrawn, PlayFirstRandom
 from uno.compiled.edge import br_gap
 from uno.compiled.pimc import CONTINUATIONS, WEIGHTINGS, pimc_n, pimc_response, pimc_row
 from uno.compiled.solvers import best_response, evaluate, two_sided
@@ -785,7 +787,7 @@ def calibration_section(games: int, samples: int) -> None:
     sys.stdout.flush()
 
 
-def closure_section(name: str, sets: int, samples: int, min_support: int = 3) -> None:
+def closure_section(name: str, sets: int, samples: int, min_support: int = 3, opponent: str = "rulebot", decays: tuple[float, ...] = (0.1,)) -> dict:
     """Step 9.5f item 2: close the *sampled* belief against the exact toys.
 
     Every other sampled method in 9.5b-9.5e was checked against an exact toy value before being
@@ -824,8 +826,11 @@ def closure_section(name: str, sets: int, samples: int, min_support: int = 3) ->
     from uno.game.keys import decode_key
     from uno.game.observe import observation_from_key
 
+    if opponent not in ("rulebot", "passer"):
+        raise SystemExit(f"unknown closure opponent {opponent!r}: rulebot or passer")
     rs = getattr(rules, name)
-    print(f"\n== {name} belief closure: the sampled rungs against the exact belief on the full world tree.")
+    opp_agent = PlayFirstRandom(rs) if opponent == "rulebot" else KeepsDrawn(rs)
+    print(f"\n== {name} belief closure vs {opp_agent.name}: the sampled rungs against the exact belief on the full world tree.")
     t0 = time.perf_counter()
     tree = compile_tree(rs, (L1, L3), False, cache=store.CACHE)
     k1, k3 = tree.keyings[L1], tree.keyings[L3]
@@ -846,7 +851,16 @@ def closure_section(name: str, sets: int, samples: int, min_support: int = 3) ->
     # weighting, the prior times the opponent's reach, which is what `uno.eval.belief` says the
     # module is for. Scored against the prior instead, the test measures the assumption rather than
     # the implementation and reports a correct rung as broken (it did, at 0.23 against 0.13).
-    opp_strategy = (L1, store.load_or_tabulate(tree, L1, PlayFirstRandom(rs)))
+    #
+    # Which opponent is therefore the question, not a detail. Against `rulebot` the assumption is
+    # true and the rung should be near-exact; against `passer` (`KeepsDrawn`, which keeps a
+    # playable drawn card half the time) it is false, and this is where a hard filter has to pay
+    # for it while `soft` -- the same constraint believed rather than enforced -- should not.
+    opp_strategy = (L1, store.load_or_tabulate(tree, L1, opp_agent))
+    # `prior`, two independent draws of `voids` (the noise scale), then one `soft` per decay. The
+    # decay is ignored by the first three rungs; it is passed only because `Belief` takes one.
+    rungs = [("prior", "a", 0.1), ("voids", "a", 0.1), ("voids", "b", 0.1)] + [("soft", f"{d:g}", d) for d in decays]
+    results: dict = {}
     for seat in (0, 1):
         post = exact_belief(tree, opp_strategy, seat, "posterior")
         nodes, w, counts, starts = _members(tree, k1, seat, prior)
@@ -872,13 +886,16 @@ def closure_section(name: str, sets: int, samples: int, min_support: int = 3) ->
             exact_p = {h: m / tot for h, m in exact_p.items()}
             exact_q = {h: m / tq for h, m in exact_q.items()}
             kept = {h: m for h, m in exact_p.items() if satisfies(rs, h, vs)}
-            if not kept:
-                # Over-pruning, and the thing this test exists to find: the rung has ruled out
-                # every world the observation allows, so the truth is certainly among the excluded.
-                empty += 1
-                continue
+            # Over-pruning, and the thing this test exists to find: the rung has ruled out every
+            # world the observation allows, so the truth is certainly among the excluded. The set
+            # **stays** in the comparison. Skipping it (as this did until the passer column was
+            # added) would average `voids` over only the sets where its assumption happens to hold
+            # -- the flattering half, and precisely the sets the passer column exists to reach.
+            # Against an honest opponent it changes nothing: there the sets `voids` empties are
+            # exactly those the posterior already zeroes, and those are skipped above.
+            over_pruned = not kept
             s = sum(kept.values())
-            exact_v = {h: m / s for h, m in kept.items()}
+            exact_v = {h: m / s for h, m in kept.items()} if kept else {}
             # Most `TOY` sets admit one or two opponent hands, where every sampler agrees and the
             # comparison says nothing -- at `min_support = 1` the measured separation came out at
             # 1.6x the sampling noise and the vacuity guard below fired, correctly. Compare only
@@ -890,11 +907,15 @@ def closure_section(name: str, sets: int, samples: int, min_support: int = 3) ->
             except ValueError:
                 continue
             emp = {}
-            for kind, tag in (("prior", "a"), ("voids", "a"), ("voids", "b"), ("soft", "a")):
-                bel = Belief(rs, kind=kind)
-                rng = random.Random(stable_hash((name, seat, i, kind, tag)))
+            for kind, tag, decay in rungs:
+                bel = Belief(rs, kind=kind, decay=decay)
+                # Every `soft` rung draws from **one** stream, so the decays see an identical
+                # sequence of candidate hands and differ only in how they weight it: the sweep
+                # over decays is paired, where `voids|a` against `voids|b` deliberately is not
+                # (that pair is the noise scale, and needs two independent draws).
+                rng = random.Random(stable_hash((name, seat, i, kind, "shared" if kind == "soft" else tag)))
                 c = Counter(bel.hand(obs, unseen, rng) for _ in range(samples))
-                emp[kind + tag] = {h: n / samples for h, n in c.items()}
+                emp[f"{kind}|{tag}"] = {h: n / samples for h, n in c.items()}
             # Not an invariant, and it was wrongly written as one. The uniform split is not a
             # *sound* sampler: it proposes hands that no consistent world holds, because it
             # conditions on the hand sizes and the discard but never on the opponent's draw
@@ -902,7 +923,7 @@ def closure_section(name: str, sets: int, samples: int, min_support: int = 3) ->
             # at 5 % (seat 0) and 16 % (seat 1) of them, and on every one of those the split does
             # walk into it. As an `assert` this would have killed the run the first time it drew
             # such a set; as a statistic it is the sound pruning `voids` does not do.
-            if set(emp["priora"]) - set(exact_p):
+            if set(emp["prior|a"]) - set(exact_p):
                 impossible += 1
             # The truth is `exact_p`: the tree's own conditional over the opponent's hand, which is
             # the prior over the *worlds the set actually contains*. Both rungs are scored against
@@ -912,34 +933,230 @@ def closure_section(name: str, sets: int, samples: int, min_support: int = 3) ->
             # earlier version used `prior` as the control and that is mis-specified, because the
             # distance from the uniform split to the truth is precisely what `voids` exists to
             # close. Using it as "noise" would have compared the rung against its own target.
-            rows.append((tv(emp["priora"], exact_q), tv(emp["voidsa"], exact_q), tv(emp["voidsa"], emp["voidsb"]), tv(exact_p, exact_q), tv(emp["softa"], exact_q), len(exact_p), len(exact_v)))
+            empty += over_pruned
+            base = (tv(emp["prior|a"], exact_q), tv(emp["voids|a"], exact_q), tv(emp["voids|a"], emp["voids|b"]), tv(exact_p, exact_q))
+            rows.append(base + tuple(tv(emp[f"soft|{d:g}"], exact_q) for d in decays) + (len(exact_p), len(exact_v)))
             if len(rows) >= sets:
                 break
         # The severe failure first: a set where the rung kept *nothing*. The opponent's real hand
         # is one of the worlds the set contains, so ruling out all of them rules out the truth --
         # over-pruning, which is exactly what calibration alone would not necessarily catch.
-        over = check(empty == 0, f"closure {name} seat {seat}: `voids` excluded every consistent world at {empty} set(s): over-pruning, the opponent's real hand among them")
+        # Against the opponent it assumes this must be 0: the sets `voids` empties there are the
+        # ones the posterior already zeroes, so an empty one would mean the rung contradicts the
+        # very opponent it models. Against the passer it is the **finding** rather than a failure
+        # -- that column is where the assumption is false, so emptying sets is what a hard filter
+        # is expected to do, and the point is what it costs in TV against `soft`.
+        honest = opponent == "rulebot"
+        over = check(
+            empty == 0 or not honest,
+            f"closure {name} seat {seat}: `voids` excluded every consistent world at {empty} set(s): over-pruning, the opponent's real hand among them",
+        )
         if empty:
-            print(f"   seat {seat}: **over-pruned at {empty} constrained set(s)** {over}")
+            tail = over if honest else "(expected here: the assumption is false against this column)"
+            print(f"   seat {seat}: **`voids` kept nothing at {empty} of the sets compared** {tail}")
         if not rows:
             print(f"   seat {seat}: no constrained set survived to be compared")
             continue
-        a = np.array([r[:5] for r in rows])
-        d_prior, d_voids, noise, sep, d_soft = (a[:, j].mean() for j in range(5))
-        sup = np.array([r[5:] for r in rows]).mean(axis=0)
+        nd = len(decays)
+        a = np.array([r[: 4 + nd] for r in rows])
+        d_prior, d_voids, noise, sep = (a[:, j].mean() for j in range(4))
+        d_soft_by_decay = {d: float(a[:, 4 + j].mean()) for j, d in enumerate(decays)}
+        # The checks below read a single `soft`: the shipped default where it was swept, else the
+        # best of the sweep, so a sweep that omits 0.1 still states its claim about some rung.
+        d_soft = d_soft_by_decay.get(0.1, min(d_soft_by_decay.values()))
+        sup = np.array([r[4 + nd :] for r in rows]).mean(axis=0)
         print(f"   seat {seat}: {len(rows)} constrained sets compared, {samples} draws each, support {sup[0]:.1f} -> {sup[1]:.1f} hands")
         print(f"      TV(uniform split, exact posterior)   {d_prior:.4f}   <- the belief PIMC held before 9.5f")
         print(f"      TV(voids, exact posterior)           {d_voids:.4f}   <- the belief it holds now")
-        print(f"      TV(soft, exact posterior)            {d_soft:.4f}   <- believed, not enforced")
+        for d in decays:
+            tail = "  (decay 0 is `voids`)" if d == 0.0 else ("  (decay 1 is the prior)" if d == 1.0 else "")
+            print(f"      TV(soft decay={d:<5g}, exact posterior) {d_soft_by_decay[d]:.4f}   <- believed, not enforced{tail}")
         print(f"      TV(exact prior, exact posterior)     {sep:.4f}   <- the distance the rung is trying to close")
         print(f"      sampling noise, two draws of voids   {noise:.4f}")
         print(f"      uniform split proposed an impossible hand: {impossible}/{len(rows)} of the sets compared")
         print("         (`min_support` selects against these -- more hands means less chance any is impossible;")
         print("          over a uniform sample of constrained TOY sets the rate is 5 % at seat 0, 16 % at seat 1)")
-        ok = check(d_voids < d_prior - 2.0 * noise, f"closure {name} seat {seat}: `voids` sits {d_voids:.4f} from the exact posterior against the uniform split's {d_prior:.4f}, so it does not move the belief towards the posterior -- which is the one thing the rung claims to do")
+        # What is claimed depends on the column, because the rung's assumption does. Against the
+        # opponent it models, `voids` must move the belief towards the posterior -- the one thing
+        # it claims to do. Against `passer`, whose behaviour it gets wrong, that claim is *not*
+        # expected to hold and its failure is the measurement, not a defect; what is claimed there
+        # is that believing the void beats enforcing it, which is the case `soft` was added for.
+        if honest:
+            ok = check(d_voids < d_prior - 2.0 * noise, f"closure {name} seat {seat}: `voids` sits {d_voids:.4f} from the exact posterior against the uniform split's {d_prior:.4f}, so it does not move the belief towards the posterior -- which is the one thing the rung claims to do")
+        else:
+            ok = check(d_soft < d_voids - 2.0 * noise, f"closure {name} seat {seat} vs {opp_agent.name}: `soft` sits {d_soft:.4f} from the exact posterior against `voids`' {d_voids:.4f}, so believing the void buys nothing over enforcing it even against an opponent the enforcement is wrong about -- the one case the rung was added for")
         ok += check(sep >= 4.0 * noise, f"closure {name} seat {seat}: prior and posterior are only {sep:.4f} apart, {sep / max(noise, 1e-9):.1f}x the noise -- there is nothing here to close, so the test is near-vacuous")
+        # The family property, end to end on the *sampled* rung rather than on `_void_weight`
+        # alone: a sweep that does not reproduce its own endpoints is measuring something else.
+        if 0.0 in decays:
+            ok += check(
+                abs(d_soft_by_decay[0.0] - d_voids) <= 4.0 * noise,
+                f"closure {name} seat {seat}: `soft` at decay 0 sits {d_soft_by_decay[0.0]:.4f} from the posterior against `voids`' {d_voids:.4f}, but decay 0 *is* `voids` -- the one-parameter family does not reproduce its own endpoint",
+            )
+        if 1.0 in decays:
+            ok += check(
+                abs(d_soft_by_decay[1.0] - d_prior) <= 4.0 * noise,
+                f"closure {name} seat {seat}: `soft` at decay 1 sits {d_soft_by_decay[1.0]:.4f} from the posterior against the uniform split's {d_prior:.4f}, but decay 1 *is* the uniform split -- the one-parameter family does not reproduce its own endpoint",
+            )
         print(f"      {ok}{over if empty else ''}")
+        results[seat] = {"prior": float(d_prior), "voids": float(d_voids), "sep": float(sep), "noise": float(noise), "soft": d_soft_by_decay}
         sys.stdout.flush()
+    return results
+
+
+def decay_section(name: str, sets: int, samples: int, min_support: int, decays: tuple[float, ...]) -> None:
+    """Is there a decay good against **both** kinds of opponent? (the league question)
+
+    `voids` is near-exact against an opponent that plays a playable drawn card at once, and close
+    to worthless against one that does not (section 26.6, and the `passer` column here): the two
+    columns rank the rungs in opposite orders. `soft` interpolates between them -- `decay = 0`
+    *is* `voids`, `decay = 1` is the uniform prior -- so the question is whether some decay gives
+    up little against the honest column while recovering most of what `voids` loses against the
+    other. That is what a league needs from a single rung: an opponent it can field without
+    knowing which kind it is about to meet.
+
+    Scored by total variation to each column's **exact** posterior, so this costs minutes and no
+    eval seeds. Settling the same question on score would take ~39,000 deals -- the 2,400-deal DEV
+    sweep that picked `decay = 0.1` resolves about +-2 points -- and `divergence` shows the two
+    rungs choose the same move at all but ~1 decision in 100 against an honest column, so there is
+    very little score there to find in the first place.
+
+    The summary criterion is **maximin over the two columns**: the worst column a rung faces,
+    maximised. It is a choice, stated so it can be argued with. It suits a league where the row
+    does not know who it is facing; a row that *does* know should switch rungs instead of
+    compromising, since each column's own best rung is strictly better there.
+    """
+    res = {opponent: closure_section(name, sets, samples, min_support, opponent, decays) for opponent in ("rulebot", "passer")}
+
+    def over_seats(col: str, key: str, d: float | None = None) -> float:
+        vals = [r["soft"][d] if key == "soft" else r[key] for r in res[col].values()]
+        return sum(vals) / len(vals) if vals else float("nan")
+
+    prior = {c: over_seats(c, "prior") for c in res}
+    table = [("voids", {c: over_seats(c, "voids") for c in res})]
+    table += [(f"soft {d:g}", {c: over_seats(c, "soft", d) for c in res}) for d in decays]
+
+    print(f"\n== {name} decay balance: TV to each column's exact posterior, mean over seats.")
+    print("   `rulebot` is the column `voids` assumes; `passer` keeps a playable drawn card half")
+    print("   the time, which is exactly the assumption broken. `closed` is the share of the")
+    print("   uniform split's distance to that column's posterior that the rung removes.")
+    print(f"      {'rung':12s} {'TV rulebot':>12s} {'closed':>8s} {'TV passer':>11s} {'closed':>8s} {'worst':>8s}")
+    best, best_worst = None, -2.0
+    for label, tvs in table:
+        closed = {c: (prior[c] - tvs[c]) / prior[c] for c in tvs}
+        worst = min(closed.values())
+        if worst > best_worst:
+            best, best_worst = label, worst
+        print(f"      {label:12s} {tvs['rulebot']:12.4f} {100 * closed['rulebot']:7.1f}% {tvs['passer']:11.4f} {100 * closed['passer']:7.1f}% {100 * worst:7.1f}%")
+    print(f"\n   maximin over the two columns: **{best}**, at {100 * best_worst:.1f} % of the distance closed in its worst column.")
+    sys.stdout.flush()
+
+
+def _divergence_chunk(rs, row, variants, col, seeds):
+    """(seat, a void is live, one flag per variant: it would have chosen differently) per decision
+    of the row's own games. One trajectory, several opinions about it -- the variants are asked at
+    the row's states and never get to steer, which is what makes the shares comparable."""
+    from uno.eval.belief import voids as void_constraints
+    from uno.eval.play import play_game
+    from uno.game.engine import legal_actions
+
+    out = []
+    for seed in seeds:
+        for seat in (0, 1):
+            pair = (row, col) if seat == 0 else (col, row)
+            try:
+                t = play_game(rs, seed, pair)
+            except ValueError:
+                continue
+            for st in t.steps:
+                if st.state.player != seat:
+                    continue
+                legal = legal_actions(st.state)
+                if len(legal) < 2:
+                    continue  # forced: no choice to differ on, and `policy` short-circuits anyway
+                live = bool(void_constraints(rs, st.obs.public, seat ^ 1))
+                diffs = tuple(max(v.policy(st.obs, legal).items(), key=lambda kv: kv[1])[0] != st.action for v in variants)
+                out.append((seat, live, diffs))
+    return out
+
+
+def divergence_section(games: int, worlds: int, depth: int, workers: int | None, column: str = "random") -> None:
+    """How often do `soft` and `voids` actually *choose differently*? (step 9.5f follow-up)
+
+    The belief ladder separates rungs by score, and at 2,400 DEV deals that resolves about +-2
+    points -- which is why `soft` at `decay = 0.1` sits in the "indistinguishable" bucket rather
+    than being settled. This asks the cheaper question first: at how many decisions do the two
+    rungs disagree at all? A rung that plays `voids`' move nearly everywhere cannot differ from it
+    by much however many deals the ladder runs, so this bounds the score question by arithmetic
+    instead of buying the answer in deals.
+
+    **The control is the point of the section.** Each rung is a separate agent with its own name,
+    and `PimcSearch._rng` keys the world sampler on (seed, name, information state) -- so two
+    agents *of the same rung* under different names already disagree wherever 32 sampled worlds
+    happen to produce different argmaxes. That floor is what a `soft - voids` disagreement must
+    clear to mean anything, and a second `voids` under a different name measures it. `soft` is run
+    twice for the same reason: under its own name (what the ladder compares) and under the row's
+    name, where the sampler starts from the same seed, so what is left there is the belief rather
+    than the stream.
+
+    DEV seeds: this is a diagnostic, and `EVAL_SEEDS` is spent (09.5f-results.md section 7.3).
+    """
+    from uno.eval.play import DEV_SEEDS
+
+    if column not in ("random", "heuristic"):
+        raise SystemExit(f"unknown divergence column {column!r}: random or heuristic")
+    rs = rules.FULL_UNO
+    nets = [net_for(rs, "heuristic", "random", s) for s in (0, 1)]
+    leaves = (nets[0].leaf, nets[1].leaf)
+    col = PlayFirstRandom(rs) if column == "random" else Heuristic(rs)
+    seeds = DEV_SEEDS[:games]
+    k = (os.cpu_count() or 1) * 8 if workers != 1 else 1
+
+    def agent(kind: str, name: str):
+        return PimcSearch(rs, leaves, worlds=worlds, depth=depth, name=name, opponent=col, belief=Belief(rs, kind=kind))
+
+    base = f"pimc_resp_{column}_voids"
+    row = agent("voids", base)
+    variants = (
+        ("soft(0.1), row's world key", agent("soft", base)),
+        ("soft(0.1), own world key", agent("soft", f"pimc_resp_{column}_soft")),
+        ("voids, own world key (control)", agent("voids", f"pimc_resp_{column}_voids_b")),
+    )
+
+    print(f"\n== FULL_UNO belief divergence vs {col.name}: w={worlds}, d={depth}, response continuation.")
+    print(f"   {games} DEV deals, both seatings. The games are the `voids` row's own; every variant")
+    print("   is asked for its action at the row's decisions, so this is one trajectory, not three.")
+    sys.stdout.flush()
+    t0 = time.perf_counter()
+    parts = pmap(_divergence_chunk, [(rs, row, [v for _, v in variants], col, c) for c in chunks(seeds, k)], workers)
+    rows = [r for p in parts for r in p]
+    secs = time.perf_counter() - t0
+    n = len(rows)
+    n_live = sum(1 for r in rows if r[1])
+    print(f"   {n:,} row decisions with a choice, {n_live:,} of them with a void live ({100 * n_live / max(n, 1):.1f} %), {secs:.0f}s")
+    print(f"      {'variant':32s} {'all decisions':>18s} {'void live':>12s} {'seat 0':>9s} {'seat 1':>9s}")
+
+    def share(j: int, sel=None) -> float:
+        sub = [r for r in rows if sel is None or sel(r)]
+        return 100.0 * sum(1 for r in sub if r[2][j]) / len(sub) if sub else 0.0
+
+    shares = []
+    for j, (label, _) in enumerate(variants):
+        allp = share(j)
+        se = math.sqrt(max(allp, 1e-9) * (100.0 - allp) / max(n, 1))
+        cells = (f"{allp:.1f} +- {se:.1f} %", f"{share(j, lambda r: r[1]):.1f} %", f"{share(j, lambda r: r[0] == 0):.1f} %", f"{share(j, lambda r: r[0] == 1):.1f} %")
+        print(f"      {label:32s} {cells[0]:>18s} {cells[1]:>12s} {cells[2]:>9s} {cells[3]:>9s}")
+        shares.append(allp)
+
+    # Non-vacuity, the step 9.5e lesson: if re-seeding the world sampler changed no decision, this
+    # instrument could not see a belief difference either and every share above would be noise.
+    ok = check(shares[2] > 0.0, "divergence: the control never diverged, so re-seeding the world sampler changes nothing here and this instrument cannot detect a belief difference at all")
+    ok += check(n > 1000, f"divergence: only {n} decisions compared, too few to read a share from")
+    print(f"      {ok}")
+    print("\n   Reading: `soft` under its own name -- the comparison the ladder makes -- differs at")
+    print(f"   {shares[1]:.1f} % of decisions, against the control's {shares[2]:.1f} %, which is the share that")
+    print("   re-seeding 32 worlds produces on its own, with no change of belief whatever.")
+    sys.stdout.flush()
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -988,9 +1205,26 @@ def main(argv: list[str] | None = None) -> None:
             int(args[1]) if len(args) > 1 else 40,
             int(args[2]) if len(args) > 2 else 2000,
             int(args[3]) if len(args) > 3 else 3,
+            args[4] if len(args) > 4 and args[4] else "rulebot",
+        )
+    elif section == "decay":
+        decay_section(
+            args[0] if args else "TOY",
+            int(args[1]) if len(args) > 1 else 20,
+            int(args[2]) if len(args) > 2 else 4000,
+            int(args[3]) if len(args) > 3 else 3,
+            tuple(float(x) for x in args[4].split(",")) if len(args) > 4 and args[4] else (0.0, 0.02, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0),
+        )
+    elif section == "divergence":
+        divergence_section(
+            int(args[0]) if args else 300,
+            int(args[1]) if len(args) > 1 else 32,
+            int(args[2]) if len(args) > 2 else 2,
+            int(args[3]) if len(args) > 3 and args[3] else None,
+            args[4] if len(args) > 4 and args[4] else "random",
         )
     else:
-        raise SystemExit(f"unknown section {section!r}: exact, pimcn, uno, d2, sweep, belief, calibration, closure")
+        raise SystemExit(f"unknown section {section!r}: exact, pimcn, uno, d2, sweep, belief, calibration, closure, divergence, decay")
     print(f"\n== {len(au.FAILS)} failed checks" + (": " + "; ".join(au.FAILS) if au.FAILS else ""))
 
 

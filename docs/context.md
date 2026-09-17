@@ -1027,6 +1027,42 @@ hardcoded Random as its column. Both are now arguments.
   any reordering of the loop changes which worlds are drawn without changing how many -- a drift
   that would have moved scores by a point or two with nothing visibly broken.
 
+**Follow-ups: what `soft` is worth, measured rather than argued.** Section 8.8 of the results left
+the rung resting on an argument (it never excludes the truth) and a null result (no score
+difference a 2,400-deal DEV sweep could resolve, which bounds it at about a point, not at zero).
+Settling that on score needs ~39,000 deals. Two instruments settled it instead, neither spending
+an eval seed:
+
+- **`pimc divergence`** asks how often the rungs choose differently, against a control that
+  re-seeds the world sampler *without* changing the belief (a second `voids` under a different
+  name; `PimcSearch._rng` keys on it). `soft(0.1)` differs from `voids` at 19.5 % of decisions
+  against Random and 21.5 % against the Heuristic, where the control alone gives **18.4 % /
+  20.6 %**. **The belief moves about one decision in a hundred**, so the sweep was never
+  under-powered -- there was nearly nothing there to separate, and the score question against
+  honest columns is closed by arithmetic rather than deferred to a bigger run.
+- **`pimc closure` now takes the opponent whose exact posterior is the target**, so the rung can
+  be scored against the case its assumption is false. Against `KeepsDrawn` (`PlayFirstRandom`
+  that keeps a playable drawn card half the time) the two rungs **swap places**: `voids` closes
+  88-91 % of the distance to the posterior against an honest column but only 16-19 % against that
+  one, where `soft` closes 58-66 % and 52-67 %. So 8.6's recommendation holds with numbers behind
+  it -- `voids` for the ladder, whose columns are honest, `soft` for a column that may not be --
+  and it is a **league** design rather than a caveat: the rung is chosen per opponent.
+- **`pimc decay`** sweeps the decay against *both* columns' exact posteriors and finds a genuine
+  balance point: **0.1 is where the two cross** (61.2 % of the distance closed against the honest
+  column, 59.2 % against the passer), so the default 8.8 picked as a robustness tie-break among
+  score-indistinguishable settings is also the maximin rung over the pair. The passer's own
+  optimum, 0.2, buys 0.8 points of accuracy there for 16 against the honest column, so a row that
+  knows its column should switch rungs rather than compromise. The sweep reproduces its own
+  endpoints (`soft` 0 = `voids`, `soft` 1 = the prior) as a check, which pins the family end to
+  end on the sampled rung and not only on `_void_weight`.
+
+Two method notes. Over-pruned sets now stay in the closure average (skipping them scored `voids`
+only on the sets where its assumption holds, the flattering half), and the `rulebot` column
+reproducing 8.1 **to the digit** is what licenses the change. And `soft` never short-circuits --
+it weighs all `tries` candidates where `voids` returns on the first survivor -- so it costs
+several times `voids` per call, with `tries` as a quality/cost knob that interacts with the decay;
+that one is a scratch benchmark so far, not yet a repo section.
+
 Results: `docs/results/09.5f-results.md`.
 
 ### 5.21 After 9.5f: a 2.6-4.5x speed-up that changes no number
@@ -1371,6 +1407,9 @@ Kept because they show where this kind of analysis goes wrong.
 | (9.5f scoping) the soft policy likelihood is the point, the hard constraints a cheap approximation of it | reversed: `window - voids` is +0.93 / -0.87, within noise at both seats. The rung needing no policy *probabilities* carries the whole measured gain, at +10 % cost instead of +29 % (step 9.5f) |
 | (9.5f) the `voids` rung can only bite on free-play rulesets, since forced play has no voluntary draw | wrong: on forced play `legal_actions` offers `Draw` only when nothing is playable, so the *pre-draw* void is a rules fact rather than a policy inference. Live at 16.5-23.3 % of decisions on the forced toys (step 9.5f). **Half-right only**: the constraint's arithmetic still assumes the card drawn *at* the void was not kept, which is policy, not rules (follow-ups) |
 | (9.5f) the belief costs 3.4x the search | that measured a harness calling it 64 times at *every* decision; the agent calls it once per world at its own decisions only, so the real cost is +10 % / +29 % (step 9.5f) |
+| (9.5f, 8.8) `soft` at decay 0.1 "costs nothing this measurement can resolve", with the score question left open for a larger run | the question was smaller than the instrument, not the other way round: `soft` and `voids` choose the same action at all but ~1 decision in 100 against an honest column (19.5 % against a re-seeding control's 18.4 %), so no affordable score run could have separated them. Closed by `divergence` and the exact closure test rather than by deals (follow-ups) |
+| (9.5f, 8.6) `soft` is the rung "for an opponent that might not be honest" -- on the argument that it never excludes the truth | right, and now measured against that opponent's *exact* posterior rather than argued: against `KeepsDrawn` the rungs swap places, `voids` closing 16-19 % of the distance to the posterior where `soft` closes 52-67 % (follow-ups) |
+| (9.5f, 8.1) the closure test's averages describe what `voids` is worth | they described it only over the sets where its assumption holds: a set where the rung kept *nothing* was dropped from the average, which is exactly the flattering half and exactly the sets a dishonest column reaches. Kept in since the opponent became a parameter; the honest column is unchanged to the digit, so the fix bites only where it should (follow-ups) |
 
 ## 8. Dead ends and things deliberately not done
 
@@ -1522,11 +1561,18 @@ Planned design and checks (from the plan and step 8.9):
   Unlike `belief` it runs single-process, so it also reports the fallback rates; `belief` itself
   carries two checks of its own (the rungs scored the same deals; no rung 3 sigma *below* the
   uniform prior at a seat), added because as shipped in 9.5f it registered none and its
-  "0 failed checks" line was vacuous.
-  Tests: `uv run pytest` (**206 tests, 7 min 27 s** at step 9.5f; 154 in 6 min 44 s at 9.5c, 197 at
-  9.5e). Suite time is noisy on a loaded machine rather than monotone in the test count: 9.5e logged
-  an unexplained +3 min 40 s jump with no cause established, and 9.5f ran four minutes *faster* with
-  nine more tests. Check a new file's own runtime directly. Everything: `bash scripts/rerun_all.sh`
+  "0 failed checks" line was vacuous. `pimc closure` closes the belief against the exact toy
+  posterior and takes the **opponent that posterior belongs to** (`rulebot` or `passer`, the
+  latter `uno.agents.baseline.KeepsDrawn`), which is what turns it from a check of the
+  implementation into a measurement of the assumption; `pimc divergence` measures how often two
+  rungs choose different actions against a re-seeding control, the cheap pre-check before any rung
+  comparison is taken to the score ladder; and `pimc decay` sweeps `soft`'s decay against both
+  columns at once, scoring each by total variation to that column's exact posterior.
+  Tests: `uv run pytest` (**249 tests, 6 min 43 s** after the 9.5f follow-ups; 206 in 7 min 27 s at
+  step 9.5f, 154 in 6 min 44 s at 9.5c, 197 at 9.5e). Suite time is noisy on a loaded machine rather
+  than monotone in the test count -- 9.5e logged an unexplained +3 min 40 s jump with no cause
+  established, 9.5f ran four minutes *faster* with nine more tests, and 249 tests now run faster
+  than 206 did. Check a new file's own runtime directly. Everything: `bash scripts/rerun_all.sh`
   (~8 h 30 by the script's own estimates, of which only the 18 steps of the step-8.9
   rerun have measured durations, 115 min; everything from `robustness` on is a first-run guess,
   logs in `logs/rerun-*/report.txt`).

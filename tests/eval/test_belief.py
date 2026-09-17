@@ -24,7 +24,7 @@ from collections import Counter
 
 import pytest
 
-from uno.agents.baseline import Heuristic, PlayFirstRandom
+from uno.agents.baseline import Heuristic, KeepsDrawn, PlayFirstRandom
 from uno.eval.belief import Belief, satisfies, trailing_window, voids
 from uno.eval.play import play_game
 from uno.eval.search import PimcSearch, determinize_l1, unseen_cards
@@ -81,24 +81,10 @@ def test_voids_never_exclude_the_hand_the_opponent_really_holds(name):
     assert checked == constrained
 
 
-class _Passer:
-    """`PlayFirstRandom`, except it keeps a playable drawn card half the time.
-
-    Nothing exotic: `draw_then_may_play` offers exactly this choice at every `AFTER_DRAW`, and
-    both rulebots simply always decline it. An RL agent learning to hold a card would not."""
-
-    name = "passer"
-
-    def __init__(self, rs, p: float = 0.5) -> None:
-        self.rs, self.p, self.inner = rs, p, PlayFirstRandom(rs)
-
-    def policy(self, obs, legal):
-        if obs.phase is Phase.AFTER_DRAW:
-            passes = [a for a in legal if not isinstance(self.rs.actions[a], Play)]
-            plays = [a for a in legal if isinstance(self.rs.actions[a], Play)]
-            if passes and plays:
-                return {passes[0]: self.p, plays[0]: 1.0 - self.p}
-        return self.inner.policy(obs, legal)
+# The passer moved to `uno.agents.baseline.KeepsDrawn`: the closure test needs its *exact*
+# posterior, which means tabulating it on a compiled tree, so it could no longer live in a test
+# file. It also spreads the play mass over the drawn card's actions instead of taking the first,
+# which keeps it symmetric; nothing here depends on that.
 
 
 def test_voids_over_prunes_against_an_opponent_that_keeps_a_playable_drawn_card():
@@ -122,7 +108,7 @@ def test_voids_over_prunes_against_an_opponent_that_keeps_a_playable_drawn_card(
     rs = rules.FULL_UNO
     heu = Heuristic(rs)
     out = {}
-    for label, opp in (("rulebot", PlayFirstRandom(rs)), ("passer", _Passer(rs))):
+    for label, opp in (("rulebot", PlayFirstRandom(rs)), ("passer", KeepsDrawn(rs))):
         checked = violations = 0
         for seed in range(25):
             try:
@@ -187,14 +173,14 @@ def _void_cases(rs, opp, games: int = 12):
 def test_soft_never_puts_zero_on_the_hand_the_opponent_really_holds(who):
     """The reason the rung exists. `voids` is a hard filter, so when its assumption breaks it
     assigns the truth probability *zero* and no amount of search recovers it -- measured at 12.3 %
-    of constrained decisions against `_Passer` and 68.5 % against `_Bluffer`. `soft` weights
+    of constrained decisions against `KeepsDrawn` and 68.5 % against `_Bluffer`. `soft` weights
     instead of rejecting, so the truth is never excluded whatever the opponent does.
 
     The `bluffer` case doubles as the non-vacuity guard: `voids` must actually hit zero there, or
     this would pass with `soft` doing nothing.
     """
     rs = rules.FULL_UNO
-    opp = {"rulebot": PlayFirstRandom(rs), "passer": _Passer(rs), "bluffer": _Bluffer(rs)}[who]
+    opp = {"rulebot": PlayFirstRandom(rs), "passer": KeepsDrawn(rs), "bluffer": _Bluffer(rs)}[who]
     soft = Belief(rs, kind="soft")  # the shipped default, so this guards what actually runs
     n = hard_zero = 0
     for truth, vs in _void_cases(rs, opp):

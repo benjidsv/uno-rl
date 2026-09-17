@@ -1637,6 +1637,37 @@ failed checks.
   a policy assumption** there: `voids` is not a correctable approximation but the only kind of
   inference available on the ruleset that matters.
 
+**The opponent is a parameter** (`uv run uno pimc closure [ruleset] [sets] [samples] [min_support]
+[rulebot|passer]`). The target is *that opponent's* posterior, so which opponent is the question
+and not a detail: `uno.agents.baseline.KeepsDrawn` (`passer0.5`) plays `PlayFirstRandom` except
+that it keeps a playable drawn card half the time, which is precisely the assumption of 26.2
+broken. Measured the same way, seat 0 / seat 1:
+
+| belief | vs `rulebot` | vs `passer0.5` |
+|---|---|---|
+| uniform split | 0.4325 / 0.4496 | 0.2502 / 0.2495 |
+| `voids` | **0.0502 / 0.0407** | 0.2044 / 0.2099 |
+| `soft(0.1)` | 0.1838 / 0.1528 | **0.0815 / 0.1208** |
+
+`voids` closes 88-91 % of the distance where its assumption holds and 16-19 % where it does not;
+`soft` closes 58-66 % and 52-67 %. The two rungs therefore **swap places with the column**, which
+is what 26.7 claims and this measures. Consequences for the harness: the checks are column-aware
+(against `rulebot` the claim is that `voids` moves the belief towards the posterior; against
+`passer` that `soft` beats `voids` by more than twice the noise -- both pass), and **over-pruned
+sets stay in the average**, since skipping them would score `voids` only on the sets where its
+assumption happens to hold. That change is a no-op where the assumption holds -- the `rulebot`
+column reproduces the numbers above to the digit -- and is the entire point where it does not.
+
+**How much two rungs differ at all** (`uv run uno pimc divergence [deals] [worlds] [depth]
+[workers] [column]`). A score ladder resolves about +-2 points at 2,400 deals, so before spending
+deals on a rung comparison this asks how often the rungs choose a different action, against a
+**control**: a second agent of the *same* rung under a different name, which disagrees wherever
+the world sampler's re-seeding alone throws a different argmax (`PimcSearch._rng` keys on the
+name). At w = 32 over 300 DEV deals `soft(0.1)` differs from `voids` at 19.5 % of decisions
+against Random and 21.5 % against the Heuristic, against controls of **18.4 %** and **20.6 %** --
+so the belief itself moves about one decision in a hundred, and a rung indistinguishable from
+re-seeding cannot be worth much score whatever budget is spent looking for it.
+
 ### 26.7 `"soft"`: the void believed rather than enforced
 
 Since the assumption cannot be removed (26.2) and has no sound alternative on free play (26.6), the
@@ -1651,6 +1682,26 @@ Default `decay = 0.1`. Measured against `"voids"` over 2,400 DEV deals on an hon
 0.05 / 0.1 all sit inside noise at both seats while 0.25 costs -2.25 +- 1.05 at seat 0; among the
 indistinguishable settings the default takes the softest rather than the best-scoring one, since
 taking the argmax of four DEV configs is the winner's curse of section 25.
+
+**The decay swept against both columns' exact posteriors** (`uv run uno pimc decay [ruleset]
+[sets] [samples] [min_support] [decays]`), as the share of the uniform split's distance to each
+posterior that the rung closes, mean over seats:
+
+| rung | vs `rulebot` | vs `passer0.5` | worst column |
+|---|---|---|---|
+| `voids` (= `soft` 0) | **89.7 %** | 17.1 % | 17.1 % |
+| `soft` 0.05 | 73.4 % | 41.8 % | 41.8 % |
+| **`soft` 0.1** | 61.2 % | 59.2 % | **59.2 %** |
+| `soft` 0.2 | 44.9 % | **60.0 %** | 44.9 % |
+| `soft` 1 (= prior) | -0.2 % | -0.3 % | -0.3 % |
+
+`0.1` is essentially where the two columns cross, so the default is the **maximin** rung over the
+pair as well as the softest indistinguishable one -- two arguments that happen to agree. The
+section checks that the family reproduces its own endpoints end to end on the sampled rung (`soft`
+0 must match `voids`, `soft` 1 the uniform split), which is a stronger statement than the
+`_void_weight` identity `tests/eval/test_belief.py` pins. The criterion is printed as a choice:
+maximin suits a row that does not know which column it faces, and a row that does know should
+switch rungs rather than compromise.
 
 It never excludes the truth (0 %, where `"voids"` excludes it at 12.1 % against an opponent that
 keeps a playable drawn card and 68.5 % against one that draws holding one), never falls back (0 %

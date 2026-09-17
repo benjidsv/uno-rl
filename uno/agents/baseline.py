@@ -11,6 +11,7 @@ import random
 from collections import Counter
 from typing import Protocol
 
+from uno.game.engine import Phase
 from uno.game.observe import Observation
 from uno.game.rules import Kind, Play, Ruleset
 
@@ -118,6 +119,40 @@ class Heuristic:
 
         best = max(wild_key(ap) for ap in plays)
         return uniform(a for a, p in plays if wild_key((a, p)) == best)
+
+
+class KeepsDrawn:
+    """`PlayFirstRandom`, except it keeps a playable drawn card with probability `p`.
+
+    The opponent the `voids` belief assumes does not exist. That rung counts the cards drawn
+    *strictly after* a void, so it assumes a playable drawn card is played at once (docs/spec.md
+    section 26.2) -- true of every rulebot here, and not a rule: `draw_then_may_play` offers
+    exactly this choice at every `AFTER_DRAW`, and a `Pass` writes no public event, so nothing in
+    the history distinguishes "could not play" from "chose not to". An RL agent that learns to
+    hold a card would not decline it.
+
+    Lives here rather than in the tests because the closure test needs its *exact* posterior
+    (`uv run uno pimc closure TOY ... passer`), which means tabulating it on a compiled tree.
+    `p` is therefore part of `name`: a name identifies a policy (docs/spec.md section 13) and
+    `uno.store.load_or_tabulate` is keyed on it, so two `p` would otherwise share one cache file.
+    """
+
+    def __init__(self, rs: Ruleset, p: float = 0.5) -> None:
+        self.rs, self.p, self.inner = rs, p, PlayFirstRandom(rs)
+        self.name = f"passer{p:g}"
+        self._is_play = tuple(isinstance(a, Play) for a in rs.actions)
+
+    def policy(self, obs: Observation, legal: tuple[int, ...]) -> Policy:
+        if obs.phase is Phase.AFTER_DRAW:
+            plays = [a for a in legal if self._is_play[a]]
+            passes = [a for a in legal if not self._is_play[a]]
+            if plays and passes:
+                # The play mass keeps `PlayFirstRandom`'s own split over the drawn card's actions
+                # (a wild has one per colour), so the agent stays symmetric under renaming.
+                out = {a: self.p / len(passes) for a in passes}
+                out.update({a: (1.0 - self.p) * q for a, q in self.inner.policy(obs, tuple(plays)).items()})
+                return out
+        return self.inner.policy(obs, legal)
 
 
 class BySeat:

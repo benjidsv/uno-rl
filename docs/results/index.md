@@ -329,3 +329,54 @@ Paired: `voids - prior` **+2.27 (z +2.7) / +3.70 (z +4.2)**, `window - prior` **
 column and stays available as a ladder instrument, but it is unestablished at seat 1, costs 2.4x,
 and reads the opponent's policy -- so like the `response` continuation it makes the row
 opponent-specific, which rules it out of a general player whatever the score says.
+
+**The belief closed against the exact toys** ([09.5f](09.5f-results.md) sections 8.1 and 9.2,
+`uv run uno pimc closure TOY 20 4000 3 [rulebot|passer]`): total variation to the exact posterior
+on the full (non-symmetric) `TOY` world tree, 20 constrained sets per seat, 4,000 draws, seat 0 /
+seat 1. The **column is the opponent whose posterior is the target**, and it decides the ordering,
+because `voids` encodes an assumption about that opponent -- that a playable drawn card is played
+at once ([09.5f](09.5f-results.md) section 8.2). `passer0.5` is `uno.agents.baseline.KeepsDrawn`,
+a `PlayFirstRandom` that keeps a playable drawn card half the time.
+
+| belief | vs `rulebot` (assumption holds) | vs `passer0.5` (assumption false) |
+|---|---|---|
+| uniform split (`prior`) | 0.4325 / 0.4496 | 0.2502 / 0.2495 |
+| `voids` | **0.0502 / 0.0407** (88 / 91 % closed) | 0.2044 / 0.2099 (19 / 16 %) |
+| `soft`, decay 0.1 | 0.1838 / 0.1528 (58 / 66 %) | **0.0815 / 0.1208** (67 / 52 %) |
+| distance to close | 0.2939 / 0.3254 | 0.1275 / 0.1473 |
+| sampling noise | 0.0070 / 0.0041 | 0.0082 / 0.0052 |
+
+`voids` is the sharper belief against an honest column and near-worthless against one that keeps a
+playable drawn card; `soft` -- the same constraint weighted by `decay ** excess` instead of
+enforced -- is the better belief there and never puts zero on the truth. **`voids` stays the
+ladder default** (every ladder column is honest, and 8.3 shows it never contradicts them);
+**`soft` is the rung for a column that may not be.**
+
+**How much the two rungs actually differ** ([09.5f](09.5f-results.md) section 9.1,
+`uv run uno pimc divergence 300 32 2`): at w = 32 over 300 DEV deals `soft(0.1)` chooses a
+different action from `voids` at **19.5 %** of decisions against Random and **21.5 %** against the
+Heuristic -- against a **control** of 18.4 % / 20.6 %, which is what re-seeding the world sampler
+alone produces (a second `voids` under a different name, since `PimcSearch._rng` is keyed on it).
+The belief moves about one decision in a hundred, which is why no affordable score run separates
+the rungs against an honest column: the 2,400-deal DEV sweep of 8.8 was not under-powered, there
+is almost nothing there to separate.
+
+**The decay balance point** ([09.5f](09.5f-results.md) section 9.4, `uv run uno pimc decay TOY 20
+4000 3`): `soft`'s decay swept against **both** columns' exact posteriors, mean over seats, as the
+share of the uniform split's distance closed. `decay = 0` is `voids` and `decay = 1` is the prior,
+and the sweep reproduces both endpoints (a check of the section).
+
+| rung | vs `rulebot` | vs `passer0.5` | worst column |
+|---|---|---|---|
+| `voids` (= `soft` 0) | **89.7 %** | 17.1 % | 17.1 % |
+| `soft` 0.05 | 73.4 % | 41.8 % | 41.8 % |
+| **`soft` 0.1** | 61.2 % | 59.2 % | **59.2 %** |
+| `soft` 0.2 | 44.9 % | **60.0 %** | 44.9 % |
+| `soft` 0.5 | 18.3 % | 27.6 % | 18.3 % |
+| `soft` 1 (= prior) | -0.2 % | -0.3 % | -0.3 % |
+
+**0.1 is where the two columns cross**, so the default 8.8 chose as a robustness tie-break is also
+the maximin rung over the league. A row that knows its column should switch rungs instead of
+compromising (`voids` at 89.7 % against an honest one); 0.1 is the answer to "one rung, opponent
+unknown", which is what step 11 needs when an RL agent may or may not have learned to hold a
+playable drawn card.
