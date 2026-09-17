@@ -404,4 +404,93 @@ rescaling per cell, so those are not score points and nothing is ever selected o
 **`EVAL_SEEDS` (1,000,000-1,003,999) is spent**: steps 9.5d-9.5f chose the full-UNO working set on
 it, so it is block 00 of `uno.eval.seeds`, marked spent, and a new reported number claims a fresh
 block from `EVAL_POOL` `[10^6, 2 * 10^6)` instead. Every number on this page predates that and
-stands.
+stands. **Block 01** (1,004,000-1,007,999) is claimed by [step 10a.2](10a2-results.md) for the
+column-free PIMC row.
+
+## The training target and the exact policy gradient ([step 10a.2](10a2-results.md))
+
+`uno.eval.target.TRAINING` = **chance + opponent + deal, never the agent's own decisions**. The
+exclusion is measured, not argued: on a compiled tree the exact policy gradient and the exact
+mean of the sampled estimator are both available (`uno.compiled.gradient`).
+
+| claim | result |
+|---|---|
+| exact gradient vs a central finite difference of `evaluate` | max relative error 4.8e-11 |
+| every subset sparing the row, every value function: bias | max deviation 1e-17 (pre-decision corrections of 4.5e-2 against a gradient norm of 4.7e-2, cancelling in the centred form) |
+| the row correction with an exact V | the gradient is **exactly zero** |
+| the row correction with an approximate V | leaves 0.86 (`l1_set`, R² 0.55) or 0.085 (noise 0.1, R² 0.74) of it on `TOY` -- **not** ordered by R² |
+| sampled, 2,000 games, `TRAINING` | unbiased (z +0.56) at **0.370** of the raw gradient variance |
+| sampled, + the row correction | -0.000139 ± 0.000822 against an exact +0.047026 (z -112) |
+
+**Cost on `FULL_UNO`** (200 dev deals, 41.5 decisions/game): distinct value rows per game are
+**1** for the deal, 784 for chance, 995 for `TRAINING`, 1,015 for every correction, against the
+41.5 the step's own `V(s)` calls make. Timed per component: the step's V 0.57 ms/game against the
+shipped corrections' 41.9, of which **22.8 is the engine building sibling states**, 12.5
+row-at-a-time features (4.1 vectorised) and 4.5 the forward pass. So the corrections are **55x**
+the step's own value calls with the features vectorised, and 73 % of that floor is not the
+network. The deal correction alone is one row a game.
+
+## Shaping potentials and the deal floor by level ([step 10a.2](10a2-results.md))
+
+`Phi(s0) - E Phi` variance as a share of the raw outcome variance, heuristic vs random, seat 0 /
+seat 1. With no discount and `Phi(terminal) = 0` a game's shaping terms telescope to `-Phi(s0)`,
+so this *is* AIVAT's deal correction -- array-equal per game, not merely close.
+
+| ruleset | L1 (own hand) | L2 (both hands) | L3 (+ pile order) |
+|---|---|---|---|
+| `TOY` | 0.276 / 0.180 | **0.424 / 0.487** | 0.466 / 0.527 |
+| `TOY_FULL` | 0.276 / 0.180 | 0.424 / 0.487 | 0.466 / 0.527 |
+| `TOY2` | 0.209 / 0.126 | 0.387 / 0.413 | 0.500 / 0.501 |
+| `TOY2_SKIP` | 0.229 / 0.219 | 0.461 / 0.423 | 0.626 / 0.565 |
+
+The L2 column reproduces the exact no-deal ratio published in the AIVAT table above (`TOY` 0.42 /
+0.49). The ordering L1 <= L2 <= L3 is a theorem (each level is a conditional expectation of the
+next). Under **Nash self-play** the L2 floor is 0.67-0.71 and the L3 floor **0.86-0.96**: between
+equals almost the whole outcome is the deal. `TOY_FULL` matches `TOY` because neither rulebot
+ever draws voluntarily, so the two rulesets play out identically under that profile.
+
+## Exploitability of the belief rungs ([step 10a.2](10a2-results.md))
+
+`TOY`, full world tree, response continuation, exploitability in score points (row at seat 0 /
+seat 1). On the full tree PIMC takes a *pure* per-set action rather than an orbit played
+uniformly, so these rows are comparable with each other and **not** with the quotient rows above.
+
+| rung | vs random, score | exploitability | vs heuristic, score | exploitability | NashConv (vs heu) |
+|---|---|---|---|---|---|
+| `prior` | 0.7917 / 0.5440 | 1.36 / 1.35 | 0.7361 / 0.4238 | 1.35 / 1.35 | 2.71 |
+| `voids` | 0.7917 / 0.5445 | 1.36 / 1.50 | 0.7361 / 0.4238 | 1.35 / 1.50 | 2.86 |
+| `soft(0.1)` | 0.7917 / 0.5445 | 1.36 / 1.35 | 0.7361 / 0.4238 | 1.35 / 1.35 | 2.71 |
+| `posterior` | 0.7919 / 0.5491 | 1.61 / 0.83 | 0.7373 / 0.4329 | **3.12 / 7.82** | **10.94** |
+
+The rungs that ship read no policy *probabilities* and are nearly free in exploitability (one
+seat moves 1.35 -> 1.50); **full opponent-fitting costs 8.2 points of NashConv** against the
+Heuristic column. The rungs change the choice at 1,396-3,276 information sets while moving the
+score by at most 0.05 points.
+
+## A column-free full-UNO row ([step 10a.2](10a2-results.md))
+
+The first full-UNO row whose continuation and belief read **nothing** of the column's real
+policy: the continuation best-responds to a *fixed surrogate* (the Heuristic) and the belief is
+`voids`. Handed its own column as the surrogate it reproduces the `response` row's games
+**array-equal**. **EVAL block 01** (1,004,000-1,007,999), 4,000 deals, both seatings, w = 32,
+d = 2.
+
+| row | vs random, seat 0 / seat 1 | ms/game | vs heuristic, seat 0 / seat 1 | ms/game |
+|---|---|---|---|---|
+| **column-free: assume heuristic, `voids`** | **0.7690 / 0.7510** | 27.9 | **0.6425 / 0.6122** | 20.1 |
+| column-free: `minimax`, `voids` | 0.7285 / 0.7310 | 49.8 | 0.5787 / 0.5853 | 35.2 |
+| *instrument:* `response(column)`, `voids` | 0.7860 / 0.7685 | 29.5 | 0.6452 / 0.6208 | 19.1 |
+| the rulebot on the same deals | 0.6212 / 0.5845 | 0.5 | 0.4155 / 0.3787 | 0.5 |
+
+All ± 0.0065-0.0078. Paired on the deal: the column-free row **beats the Heuristic by 14.8 /
+16.7 points against Random and 22.7 / 23.4 against the Heuristic** (z > 15 at both seats), so
+it is a strong general player and the first full-UNO rung that could be *trained against*.
+Reading the column is worth only **+1.70 / +1.75 (z +2.1)** against Random and **+0.27 / +0.85
+(z +0.3 / +1.0)** against the Heuristic -- so 9.5e's +9.73 / +4.57 for the `response`
+continuation is mostly the value of best-responding to *something competent*, not to *this*
+opponent. Assuming a clairvoyant opponent instead costs 3.6-6.7 points (z 3.9-7.3), and
+`minimax` is also ~1.75x more expensive, since expectimax expands only the surrogate's support.
+
+**Cross-block check:** the instrument is the published working-set row, selected on the now-spent
+block 00 where it scored 0.7813 / 0.7603 against Random. On the fresh block 01 it gives 0.7860 ±
+0.0065 / 0.7685 ± 0.0067 -- consistent, so that selection did not materially inflate it.

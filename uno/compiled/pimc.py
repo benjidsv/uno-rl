@@ -160,14 +160,24 @@ def pimc_response(
     continuation: str = "minimax",
     completion: np.ndarray | None = None,
     level: Level | Keying = Level.L1,
+    b: np.ndarray | None = None,
 ) -> Pimc:
     """PIMC-infinity for `seat` against a fixed `opponent` on a world tree: the belief-weighted
     perfect-information argmax at every information set, played uniformly within the chosen
-    action orbit, then evaluated for what it is actually worth. See the module docstring."""
+    action orbit, then evaluated for what it is actually worth. See the module docstring.
+
+    `b`: an explicit (n,) belief over the worlds at each node, instead of one of the two
+    `WEIGHTINGS`. Step 10a.2 item A5b passes the *sampled rungs'* own beliefs here
+    (`uno.compiled.rungs.rung_belief`: `voids`, `soft`), so that they are measured on this
+    same axis rather than through a parallel implementation; `weighting` is then only the
+    label the result carries."""
     t0 = time.perf_counter()
     k = tree.keying_of(level)
     av, believed = world_values(tree, opponent, seat, continuation)
-    b = belief(tree, opponent, seat, weighting)
+    if b is None:
+        b = belief(tree, opponent, seat, weighting)
+    elif len(b) != tree.n:
+        raise ValueError(f"an explicit belief must have one weight per node ({len(b)} for {tree.n} nodes)")
 
     mine = np.nonzero(tree.arc_player == seat)[0]
     ia = k.arc_ia[mine]
@@ -328,13 +338,17 @@ def pimc_row(
     continuation: str = "minimax",
     completion: np.ndarray | None = None,
     level: Level | Keying = Level.L1,
+    b: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> tuple[Strategy, tuple[Pimc, Pimc]]:
     """The ladder's "PIMC(opponent)" row agent: both seats' PIMC-infinity policies as one
     strategy over the keying, and the two results. Mirrors `uno.compiled.strategies.br_row`,
-    so the row can be handed to `best_response` for its exploitability."""
+    so the row can be handed to `best_response` for its exploitability.
+
+    `b`: the two seats' explicit beliefs (`pimc_response`'s own `b`). A belief is per seat,
+    since what a player can rule out depends on which draws were the *opponent's*."""
     ps = (
-        pimc_response(tree, opponent, 0, weighting, continuation, completion, level),
-        pimc_response(tree, opponent, 1, weighting, continuation, completion, level),
+        pimc_response(tree, opponent, 0, weighting, continuation, completion, level, None if b is None else b[0]),
+        pimc_response(tree, opponent, 1, weighting, continuation, completion, level, None if b is None else b[1]),
     )
     k = tree.keying_of(level)
     sigma = np.where(k.info_player[k.ia_info] == 0, ps[0].sigma, ps[1].sigma)

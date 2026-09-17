@@ -1182,6 +1182,71 @@ follow in 10a.2.
 - Batched float64 agrees to **one ulp, not bit for bit** (BLAS picks its kernel by row
   count) -- 5.21's lesson, reproduced exactly where that section said it would be.
 
+### 5.23 Step 10a.2: the training target, and a cost that refuted the plan for it
+
+**Problem:** 10a fixed what gets measured about a checkpoint; this fixes what a checkpoint is
+*trained on*, plus the two ladder rows and the shaping artifacts that were designs rather than
+files (`docs/results/10a2-results.md`).
+
+- **The training target** (`uno.eval.target.TRAINING`, spec section 28): chance + opponent +
+  deal, **never the agent's own decisions**. The argument was in the brainstorm; what is new
+  is that it is a *measurement*. On a compiled tree the exact policy gradient of a tabulated
+  policy is available, and so is the **exact mean of the sampled estimator under any subset of
+  corrections**, so the bias is a number: 1e-17 for every subset sparing the row, and with an
+  exact V the row correction drives the gradient to **identically zero**. Sampled over 2,000
+  games the kept subset is unbiased (z +0.56) and removes **63 %** of the gradient variance.
+- **The parameterisation is the whole argument.** The score-function estimator estimates the
+  *logit* gradient, and a corrected return puts everything the corrections collected *before*
+  the decision into a per-set constant. Those pre-decision terms are the same size as the
+  gradient itself (4.5e-2 against a norm of 4.7e-2) and cancel only in the centred form. An
+  unbiasedness claim about "the corrected return" without saying which parameterisation is a
+  claim about nothing.
+- **With an approximate V the row correction is not safe either, and R² does not say how
+  unsafe.** A coarser V (R² 0.55) leaves 86 % of the gradient; a better one (R² 0.74) leaves
+  8.5 %. This is 5.16's "R² does not carry" one level up.
+- **The shaping potentials** (spec section 29) are emitted per level, and the identity they
+  exist for holds exactly: read off played games, the **L2 deal potential's term is AIVAT's
+  deal correction array-equal**. The deal floor by level is 0.28/0.18 (L1), 0.42/0.49 (L2),
+  0.47/0.53 (L3) on `TOY`, and **0.86-0.96 at L3 under Nash self-play** -- between equals
+  almost the whole outcome is the deal.
+- **The belief rungs' exploitability** (spec section 30): the rungs that ship cost almost
+  nothing (one seat 1.35 -> 1.50), while full opponent-fitting costs **8.2 points of NashConv**
+  against the Heuristic column. They change the policy at thousands of sets and the score by
+  at most 0.05 points, which is 5.20's "toy games are too short" measured rather than inferred.
+- **A column-free full-UNO row exists and is strong** (spec section 30, EVAL block 01): the
+  continuation best-responds to a *fixed surrogate* (the Heuristic) and the belief is `voids`,
+  so nothing it does depends on who it faces. It beats the rulebot by **14.8 / 16.7** points
+  against Random and **22.7 / 23.4** against the Heuristic, at both seats, z > 15 -- the first
+  full-UNO rung that could legitimately be *trained against*. Handed its own column as the
+  surrogate it reproduces the `response` row's games array-equal, which is what makes it a
+  measurement of that row rather than a new agent.
+
+**What it taught:**
+
+- **"It batches" is not a cost estimate.** The brainstorm's reason to expect AIVAT to be
+  affordable in a training loop was that the siblings batch. Their *values* do; the sibling
+  **states** have to be built by the engine, and that is 73 % of the floor. The corrections
+  cost **55x** the step's own `V(s)` calls with the features vectorised. The actionable half:
+  the deal correction is **one row a game**, and it is the one that removes the deal floor.
+- **A z needs a central limit, and a sparse projection has none.** A per-orbit projection
+  visited **once in 200 games** reported a confident z of -5.86 for a provably unbiased
+  subset (23 visits: -1.18; 232: -1.13). Fixed by choosing the projection among reached sets
+  and refusing to check a z below 30 contributing games.
+- **A check that passes on identically zero quantities is not a check.** The first
+  finite-difference test of the exact gradient compared twelve orbits whose gradient is zero
+  by construction -- single-orbit sets, which carry most of the reach. 5.19's vacuous-test
+  lesson, met again while building the instrument meant to prevent it.
+- **Reading the opponent was worth much less than the ladder implied.** The instrument's
+  advantage over the column-free row is **+1.70 / +1.75 (z +2.1)** against Random -- indicated,
+  not established -- and **+0.27 / +0.85** against the Heuristic, i.e. nothing. 5.19 read the
+  `response` continuation's +9.73 / +4.57 as the value of best-responding *to the column*; it
+  is mostly the value of best-responding to **something competent**, and assuming a clairvoyant
+  opponent instead (`minimax`) is what costs the points (3.6-6.7, z 3.9-7.3, both seats).
+- **The first number ever scored on unspent full-UNO seeds agreed with the spent ones.** The
+  working-set row scored 0.7813 / 0.7603 on block 00, where it was *selected*; on the fresh
+  block 01 it gives 0.7860 / 0.7685. The selection did not materially inflate it -- which is
+  reassuring rather than guaranteed, and is why 5.22 kept the blocks apart in the first place.
+
 ## 6. Results: what we know
 
 All exact unless marked sampled. Scores of the first-named player, seat 0 /
@@ -1466,6 +1531,12 @@ Kept because they show where this kind of analysis goes wrong.
 | (10a, first draft of the results) `batch_l1_observations` is 3.0-3.7x | those were the scratchpad prototype's numbers; the shipped function also rebuilds the discard pile per set (0.3-0.6 us), so it is 2.6-3.0x. Measuring the prototype and shipping the function is how a speed-up quietly becomes a smaller one (step 10a) |
 | (8.7, and section 6.4 / `index.md` since) the Heuristic's `TOY2` seat-1 exploitability is 11.8 | **11.7** (11.7480). The published figure was the difference of two *rounded* values -- BR L1 0.6959 minus Nash 0.5784 is 0.1175 exactly, which rounds up, where the doubles give 0.69587054 - 0.57839081. Double rounding, and only on the one cell that lands on a boundary. Found by the report card on its first run against a ruleset it was not developed on (step 10a) |
 | (10a, during the build) that 11.8 / 11.7 disagreement is the checker's banker's rounding | no: the value really is 11.748 and really does display as 11.7. Diagnosed from a 2-decimal print that showed "11.75", which was itself rounded -- the same double-rounding mistake, made one level up while investigating it (step 10a) |
+| (10 brainstorm, A4) "the **L3** deal potential equals AIVAT's deal correction term on the same seeds" | it is the **L2** potential that equals it, array-equal per game -- AIVAT's value function may not read the pile order (section 23). The L3 potential has the same mean and a *larger* variance (0.47 / 0.53 against 0.42 / 0.49 on `TOY`), and is admissible for the deal term alone, where more information is strictly better (step 10a.2) |
+| (10 brainstorm, 5.2) the corrections may be affordable in a training loop because "the siblings the corrections need **batch**" | their *values* batch; the sibling **states** must be built by the engine first, and that is 73 % of the floor. Measured on `FULL_UNO`: 55x the step's own `V(s)` calls with the features vectorised, 73x as shipped. The deal correction alone is one row a game (step 10a.2) |
+| (`plan.md`, from the start) the shaping potential "should be a function of the agent's own information set (an L1 value)", since an L2/L3 potential adds noise the agent cannot condition on | right for a per-step shaping reward, wrong for the **deal** term, which is subtracted from every return and does not depend on the action at all. The L1 potential removes 0.28 / 0.18 of the outcome variance where L2 removes 0.42 / 0.49 and L3 0.47 / 0.53 (step 10a.2) |
+| (10a.2, during the build) a z of -5.86 against the exact gradient for a subset that is provably unbiased, read as a bias | the projection was onto an orbit whose set was visited **once in 200 games**; the sample standard error of a statistic non-zero in one game is not evidence. 23 visits give z -1.18 and 232 give -1.13. Now the projection is chosen among reached sets and no z is checked below 30 contributing games (step 10a.2) |
+| (9.5e) the `response` continuation is worth +9.73 / +4.57 because each world is solved as a best response to **the column's** known policy, which is what makes the row opponent-specific | the gap over two-sided minimax is real and reproduces (+5.75 / +3.75 with `voids` on both sides, z +6.6 / +4.4), but almost none of it needs the column: a row best-responding to a **fixed surrogate** it never varies collects it, and the instrument's advantage over that row is only +1.70 / +1.75 (z +2.1) against Random and +0.27 / +0.85 against the Heuristic. What the continuation buys is assuming a *competent* opponent rather than a clairvoyant one, not assuming *this* one (step 10a.2) |
+| (10a.2, during the build) the exact gradient's finite-difference check passes | it passed on twelve orbits whose gradient is **identically zero** -- single-orbit sets, where `sigma == 1` and there is nothing to differentiate, and they carry most of the reach so ranking by reach selects exactly them. Also: requiring *full support* on the set leaves nothing to check at all on a free-play ruleset, where `PlayFirstRandom` puts zero on `Draw`; only the perturbed orbit needs positive probability (step 10a.2) |
 
 ## 8. Dead ends and things deliberately not done
 

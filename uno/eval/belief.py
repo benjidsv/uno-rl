@@ -157,6 +157,29 @@ def satisfies(rs: Ruleset, hand, vs: list[Void]) -> bool:
     return True
 
 
+def void_weight(rs: Ruleset, hand, vs: list[Void], decay: float) -> float:
+    """How much a hand is believed given the voids: `decay ** excess` per constraint, where
+    `excess` is how many more cards are playable against that board than the opponent has
+    drawn since. A satisfied void contributes 1.0, so a hand `"voids"` would have accepted
+    is unweighted and the rung only differs on the hands `"voids"` would have thrown away.
+
+    `decay = 0` reproduces `satisfies` (a hard filter) and `decay = 1` the uniform prior, so
+    this one function spans both rungs. Module-level rather than a method because the *exact*
+    side needs it too: `uno.compiled.rungs` weights a toy world tree's worlds with it, and a
+    closure test that reimplemented the arithmetic there would be checking a copy of the rung
+    rather than the rung (docs/spec.md section 30)."""
+    table = playable_table(rs)
+    w = 1.0
+    for v in vs:
+        playable = table[v.top][v.colour]
+        # `satisfies` may stop at the first card past the budget; this needs the *size* of the
+        # overshoot, not just whether there is one, so it counts the hand out.
+        excess = sum(1 for c in hand if c in playable) - v.since
+        if excess > 0:
+            w *= decay**excess
+    return w
+
+
 def trailing_window(rs: Ruleset, public: tuple, opp: int) -> list[tuple[int, int, int, int]]:
     """The opponent's trailing run of plays with no draw of theirs in between, oldest first, as
     `(action's card, chosen colour, board top, board colour)`.
@@ -304,20 +327,8 @@ class Belief:
         return cands[-1]
 
     def _void_weight(self, hand: tuple[int, ...], vs: list[Void]) -> float:
-        """How much a hand is believed given the voids: `decay ** excess` per constraint, where
-        `excess` is how many more cards are playable against that board than the opponent has
-        drawn since. A satisfied void contributes 1.0, so a hand `"voids"` would have accepted is
-        unweighted and the rung only differs on the hands `"voids"` would have thrown away."""
-        table = playable_table(self.rs)
-        w = 1.0
-        for v in vs:
-            playable = table[v.top][v.colour]
-            # `satisfies` may stop at the first card past the budget; this needs the *size* of the
-            # overshoot, not just whether there is one, so it counts the hand out.
-            excess = sum(1 for c in hand if c in playable) - v.since
-            if excess > 0:
-                w *= self.decay**excess
-        return w
+        """This instance's `void_weight` (module level, so the exact side uses the same one)."""
+        return void_weight(self.rs, hand, vs, self.decay)
 
     def _constraints(self, obs: Observation, opp: int) -> tuple[list[Void], list]:
         """`(voids, trailing window)` for this decision, derived once per public history."""

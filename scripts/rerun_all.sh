@@ -63,6 +63,14 @@ report_TOY_heuristic  1  uv run uno report TOY heuristic
 report_TOY_random     1  uv run uno report TOY random
 report_TOY2_heuristic 2  uv run uno report TOY2 heuristic
 report_TOY2_SKIP      3  uv run uno report TOY2_SKIP heuristic
+target_TOY            2  uv run uno target TOY
+target_TOY_FULL       2  uv run uno target TOY_FULL 1000 1000 0
+shaping_TOY           1  uv run uno shaping TOY
+shaping_TOY_FULL      1  uv run uno shaping TOY_FULL
+shaping_TOY2          2  uv run uno shaping TOY2
+shaping_TOY2_SKIP     3  uv run uno shaping TOY2_SKIP
+rungs_TOY             4  uv run uno rungs TOY
+colfree              45  uv run uno colfree
 memory_TOY            1  uv run uno memory TOY 20
 memory_TOY_FULL       1  uv run uno memory TOY_FULL 20
 memory_TOY2           1  uv run uno memory TOY2 20
@@ -133,7 +141,7 @@ report() {  # report <how the run ended>
             t="$out/$(tag "$j").timings"
             [ -s "$t" ] && sed 's/^\[[0-9:]*\] /      /' "$t"
         done
-        checks=$(ls "$out"/*validate*.log "$out"/*robustness*.log "$out"/*pairing*.log "$out"/*edge*.log "$out"/*memory*.log "$out"/*deal_model*.log "$out"/*aivat*.log "$out"/*pimc_value*.log "$out"/*report*.log 2> /dev/null)
+        checks=$(ls "$out"/*validate*.log "$out"/*robustness*.log "$out"/*pairing*.log "$out"/*edge*.log "$out"/*memory*.log "$out"/*deal_model*.log "$out"/*aivat*.log "$out"/*pimc_value*.log "$out"/*report*.log "$out"/*target*.log "$out"/*shaping*.log "$out"/*rungs*.log "$out"/*colfree*.log 2> /dev/null)
         if [ -n "$checks" ]; then
             echo
             grep -H "failed checks" $checks | sed "s|$out/||"

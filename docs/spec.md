@@ -1778,3 +1778,186 @@ The card is its own regression test: for the agents whose values are published
 (`docs/results/index.md`) every printed number must reproduce them **to the digit**, which is the
 step 9.5f device. On a toy every cell is exact and no deals are spent; a full-UNO card claims a
 fresh block from 27.1 rather than re-spending block 00.
+
+## 28. The training target and the exact policy gradient (`uno/eval/target.py`, `uno/compiled/gradient.py`)
+
+Step 10a.2, item A6. Step 11's objective is a policy gradient; step 10 decides which of
+AIVAT's corrections may appear in the return it is taken of.
+
+**The declaration** (`uno.eval.target.TRAINING`): **chance + opponent + deal, never the
+row**. `corrected_return(terms, seat)` is the one function step 11 calls; it raises if handed
+a `Corrections` with `row=True`. No new estimator -- 9.5b built AIVAT as per-game records so
+that any subset is one subtraction, so the target is a subset selection over machinery
+already validated against the exact toys. Chance is luck the agent cannot influence;
+the opponent's policy is ours exactly in a league and *is* us in self-play; the deal term is
+D5's shaping potential (section 29). The row correction is excluded because with an exact V
+it *is* `Q(s, a) - V(s)`, so subtracting it removes the only part of the return that depends
+on the action. An evaluator needs an unbiased **mean**, an objective an unbiased **gradient**.
+
+**The parameterisation is what makes this true, and it is the one PPO uses.** The gradient
+with respect to the *probabilities* is `dJ/dsigma(I, a) = sum over the histories of I of
+rho(h) Q(h, a)` (full reach, so CFR's regret term with the learner's own reach left in). The
+score-function estimator `(1{a taken} - sigma(a)) * G` estimates the **logit** gradient,
+`sigma(a) [dJ/dsigma(I, a) - sum_a' sigma(a') dJ/dsigma(I, a')]`. The two differ by a per-set
+constant, and a corrected return puts into that constant everything the corrections collected
+*before* the decision (the deal term, the earlier chance and opponent terms). Those cancel in
+the centred form and not in the raw one. `estimator_mean` computes both and the `prefix` field
+carries the pre-decision part, so the cancellation is measured rather than asserted: on `TOY`
+the prefix reaches 4.5e-2 against a gradient norm of 4.7e-2 and the centred deviation is
+**8.7e-18**.
+
+On a quotient tree the parameters are the **orbits** (a symmetric strategy is uniform within
+one, section 18), and `d J / d theta(orbit)` is the orbit *sum* of the per-action vector
+(`orbit_gradient`). The exact gradient is already constant within an orbit; a sampled one is
+not, and reducing both the same way compares like with like.
+
+**`finite_difference`** differentiates `evaluate` numerically over a set's **support**: an
+action at probability zero is a logit at minus infinity and stays there. Demanding full
+support instead leaves nothing to check on a free-play ruleset, where `PlayFirstRandom` puts
+zero on `Draw` wherever a play exists.
+
+**The sampled side** (`uno.eval.target`): `Decisions` is the flat table of the learner's own
+decisions (game, information set, set-action taken, signal); `sampled_gradient` is two
+`bincount`s over it (the indicator scatters the signal, the baseline spreads each set's
+signal over its actions in proportion to `sigma`), and `per_game` gives one projection per
+game so that a projection has a standard error. `own_decisions` reads the set and set-action
+through the same `NodeIndex` AIVAT's value model uses, and takes the set-action from
+`arc_ia`, never from an arc's position under its node.
+
+Checks (`tests/eval/test_target.py`, `uv run uno target`):
+
+- the exact gradient against a central finite difference, max relative error 4.8e-11;
+- it sums to zero over every set (a direction inside the simplex);
+- for **every** subset sparing the row and **every** value function, the estimator's exact
+  mean equals the exact gradient (max deviation 1e-17) while the prefix corrections are large;
+- with the row correction and an exact V the gradient is **exactly zero** (`|mean| / |exact|`
+  prints 0.000000); with an approximate V it is not -- `l1_set_values` leaves 0.86 of it on
+  `TOY` and 0.41 on `TOY_FULL`, a V with noise 0.1 leaves 0.085 and 0.14 -- so how much credit
+  signal the row correction destroys is **not** predicted by outcome R², which is 9.5b's "R²
+  does not carry" one level over;
+- sampled, 2,000 games: the kept subsets sit within 3 sigma of the exact gradient and
+  `TRAINING` holds 0.37-0.42 of the raw gradient variance, while the row-corrected estimate is
+  zero to its own standard error (-0.000139 ± 0.000822 against an exact +0.047026, z -112).
+
+**A z needs a central limit.** The projection onto one orbit's component is zero in every
+game that does not visit that set. Picked by largest gradient alone, the orbit was visited
+**once in 200 games** and reported a confident z of -5.86 for a provably unbiased subset (23
+visits at 2,000 games: z -1.18; 232 at 20,000: -1.13). So the projection orbit is chosen among
+sets the profile reaches (`REACH_FLOOR`) and a z is only checked above `MIN_VISITS = 30`
+contributing games; below it the row prints `..`.
+
+**Cost, measured in the training regime and not inherited from 9.5c.** On `FULL_UNO`, per
+game of 41.5 decisions, the distinct value rows each subset needs: **deal 1**, chance 784,
+`TRAINING` 995, every correction 1,015 -- against the 41.5 rows the step's own `V(s)` calls
+make. Timed per component (never by differencing a total): the step's own V 0.57 ms/game, the
+shipped corrections 41.9, of which **building the sibling states 22.8** (engine work that
+does not batch), row-at-a-time features 12.5 (4.1 vectorised, 3.0x) and the forward pass 4.5.
+So the corrections cost **55x** the step's own V calls even with the features vectorised, and
+73 % of that floor is the engine, not the network. The actionable consequence for step 11: the
+**deal** correction is one row a game and nearly free, and it is the one that removes the deal
+floor (section 29); chance and opponent are the expensive pair.
+
+## 29. Shaping potentials (`uno/eval/shaping.py`)
+
+Step 10a.2, item A4; D5 of the step 9 review. Potential-based shaping replaces a
+transition's reward by `r + gamma Phi(s') - Phi(s)`, which leaves the optimal policy unchanged
+for any `Phi` (Ng, Harada & Russell 1999). This project has no discount and one reward, at the
+terminal, so with **`Phi(terminal) = 0`** a game's shaping terms telescope to `-Phi(s0)`: a
+shaped return is the plain return minus `Phi(s0)`, which is exactly what AIVAT's deal
+correction subtracts when its value function is that same `Phi`. **The control variate and the
+shaping potential are one object**, which is why section 28's target lists the deal correction
+and D5's shaping term as one entry.
+
+`Phi(terminal) = 0` is therefore load-bearing, and it is the only place a potential differs
+from the value function under it: `potential` zeroes the terminals, `values` keeps the terminal
+returns (what the exact-critic arm of the D6 ablation wants), and the two are array-equal
+everywhere else. `set_potential` gives the per-information-set table a learner reads.
+
+Three levels of information, each the profile's own value function read at that level: **L1**
+(the reach-weighted mean over the mover's own set -- what the agent could compute itself),
+**L2** (the node's own value: both hands, never the pile order, the finest a value function may
+read, section 23) and **L3** (a world value, pile order included). L3 is inadmissible as
+AIVAT's `nu` for the *chance* corrections, but perfectly admissible for the **deal term
+alone**, which needs only a mean over deals -- and it removes strictly more luck.
+
+Each level is a conditional expectation of the next, so the tower property **orders** the deal
+term's variance: L1 <= L2 <= L3. A violation means a potential is not the conditional
+expectation it claims to be.
+
+Measured (`uv run uno shaping`, `Phi(s0) - E Phi` variance as a share of the raw outcome
+variance -- 9.5c's **deal floor**), heuristic vs random, seat 0 / seat 1:
+
+| ruleset | L1 | L2 | L3 |
+|---|---|---|---|
+| `TOY` | 0.276 / 0.180 | **0.424 / 0.487** | 0.466 / 0.527 |
+| `TOY2` | 0.209 / 0.126 | 0.387 / 0.413 | 0.500 / 0.501 |
+| `TOY2_SKIP` | 0.229 / 0.219 | 0.461 / 0.423 | 0.626 / 0.565 |
+
+Under **Nash self-play** the L2 floor is 0.67-0.71 and the L3 floor 0.86-0.96: between equals,
+almost the whole outcome is the deal. `TOY_FULL` reproduces `TOY`'s row to the digit, because
+neither rulebot ever draws voluntarily and the two rulesets then play out identically
+(section 26.2 records the same coincidence).
+
+Checks (`tests/eval/test_shaping.py`, `uv run uno shaping`): `Phi(terminal) = 0` at every
+level; the deal term is centred; the L2 deal term's variance equals `aivat_moments`' own
+"every correction but the deal" variance, and on `TOY` reproduces the published 0.42 / 0.49;
+the variance ordering above; and the identity the item exists for -- read off played games, the
+L2 deal potential's per-game term is AIVAT's deal correction **array-equal**.
+
+## 30. The belief rungs, exactly, and a column-free row (`uno/compiled/rungs.py`, `uno/experiments/colfree.py`)
+
+Step 10a.2, item A5.
+
+**(b) What the shipped rungs are worth, and what they cost in exploitability.** 9.5f closed
+`voids` and `soft` against the exact toy posterior as *distributions over hands* and never
+asked what an agent playing them is worth or how exploitable it is -- and the toys' warning is
+that fitting a belief to one opponent *costs* exploitability. `rung_belief` builds a rung's
+belief as a weight per world out of `uno.eval.belief`'s own `voids` / `satisfies` /
+`void_weight` (the shipped arithmetic, not a transcription of it), and
+`pimc_response(..., b=...)` takes it, so the rungs join the existing belief axis instead of
+forming a parallel one.
+
+It needs the **full** world tree: on a quotient each member world carries its own
+canonicalising element, so an opponent hand decoded from its L3 key is in that member's
+coordinates rather than the set's -- the trap section 25 documents for arcs. Two consequences
+travel with the numbers: the choice is a *pure* per-set action rather than an orbit played
+uniformly (a genuinely different policy, section 25), so `prior` and `posterior` are recomputed
+there rather than quoted from the quotient; and only `TOY` and `TOY_FULL` have such a tree.
+
+Measured on `TOY` (`uv run uno rungs`, response continuation, exploitability in score points,
+row at seat 0 / seat 1):
+
+| rung | vs random, score | exploitability | vs heuristic, score | exploitability |
+|---|---|---|---|---|
+| `prior` | 0.7917 / 0.5440 | 1.36 / 1.35 | 0.7361 / 0.4238 | 1.35 / 1.35 |
+| `voids` | 0.7917 / 0.5445 | 1.36 / 1.50 | 0.7361 / 0.4238 | 1.35 / 1.50 |
+| `soft(0.1)` | 0.7917 / 0.5445 | 1.36 / 1.35 | 0.7361 / 0.4238 | 1.35 / 1.35 |
+| `posterior` | 0.7919 / 0.5491 | 1.61 / 0.83 | 0.7373 / 0.4329 | **3.12 / 7.82** |
+
+The answer the item exists for: the rungs that ship are nearly free in exploitability (one seat
+moves 1.35 -> 1.50), while **full opponent-fitting costs 8.2 points of NashConv against the
+Heuristic column** (10.94 against `prior`'s 2.71) -- the published quotient warning's ordering,
+reproduced on the full tree. The rungs change the choice at 1,396-3,276 sets while moving the
+score by at most 0.05 points, which is 9.5f's "toy games are too short for the constraint to
+pay", now measured as a policy difference rather than inferred from a score.
+
+Checks: the family reproduces its own endpoints -- `soft(0)` *is* `voids` and `soft(1)` *is*
+the prior, array-equal as beliefs and as policies; `rung_belief("prior")` reproduces
+`uno.compiled.pimc.belief(..., "prior")`; `voids` and `soft` only ever remove mass and `soft`
+never zeroes a world the prior allowed; every policy is a distribution and sits at or below
+BR L1; a quotient tree and the `window` rung (which reads action probabilities) are refused;
+and the rungs must differ from the prior *somewhere*, or the exploitability table is vacuous.
+
+**(a) A column-free row on full UNO.** Both levers behind the ladder's PIMC points read the
+column's real policy (`response`, `window`), so that row is an instrument, not a player. A
+column-free row fixes its assumptions in advance: the continuation best-responds to a **fixed
+surrogate** (the Heuristic) or assumes a clairvoyant opponent (`minimax`), and the belief is
+`voids`, which reads no policy *probabilities* -- not assumption-free (it assumes a playable
+drawn card is played at once, section 26.2), but the assumption is a property of the row rather
+than a reading of the column. `window` is excluded by construction whatever it scores.
+
+The check: handed its own column as the surrogate, the column-free row **is** the `response`
+row. Since a name identifies a policy (section 13) and the two constructions are one policy,
+they share a name and therefore a world-sampling stream, so the per-game scores must be
+**array-equal** -- which they are, at both columns. Reported on **EVAL block 01**; block 00 is
+spent (section 27.1).

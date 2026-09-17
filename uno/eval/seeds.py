@@ -76,6 +76,15 @@ REGISTRY: dict[str, Block] = {
             "on 3,000-4,000-deal runs over it",
             spent=True,
         ),
+        Block(
+            "01",
+            1_004_000,
+            1_008_000,
+            "10a.2",
+            "the column-free PIMC row on FULL_UNO (item A5a): the first full-UNO row whose "
+            "continuation and belief read nothing of the column's real policy, against the "
+            "`response` row it must reproduce when handed its own column",
+        ),
     )
 }
 
