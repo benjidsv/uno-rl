@@ -1,5 +1,13 @@
 # UNO RL v5: project context
 
+**Planning update, 2026-09-17:** work through 10a.2 is complete. The accepted
+sequence now inserts **10a.3** (repair the coarse-memory evidence, specify learner
+observation arms, and calibrate LBR) before **10B → 10C → Step 11**. See
+[the execution plan](10-to-11-plan.md) for scope and exit criteria and
+[the review](results/10-review.md) for the reproduced K1 measurability problem.
+These changes are planned, not implemented; older status and memory-sufficiency
+claims below must be read with this update.
+
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
