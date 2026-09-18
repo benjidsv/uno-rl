@@ -8,7 +8,10 @@ instrument** is built and calibrated (10a.3C, [spec section 32](spec.md),
 [results](results/10a3c-results.md)). **10B → 10C → Step 11** follow. See
 [the execution plan](10-to-11-plan.md), [the review](results/10-review.md), and
 [the repair results](results/10a3a-results.md). Older memory-sufficiency claims
-below must be read with this update.
+below must be read with this update. A side diagnostic of the same day, **9.5g**
+(section 5.26, [results](results/09.5g-results.md)), declines a proposal to replace
+PIMC's uniform world sampling and leaves one fact behind that 10C should carry:
+PIMC's *action choice* at the working set is ~12 % noisy while its *score* is flat.
 
 The project now has a luck-free quality measure that does not need an exact tree:
 an attack's achieved score bounds NashConv from below (`NashConv >= b0 + b1 - 1`),
@@ -1370,6 +1373,73 @@ not a safety claim. Results: `docs/results/10a3c-results.md`.
   where the searches reach 91-97 %, and it is the only family that returns a *negative* bound against
   a genuinely flawed target. Keeping a family that visibly fails is what stops one attack's blind spot
   from being read as a property of the target.
+
+### 5.26 Step 9.5g: where the world budget goes (a proposal, measured and mostly declined)
+
+**The proposal.** PIMC samples worlds uniformly from the belief. A person does not: they imagine
+the few worlds that *matter* ("what if he has a +2?") and weigh them by how likely they are ("but
+only one is left and he already had three"), where uniform sampling spends most of its budget on
+worlds that are technically distinct and informationally identical. Should PIMC do that instead?
+
+The complaint splits in two, and only one half was unbuilt. *Weighting by likelihood* is the
+belief, built in 9.5f and worth +2.83 / +4.40. *Not distinguishing worlds that make no difference*
+is a **stratified (Rao-Blackwellised)** sampler -- bucket the belief by a statistic of the hidden
+hand, take the bucket probabilities exactly from the belief, sample within buckets -- and its gain
+is precisely the share of the per-world variance the statistic explains. That makes the proposal
+a measurement, not an argument, which is why it got a step.
+
+**Technique** (`uv run uno pimc concentration`, `uno/experiments/pimc.py`): record, at every
+decision the agent faces, the full `(worlds, legal)` matrix it really averaged -- `_Probe`
+records inside `_worlds_q` and inherits `policy` untouched, and is checked to replay a plain
+`PimcSearch` action for action first. Then a **nested design** at every 10th decision: 16 hands
+from the belief x 8 orders of the cards left over, which separates the two things a "world" is.
+Every variance share is a plug-in ratio, so every one is reported against a **permutation control**
+on the same grouping.
+
+**What it found** (400 DEV deals, w = 128, d = 2, `voids`, both columns, which agree to a decimal):
+
+- **The worlds disagree almost everywhere**: 3.59 distinct per-world argmaxes out of 4.49 legal
+  actions, only **6.6 %** of decisions unanimous. The first hypothesis -- that the budget is spent
+  confirming a foregone conclusion -- is simply false.
+- **The hand carries 46.8 % of the per-world spread and the pile order the other 53 %.** So the
+  proposal's premise is right and bounded: a *perfect* hand abstraction is worth **1.88x** the
+  effective world count, **2.14x** if allocation is optimised (Neyman) as well as stratified.
+- **That ceiling is one score point.** 9.5f measured doubling the worlds under `voids` at
+  +1.20 / +0.77, z 1.1 / 0.7 -- unestablished. The entire idea is capped at a step the project
+  already could not resolve, and establishing it would cost a fresh `EVAL_SEEDS` block.
+- **The statistics a person would name recover 39-42 % of the ceiling**, so ~1.25x in practice.
+  And **the motivating example is the worst feature measured**: "holds a +2 / a +4" explains
+  2-3 % of the spread (4-7 % of the ceiling), against 12-13 % for dull counts -- how many of his
+  cards play at all, how many are in the colour. What makes a world matter to this agent is how
+  many outs the opponent has, not which frightening card he holds.
+
+**What it taught, beyond the verdict:**
+
+- **PIMC's decisions are far noisier than its score.** The shipped w = 32 names a different action
+  from w = 128 at **12.2 %** of decisions, and two *disjoint* 64-world halves of one decision agree
+  only **85.6 %** of the time -- while the score ladder is flat past w = 32. Both are true because
+  the churn is between near-equal actions. 9.5f's working set stands, but "the ladder is flat"
+  must never be read as "the agent has converged", and anything that reads PIMC's *action choices*
+  as a signal (an attribution, a distillation target for 10C) is reading a 12 %-noisy one.
+- **The one lever worth having is adaptive stopping, not better worlds.** Racing the candidate
+  actions and stopping when the leader's t-statistic clears 3 uses a mean of 61 worlds and
+  reproduces the w = 128 answer **98.1 %** of the time, where flat w = 32 reproduces it 87.8 %.
+  That is w = 128 decision quality at ~1.9x the w = 32 cost instead of 4x, for a dozen lines on
+  `_scores`. Not built -- it is off the 10 -> 11 path -- but it is the finding to spend on if PIMC
+  is ever re-opened.
+- **A control is what makes a variance share readable.** Every R2 here is upward biased by
+  roughly (groups - 1) / (worlds - 1); the hand-identity ceiling reads 53.1 % raw and 46.8 % net.
+  The test file pins that the permutation control sits *at* that bias rather than at zero, because
+  a test asserting "noise scores about zero" would pass a broken implementation and delete the
+  correction's reason for existing.
+- **ISMCTS was considered and not pursued.** Its one structural advantage over PIMC is removing
+  strategy fusion, and 9.5d already bounds that on the toys at **0.04-0.70 points** with the
+  `response` continuation -- which, by best-responding to the known column, already removed the
+  expensive opponent-side half (up to 8.8 points). It also has no exploitability guarantee, which
+  is this project's headline quality measure. Sound search under imperfect information is CFR
+  re-solving, not ISMCTS; neither is on the 10 -> 11 path.
+
+Results: `docs/results/09.5g-results.md`.
 
 ## 6. Results: what we know
 

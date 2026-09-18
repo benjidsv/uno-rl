@@ -388,6 +388,15 @@ compromising (`voids` at 89.7 % against an honest one); 0.1 is the answer to "on
 unknown", which is what step 11 needs when an RL agent may or may not have learned to hold a
 playable drawn card.
 
+## Figures ([step 10B](10b-results.md))
+
+`uv run uno figures` writes five SVGs to [`figures/`](figures/): the range, values of
+information, the budget picture, edge by decision, and the full-UNO lever ladder. Every
+cheaply-exact number on this page that the figures also draw is recomputed live and
+checked to the digit by that command (0 failed checks); the full-UNO-sampled figures read
+the numbers already published above rather than re-measuring them. Scope and provenance:
+[10b-results.md](10b-results.md).
+
 ## Corrected coarse-memory evidence ([step 10a.3A](10a3a-results.md))
 
 The step 9.5a quotient policy retained discarded L1 history through its color/rank coordinate

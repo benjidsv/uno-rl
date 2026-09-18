@@ -1,12 +1,12 @@
 # Steps 10–11: revised execution plan
 
-Agreed direction, 2026-09-17; **all of 10a.3 complete as of 2026-09-18**, 10B next. Based on the
+Agreed direction, 2026-09-17; **10a.3 and 10B complete as of 2026-09-18**, 10C next. Based on the
 [Step 10 review](results/10-review.md) and Benji's request to retain the existing
 10B → 10C → 11 sequence.
 
 ## Placement and scope
 
-**10a.3A (done) → 10a.3B (done) → 10a.3C (done) → 10B → 10C → 11.**
+**10a.3A (done) → 10a.3B (done) → 10a.3C (done) → 10B (done) → 10C → 11.**
 
 This preserves milestone order and purpose. It adds work before 10B, so it is
 not a promise of unchanged elapsed time. Keep 10a.3 bounded: no RL training,
@@ -125,7 +125,17 @@ Deliver the three parts as reviewable changes, with commands and results. Benji
 makes the commits. Update the spec, results index, context, and status as the
 corresponding work is completed; this plan alone does not mark anything done.
 
-## 10B: retain the presentation step
+## 10B: retain the presentation step (done)
+
+Completed on 2026-09-18; see [the results](results/10b-results.md). `uv run uno figures`
+writes the five figures the brainstorm named, recomputing every cheaply-exact number live
+from `.cache/` and checking it against `index.md` to the digit rather than copying it
+(0 failed checks); full-UNO-sampled numbers are read from a cited table instead of
+re-measured. Two scope cuts, named in the results file: `TOY2_FULL`'s BR L2/L3 stay pinned
+(their L1+L3 tree was never cached and recompiling it is out of this step's bound), and
+`index.md`'s hand-written tables are not spliced over by the script (its prose and
+footnotes are interleaved with the numbers throughout) -- the digit-check is the concrete
+form of the staleness concern below, without a full markdown-generation pipeline.
 
 Keep the figure/table generation proposed in `results/10-brainstorm.md` section 6.
 Use corrected memory results and label full-UNO PIMC as an achievable benchmark,
