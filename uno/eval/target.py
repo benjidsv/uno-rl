@@ -1,5 +1,5 @@
 """The training target: the luck-corrected return step 11 optimises (step 10a.2, item A6).
-See docs/spec.md section 28.
+See docs/foundations/spec.md section 28.
 
 **One declaration, no new estimator.** 9.5b built AIVAT as per-game *records* precisely so
 that any subset of its corrections is one subtraction (`uno.eval.aivat.GameTerms.estimate`),
@@ -71,7 +71,7 @@ def corrected_return(terms: GameTerms, seat: int, corrections: Corrections = TRA
     choice this module exists to forbid; pass it explicitly through
     `GameTerms.estimate` if you are deliberately measuring the trap."""
     if corrections.row:
-        raise ValueError("the training target must not correct the learner's own decisions (uno.eval.target, docs/spec.md section 28): use GameTerms.estimate directly to measure that case")
+        raise ValueError("the training target must not correct the learner's own decisions (uno.eval.target, docs/foundations/spec.md section 28): use GameTerms.estimate directly to measure that case")
     sign = 1.0 if seat == 0 else -1.0
     return sign * terms.estimate(corrections, seat)
 

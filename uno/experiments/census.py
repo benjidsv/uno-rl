@@ -46,7 +46,7 @@ CANDIDATES: dict[str, Ruleset] = {
     "P 2c(2,2)+W h4": toy(rank_copies=(2, 2), hand_size=4),
     "Q 2c(2,2)+W+S h3": toy(rank_copies=(2, 2), skip_per_color=1, hand_size=3),
     "R 3c(1,1)+W h2": toy(colors=3, rank_copies=(1, 1)),
-    # low per-card playability, forced play (tempo fix, see docs/results/03-08-foundations/03-census.md)
+    # low per-card playability, forced play (tempo fix, see docs/foundations/results/03-08-foundations/03-census.md)
     "S 4c(1,1)+W h3 forced [TOY]": toy(colors=4, rank_copies=(1, 1), hand_size=3, forced_play=True),
     "T 3c(1,1,1)+W h3 forced": toy(colors=3, rank_copies=(1, 1, 1), hand_size=3, forced_play=True),
     "U 4c(1,1,1)+W h3 forced": toy(colors=4, rank_copies=(1, 1, 1), hand_size=3, forced_play=True),

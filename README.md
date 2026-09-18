@@ -1,14 +1,14 @@
 # UNO RL v5
 
-Measurement first, learning second: an own UNO engine, a small toy game solved
-exactly, and evaluators that can tell skill from luck, before any RL.
+Two-player UNO research in two phases: Steps 1-10 built and validated the engine,
+exact toys, evaluators, search tools, and baselines; the active project uses those
+foundations to train and evaluate learned policies.
 
-- [`docs/plan.md`](docs/plan.md): motivation, information levels, evaluators, the
-  ladder, and the build order with its status.
-- [`docs/spec.md`](docs/spec.md): the spec (engine, solvers, estimators, compiled
-  tree, CFR, symmetry, sizing). If the code disagrees with it, the code is wrong.
-- [`docs/results/`](docs/results/index.md): one file per step, and `index.md`
-  with the current headline numbers of every toy.
+- [`docs/rl/`](docs/rl/README.md): current RL status, research plan, learner
+  contracts, foundation handoff, and learner results.
+- [`docs/foundations/`](docs/foundations/README.md): searchable Steps 1-10
+  specification, rationale, measurements, and historical plans.
+- [`docs/`](docs/README.md): the complete documentation map.
 
 ## Setup
 
@@ -18,29 +18,18 @@ uv sync            # Python 3.14, numpy; dev: pytest, hypothesis; installs the `
 
 ## Commands
 
-Every experiment is a module of `uno/experiments/` run through the CLI;
-`uv run uno list` shows them. Trees and CFR results are cached in `.cache/`
-(git-ignored, `uno/store.py`).
+Every experiment is a module of `uno/experiments/` run through the CLI. Trees and
+CFR results are cached in `.cache/` (git-ignored, `uno/store.py`).
 
-| what | command | was |
-|------|---------|-----|
-| all tests (102, ~4 min) | `uv run pytest` | |
-| every experiment below, in dependency order: live status and time left, then `logs/rerun-*/report.txt` with every step's duration and timed loops (hours) | `bash scripts/rerun_all.sh` | |
-| step 3: tree-size census of the toy candidates | `uv run uno census [node_cap=2e6] [games=2000] [letters e.g. S,O]` | `scripts/census.py` |
-| steps 5-6: exact best responses L1/L2/L3 (pure-Python reference solvers) | `uv run uno ladder [ruleset=TOY] [games=4000]` | `scripts/ladder.py` |
-| step 7: mirrored evaluator vs exact values | `uv run uno mirror [ruleset=TOY] [games=4000]` | `scripts/mirror.py` |
-| step 8: compiled tree, CFR+ Nash, exploitability, Nash row/column | `uv run uno cfr [ruleset=TOY] [iterations=1000] [games=4000]` | `scripts/cfr.py` |
-| step 8.5: transfer check, `TOY` against `FULL_UNO` | `uv run uno transfer [games=4000] [cfr_iterations=200]` | `scripts/transfer.py` |
-| step 8.6: quotient trees, `TOY_FULL` solved (recompiles the `TOY` trees on purpose) | `uv run uno symmetry [cfr_iterations=1000]` | `scripts/symmetry.py` |
-| step 8.7: exact sizes of the candidates (position DP) | `uv run uno sizing [position_cap=4000000]` | `scripts/sizing.py` |
-| step 8.7: cost of one checkpoint of the RL loop | `uv run uno loop_cost` | `scripts/loop_cost.py` |
-| step 8.7: CFR variants raced | `uv run uno cfr_variants [iterations=300] [rulesets=TOY,TOY_FULL,TOY2]` | `scripts/cfr_variants.py` |
-| step 8.7: a TOY2-family ruleset solved | `uv run uno toy2 [ruleset=TOY2] [cfr_iterations=1000] [light] [variant=cfr+]` | `scripts/toy2.py` |
-| step 8.7: L2 / L3 columns of `TOY2_FULL`, one keying per tree | `uv run uno toy2_columns [ruleset=TOY2_FULL]` | `scripts/toy2_columns.py` |
-| step 8.7: validation checks from the compiled trees | `uv run uno validate [ruleset=TOY] [games=4000] [light]` | `scripts/validate.py` |
+```sh
+uv run uno list                 # experiment names and arguments
+uv run pytest tests/<area>      # relevant checks while developing
+uv run pytest                   # complete suite
+```
 
-Experiments report on the held-out `EVAL_SEEDS` (1,000,000+); build and test on
-`DEV_SEEDS` (0-3999).
+`bash scripts/rerun_all.sh` reruns the multi-hour foundation suite and is not a
+routine check. Seed-pool ownership and claimed EVAL blocks live in
+`uno/eval/seeds.py`.
 
 ## Code map
 
@@ -51,7 +40,7 @@ Experiments report on the held-out `EVAL_SEEDS` (1,000,000+); build and test on
 | `uno/game/observe.py` | L1 / L2 / L3 observations, `observation_from_key` |
 | `uno/game/keys.py` | information-set keys per level and their byte encoding |
 | `uno/game/chance.py` | the chance model: lazy-chance children, deals, worlds, pile decomposition |
-| `uno/game/symmetry.py` | color / rank symmetry group, canonical keys, orbit representatives ([spec section 18](docs/spec.md)) |
+| `uno/game/symmetry.py` | color / rank symmetry group, canonical keys, orbit representatives ([spec section 18](docs/foundations/spec.md)) |
 | `uno/agents/baseline.py` | `UniformLegal`, `PlayFirstRandom` (the "Random" row), `Heuristic`, `BySeat` |
 | `uno/agents/tabular.py` | `TabularAgent`, `PureStrategy`, `CompiledAgent`: agents that play a table |
 | `uno/agents/symmetrized.py` | `Symmetrized`: any agent made symmetric, so it can be evaluated on the quotient tree |

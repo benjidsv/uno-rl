@@ -19,7 +19,7 @@ canonicalising group element, so an opponent hand decoded from its L3 key on a *
 tree is in that member's coordinates rather than the set's. So everything here runs on the
 full tree, where a key is a raw key of the real game, which has two consequences to carry
 with the numbers: the PIMC choice is a **pure** per-set action rather than an orbit played
-uniformly (docs/spec.md section 25 measures those as genuinely different policies, 0.01-0.44
+uniformly (docs/foundations/spec.md section 25 measures those as genuinely different policies, 0.01-0.44
 score points apart on `TOY`), and `prior` / `posterior` are therefore **recomputed here**
 rather than quoted from the published quotient rows. Only `TOY` and `TOY_FULL` have a full
 world tree; `TOY2`'s would be 36x its quotient.
@@ -70,7 +70,7 @@ def nash_value(rs) -> float | None:
     """The cached Nash seat-0 score on the *quotient* lazy tree, for exploitability in points.
 
     The L1 Nash value of the quotient is the full game's (the quotient is exact for symmetric
-    strategies, docs/spec.md section 18), so this is the right reference even though the rows
+    strategies, docs/foundations/spec.md section 18), so this is the right reference even though the rows
     below live on the full tree."""
     lazy = compile_tree(rs, (L1,), True, cache=store.CACHE)
     res = store.load_nash(lazy)

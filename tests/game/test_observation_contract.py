@@ -4,7 +4,7 @@ Lightweight tests verifying that each arm's field extraction satisfies the
 documented invariants: legality consistency, L1 validity, equivariance, and
 evaluator compatibility.  These do not test a learner — they test the contract.
 
-See docs/observation-contract.md section 6.
+See docs/rl/observation-contract.md section 6.
 """
 
 from __future__ import annotations

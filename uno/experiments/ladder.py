@@ -8,7 +8,7 @@ replayed through `match` on `games` seeds. A fixed seed range carries its own
 deal and pile luck, so the simulation is compared with the exact value *on
 those games* ("on seeds", real deal and real pile order): the difference is
 action-sampling noise only, scored as z = difference / sqrt(action-noise
-variance / n) with |z| <= 3 (docs/spec.md section 14); when both agents are
+variance / n) with |z| <= 3 (docs/foundations/spec.md section 14); when both agents are
 deterministic it is exactly zero. Also prints the exact values of
 the row agents against each other, to compare with the sampled step 4 numbers.
 """

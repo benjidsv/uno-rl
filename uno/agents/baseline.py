@@ -1,4 +1,4 @@
-"""Baseline agents. See docs/spec.md section 13.
+"""Baseline agents. See docs/foundations/spec.md section 13.
 
 An agent maps (observation, legal actions) to a probability distribution over
 actions. It never samples: best response tabulates the policy and AIVAT needs
@@ -72,7 +72,7 @@ class PlayFirstRandom:
 
 
 class Heuristic:
-    """Rulebot, symmetric under color and rank renaming (docs/spec.md section 18).
+    """Rulebot, symmetric under color and rank renaming (docs/foundations/spec.md section 18).
 
     Play over draw. Among playable non-wild cards prefer action cards when the
     opponent is low, then the color held most, then a card of the current color
@@ -125,7 +125,7 @@ class KeepsDrawn:
     """`PlayFirstRandom`, except it keeps a playable drawn card with probability `p`.
 
     The opponent the `voids` belief assumes does not exist. That rung counts the cards drawn
-    *strictly after* a void, so it assumes a playable drawn card is played at once (docs/spec.md
+    *strictly after* a void, so it assumes a playable drawn card is played at once (docs/foundations/spec.md
     section 26.2) -- true of every rulebot here, and not a rule: `draw_then_may_play` offers
     exactly this choice at every `AFTER_DRAW`, and a `Pass` writes no public event, so nothing in
     the history distinguishes "could not play" from "chose not to". An RL agent that learns to
@@ -133,7 +133,7 @@ class KeepsDrawn:
 
     Lives here rather than in the tests because the closure test needs its *exact* posterior
     (`uv run uno pimc closure TOY ... passer`), which means tabulating it on a compiled tree.
-    `p` is therefore part of `name`: a name identifies a policy (docs/spec.md section 13) and
+    `p` is therefore part of `name`: a name identifies a policy (docs/foundations/spec.md section 13) and
     `uno.store.load_or_tabulate` is keyed on it, so two `p` would otherwise share one cache file.
     """
 

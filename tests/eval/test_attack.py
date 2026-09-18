@@ -136,7 +136,7 @@ def test_the_refusal_is_not_vacuous_because_the_invalid_query_fails_silently(toy
 
 def test_a_graft_keeps_the_strategy_symmetric(toy):
     """A symmetry-closed class keeps the strategy orbit-uniform, which is what lets the quotient
-    tree evaluate it at all (docs/spec.md section 18)."""
+    tree evaluate it at all (docs/foundations/spec.md section 18)."""
     rs, tree, nash = toy
     k = tree.keyings[L1]
     built = flaws.flawed(tree, nash.avg)
@@ -222,7 +222,7 @@ def test_the_attack_detects_a_known_flaw_and_stays_quiet_against_near_nash(toy):
 
 def test_more_worlds_do_not_make_the_attack_worse(toy):
     """Pre-declared as monotone in the budget, not as reaching zero: PIMC's structural bias does not
-    vanish with more worlds (docs/spec.md section 25), so the claim is only that a bigger budget
+    vanish with more worlds (docs/foundations/spec.md section 25), so the claim is only that a bigger budget
     does not miss more."""
     rs, tree, _ = toy
     target = Heuristic(rs)
@@ -317,7 +317,7 @@ def test_the_bound_guards_its_inputs():
 
 
 def test_a_budget_rejects_a_mislabelling_combination():
-    """A name identifies a policy (docs/spec.md section 13), and `PimcRollout` has no belief rung,
+    """A name identifies a policy (docs/foundations/spec.md section 13), and `PimcRollout` has no belief rung,
     so a rollout budget carrying one would put a rung in the agent's name that its policy never
     uses."""
     rs = rules.TOY

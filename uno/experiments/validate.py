@@ -5,7 +5,7 @@
 The `ladder` and `mirror` experiments run the pure-Python reference
 solvers, which do not fit the TOY2 family (its full game is ~10M histories,
 ~10 GB in the reference walkers). This experiment does the same checks from the
-cached quotient trees (docs/spec.md sections 16 and 18):
+cached quotient trees (docs/foundations/spec.md sections 16 and 18):
 
 1. the row matchups (exact);
 2. best-response columns (L1 / L2 on the lazy tree, L3 on the world tree)
@@ -29,7 +29,7 @@ mirrored moments), for TOY2_FULL.
 Every check prints ok / XX and the last line counts the failures. A simulation
 is compared with the exact value on the same seeds through
 z = (sim - exact on seeds) / sqrt(action-noise variance / n), and must satisfy
-|z| <= 3 (0.27 % false alarms per check, docs/spec.md section 14). The action
+|z| <= 3 (0.27 % false alarms per check, docs/foundations/spec.md section 14). The action
 noise is exact (`scores_on_seeds`), so the check is calibrated, unlike a CI of
 the total variance, which also counts the deal and pile luck the seeds fix.
 """

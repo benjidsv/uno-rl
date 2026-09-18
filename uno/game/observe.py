@@ -1,4 +1,4 @@
-"""Observations at the three information levels. See docs/spec.md section 10.
+"""Observations at the three information levels. See docs/foundations/spec.md section 10.
 
 The information level is a property of the observer, not of the game.
 Observations are frozen and hashable so they can key information sets.
@@ -328,7 +328,7 @@ def batch_l1_observations(rs: Ruleset, keys) -> L1Batch:
     after_draw = np.zeros(n, dtype=bool)
     drawn = np.full(n, -1, dtype=np.int64)
     discard: list = [None] * n
-    playable = playable_table(rs)  # taken once: 24 ns a lookup against 138 ns a call (docs/spec.md section 25)
+    playable = playable_table(rs)  # taken once: 24 ns a lookup against 138 ns a call (docs/foundations/spec.md section 25)
     for i, key in enumerate(keys):
         me, initial_hand, public, own_draws = key[:4]
         s = _public_summary(rs, public)

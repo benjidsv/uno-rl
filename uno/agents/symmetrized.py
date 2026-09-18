@@ -1,4 +1,4 @@
-"""A symmetric version of any agent (docs/spec.md section 18).
+"""A symmetric version of any agent (docs/foundations/spec.md section 18).
 
 The quotient tree evaluates a policy exactly only if the policy commutes with
 the color / rank group. A learned agent does not, so it is wrapped: its

@@ -4,127 +4,170 @@
 
 - **Do not commit, push, or otherwise publish changes unless explicitly asked.**
   Give a summary of changes, verification, and unresolved issues; Benji commits.
-- Discuss research direction and trade-offs before implementing a new step.
-  A request to review or brainstorm authorizes investigation, not a new algorithm.
+- Discuss research direction and trade-offs before implementing a new algorithm or
+  experiment. A request to review or brainstorm authorizes investigation, not a
+  new research direction.
+- Distinguish measured facts, hypotheses, bounds, and recommendations. Challenge
+  conclusions when the experiment did not test them.
+- Benji knows RL/PPO well and is newer to extensive-form game methods. Explain BR,
+  CFR, information sets, and statistical implications in plain language.
 - **Prefer batched/vectorized paths for engine, simulation, feature extraction,
-  inference, and exact computations.** Expect large slowdowns from Python loops
-  and per-state/per-network calls. Batch state construction as well as network
+  inference, and exact computations.** Batch state construction as well as network
   evaluation where practical; measure end-to-end throughput and memory.
 - Preserve slow reference implementations as correctness oracles. Performance
   changes must preserve game semantics, information boundaries, and reproducibility;
-  explicitly report changes to random streams or numerical behavior.
-- Benji knows RL/PPO well and is newer to extensive-form game methods. Explain
-  BR, CFR, information sets, and statistical implications in plain language.
-- Distinguish measured facts, hypotheses, bounds, and recommendations. Challenge
-  conclusions when the experiment did not actually test them.
+  report changes to random streams or numerical behavior explicitly.
 
-## Purpose and sources
+## Two documentation projects
 
-Fifth iteration of two-player UNO RL. Earlier PPO attempts did not clearly beat
-rulebots (~60% against Random; a historical tuned bot ~70%). The project first
-built a trustworthy engine, exact toy solutions, and low-variance evaluators to
-separate learning failure from noise and unknown headroom. **Measurement first,
-learning second.** Toys validate methods; numerical conclusions need separate
-validation on full UNO.
+Steps 1-10 are a completed **foundations project**: the engine, exact toys,
+solvers, evaluators, search tools, baselines, and the evidence that validates or
+limits them. Step 11 is the active **RL project**, which consumes those foundations.
+Do not make every RL session reconstruct the foundations' history.
 
-Start with this guide, `git status --short`, and recent `git log`. For a research
-session read `docs/context.md` and `docs/results/index.md`, then relevant code.
+- `docs/rl/`: active RL status, plan, contracts, handoff, and learner results.
+- `docs/foundations/`: authoritative technical specification, searchable rationale,
+  Steps 1-10 results, and historical plans.
+- `docs/generated/`: reproducible figures and small source tables, owned by their
+  generators. Ignore it unless working on figures or their producer; do not hand-edit it.
 
-- `docs/spec.md`: rules and algorithm contracts; intended behavior wins over code.
-  Report a suspected problem in the specification instead of silently copying it.
-- `docs/results/index.md`: current headline measurements; wins over context when
-  numerical summaries disagree. Read later corrections alongside older tables.
-- `docs/context.md`: long-form rationale, findings, failed approaches, practical
-  notes. Some opening/status sections lag its later additions.
-- `docs/plan.md`: build order and status. Earlier prose includes superseded plans.
-- `docs/10-to-11-plan.md`: current execution plan and exit criteria: insert 10a.3
-  before 10B, then retain 10B → 10C → Step 11's three phases.
-- `docs/results/<phase>/<step>.md`: historical experiment, command, provenance,
-  caveats. Phases group the chronology without changing the step identifiers.
-- `docs/generated/<producer>/`: committed, reproducible documentation artifacts,
-  owned by the command that generates them rather than the step that first used
-  them. Keep rendered figures under `figures/` and small generated source tables
-  under `data/`; do not hand-edit either. Large or raw run outputs stay out of
-  `docs/`. Generators must write to their producer directory by default.
-- `docs/results/10-readiness/10-review.md`: September 2026 second opinion, including a reproduced
-  K1 measurability problem. All three of its recommendations are now implemented:
-  the memory repair in 10a.3A, the observation contract in 10a.3B, and the LBR
-  attack instrument in 10a.3C (`uno/eval/attack.py`, docs/spec.md section 32).
+Authority depends on the kind of claim:
 
-Keep these roles separate: results are not specifications, and old brainstorms
-are not proof that an algorithm has been built or validated.
+| Claim | Authoritative source |
+|---|---|
+| intended engine or foundation behavior | `docs/foundations/spec.md` |
+| learner inputs and representation boundaries | `docs/rl/observation-contract.md` |
+| current RL direction and phase gates | `docs/rl/plan.md` |
+| current RL status and next decision | `docs/rl/README.md` |
+| current Steps 1-10 measurements | `docs/foundations/results/index.md` |
+| current learner measurements | `docs/rl/results/index.md` |
+| provenance and caveats for a measurement | its individual result file |
+| historical reasoning or failed approaches | `docs/foundations/rationale.md` |
 
-## Current position (2026-09-17, reviewed at `f12ffaf`)
+Results are not specifications, and old plans or brainstorms are not proof that an
+algorithm was built or validated. If code and a contract disagree, report the
+disagreement instead of silently copying the code.
 
-- Steps 1–9.5f: engine, exact solvers, symmetry, CFR, memory/edge diagnostics,
-  AIVAT, PIMC, value networks, and belief experiments built.
-- 10a and 10a.2: seed registry, batched tabulation, report card, gradient/target
-  validation, shaping artifacts, belief exploitability, and column-free PIMC built.
-- 10a.3A repaired the coarse-memory measurement: coarse keys and actions now use
-  the coarse observation's own symmetry, the positive-reach K1 collision is a
-  regression, and all five toy rows are refreshed. 10a.3B wrote the observation
-  contract. **10a.3C built and calibrated the LBR attack instrument**: an attack's
-  achieved score is a NashConv lower bound (`NashConv >= b0 + b1 - 1`), calibrated
-  exactly on the toys against known and deliberately grafted flaws, with EVAL
-  block 02 claimed for the full-UNO baseline. All of 10a.3 is done; **10B**
-  (figures/generated tables) is next, then 10C's distilled rulebot.
-- An attack bound is a **lower** bound. A small or negative one is a weak attack,
-  never evidence that a checkpoint is safe, and 0.5 is never substituted for an
-  unknown full-UNO Nash seat value. The `response` continuation may only attack
-  targets that are a function of the current position: it queries the target inside
-  determinized worlds, where private history is fabricated, and a tabulated target
-  silently answers "first legal action" at 79.5 % of such queries instead of raising.
-- No RL learner yet. Benji's intended Step 11: (1) exact toy measurements to
-  validate learning and approach appropriate benchmarks, (2) sampled full-UNO
-  training/evaluation, (3) further RL iterations if substantial headroom remains.
-- Reopen the full-UNO observation/memory choice. **K1 sufficiency is not established.**
-  Keep K1 as an ablation, not a settled representation ceiling. LBR and stronger
-  memory/inference are planned comparisons. Full-UNO learner comparisons and
-  recurrent-target attack support belong to Step 11; a new particle filter is
-  not required before 10B or 10C.
+## Start and route the work
 
-## Game and measurement vocabulary
+Start every session with this guide, `git status --short`, and recent `git log`.
+The active project is RL unless the task says otherwise.
+
+For RL research, planning, training, or evaluation, read `docs/rl/README.md`, then
+only the documents it routes to. For foundation maintenance, start with
+`docs/foundations/README.md`.
+
+Do **not** read `docs/foundations/spec.md`, `docs/foundations/rationale.md`, or a
+complete results index by default. Search their headings and terms, then read the
+smallest relevant section and any directly linked result:
+
+```sh
+rg -n '^#{1,4} ' docs/foundations/spec.md docs/foundations/rationale.md \
+  docs/foundations/results/index.md
+rg -n -i '<topic>' docs/foundations docs/rl
+```
+
+| Task | Read next |
+|---|---|
+| plan or review RL research | RL README, RL plan, relevant RL result |
+| implement learner, features, or recurrent state | RL starting point, observation contract, relevant spec section |
+| interpret a foundation number | matching foundation-index section, then linked result if needed |
+| modify engine, solver, evaluator, or search | relevant spec section, module docstring, mirrored tests |
+| understand why something exists | matching rationale section only |
+| work on a historical experiment | its result file and the contract it cites |
+| broad audit | expand scope deliberately; do not default to reading every document |
+
+Read an experiment module's docstring for positional arguments. Do not launch
+large trees, full sweeps, or `scripts/rerun_all.sh` merely to inspect the repo.
+
+## Domain contracts that cross both projects
 
 - One parameterized, deterministic, immutable engine; `step(state, action)` returns
-  a new state. Full UNO: 108 cards, hand 7, seeded reshuffle, 1000-action draw cap.
-- Wild plays are joint `(card, color)` actions. No stacking/challenge; +4 is
-  always playable. In two-player play, skip and reverse both grant another turn.
-- A playable drawn card can be kept. `Pass` emits no public event. Never infer
-  that an opponent's draw proves a void without stating the policy assumption.
-- Toys have no reshuffle: required draw on an empty pile ends by hand-size
-  comparison. Exhaustion/pile parity distort strategic conclusions.
-- `TOY`: 9 cards, forced play; `TOY_FULL`: voluntary draw allowed.
-  `TOY2`: 10 cards/three ranks; `TOY2_SKIP`: action-card toy;
-  `TOY2_FULL`: large free-play toy (~28M quotient histories).
-- **L1**: own initial hand, public history, own draws in order (perfect recall).
-  **L2** adds opponent initial hand/draws; **L3** adds pile information.
-  Actor inputs must respect the declared information level. L1/L2 observations
-  are used at the observer's own decision nodes to avoid timing leaks.
-- **Score** = `(return + 1) / 2`, draws worth 1/2. Report both seats; seat 0
-  moves first and toy seat advantages are large. Compare to the same-seat baseline.
-- **BR L1** is optimal against one fixed, known opponent. **Nash** is an
-  equilibrium objective. A learner maximizing league score need not minimize
-  exploitability or attain every opponent-specific BR simultaneously.
-- Exploitability per row seat = opponent BR score minus that responder seat's
-  Nash score. NashConv is the sum across seats, in score points here.
-- L2−L1 and L3−L2 are values of extra information, not noise decompositions or
-  learnable L1 headroom. PIMC is an achievable benchmark, **not an upper bound**.
+  a new state. Wild plays are joint `(card, color)` actions. In two-player play,
+  skip and reverse grant another turn. A playable drawn card may be kept, and
+  `Pass` emits no public event.
+- **L1** is own initial hand, public history, and own draws in order. L2 adds the
+  opponent's initial hand/draws; L3 adds pile information. Actor inputs must obey
+  their declared information level. Do not infer a void from an opponent draw
+  without stating the policy assumption.
+- **Score** is `(return + 1) / 2`, with draws worth 1/2. Report both seats and
+  compare to the same-seat baseline. Toy seat advantages are large.
+- BR is optimal against one fixed, known opponent; Nash is an equilibrium objective.
+  A league-score learner need not minimize exploitability or attain all
+  opponent-specific BRs simultaneously.
+- Values of extra information are not learnable L1 headroom. PIMC is an achievable
+  benchmark, **not an upper bound**.
+- An attack's achieved two-seat score gives a NashConv **lower** bound. A small or
+  negative bound is a weak attack, never evidence that a checkpoint is safe.
+
+The complete rules and algorithm contracts live in the foundation spec. The
+learner's three representation arms and actor/critic/attacker boundaries live in
+the observation contract. K1 is an ablation, not an established representation
+ceiling.
+
+## Correctness and performance guardrails
+
+- Agents return **action distributions**, not sampled actions. Probabilities must
+  match the policy actually played; AIVAT relies on this. Give checkpoints distinct
+  names and use an explicit shared stream for coupled comparisons.
+- Exact quotient evaluation requires color/rank symmetry and uniform probabilities
+  within stabilizer action orbits. Canonicalizing observations alone is insufficient.
+  The learner should be equivariant; do not enumerate full UNO's enormous
+  permutation group in a training loop.
+- Preserve information boundaries in critics, training targets, search, and attacks.
+  `determinize_l1` fabricates private history; recurrent or memoryful target policies
+  require consistent reconstructed histories before they can be queried there.
+- AIVAT evaluation may correct both players. The shipped training target corrects
+  chance, opponent, and deal, **never the learner's own actions**. Do not turn an
+  evaluation return into a training return silently. Existing gradient checks do
+  not validate every future PPO/GAE choice.
+- Belief and search settings are measured working points, not universal defaults.
+  The `voids` belief assumes play-first behavior and immediate play of playable
+  drawn cards. Recheck search strength when beliefs, leaves, targets, or opponents change.
+- Judge variance reduction per wall time, not only per trajectory. Preserve terminal
+  potential zero and avoid double correction.
+- Stream summaries instead of retaining thousands of full-UNO traces. Measure
+  simulation, feature construction, inference, and learner update throughput together.
+- `.cache/` is ignored and expensive to rebuild. Bump `CACHE_VERSION` when changes
+  to engine, chance, keys, symmetry, layout, or cached baseline behavior invalidate it.
+
+## Experiments and evidence
+
+- DEV seeds `[0, 1_000_000)` are for fitting, tuning, checkpoint selection, and
+  pilots. Persistent confirmatory claims use a fresh registered block from the
+  EVAL pool `[1_000_000, 2_000_000)` in `uno/eval/seeds.py`. Do not repeatedly
+  select on an EVAL block.
+- Pair comparisons on the same deals and opponent streams. Retain per-seat results,
+  covariance where required, uncertainty, sample counts, units, and whether intervals
+  are SEs or CIs. Mirrored self-play is degenerate under shared randomness.
+- Exact toy values have no trajectory-sampling noise; learned policies still vary
+  across training seeds. Full-UNO scores and LBR attacks are sampled.
+- Validate on meaningful pinned toy values and reference solvers, not only tiny or
+  singleton cases. Check that a test can detect the defect it targets.
+- Keep Hypothesis/reference examples bounded. Put long measurements in experiments.
+  Report commands actually run rather than historical suite counts.
+- New RL result files belong under `docs/rl/results/` and begin with the question,
+  predeclared decision rule, configuration and seeds, result, interpretation,
+  limitations, and next decision. Exact values get one canonical home.
+- Foundation result files are historical records. Correct them explicitly when
+  necessary; do not rewrite them to tell a cleaner retrospective story.
+- Keep `docs/rl/README.md` short by replacing completed active-state prose with a
+  link to its result. Do not append a new project history to it.
 
 ## Architecture and commands
 
-Python >=3.14, `uv`, NumPy, PyTorch; dependency/config source is `pyproject.toml`.
+Python >=3.14, `uv`, NumPy, and PyTorch; `pyproject.toml` is the dependency source.
 
 | Location | Responsibility |
 |---|---|
-| `uno/game/` | Rules, immutable engine, chance, observations, keys, symmetry |
-| `uno/agents/` | Baselines, tabular adapters, symmetrization |
-| `uno/reference/` | Slow trusted exact walkers and sizing |
-| `uno/compiled/` | Array trees, exact evaluation/BR/CFR, coarse keys, gradients, edge attribution |
-| `uno/eval/` | Game runners, estimators, seeds, search, beliefs, critics, targets, shaping |
-| `uno/experiments/` | Reproducible step experiments, dispatched by `uno/cli.py` |
-| `uno/store.py` | Versioned tree, strategy, and tabulation cache |
-| `docs/generated/` | Small committed figures/tables grouped by generating workflow |
-| `tests/` | Mirrored package structure; pinned values in `tests/known.py` |
+| `uno/game/` | rules, immutable engine, chance, observations, keys, symmetry |
+| `uno/agents/` | baselines, tabular adapters, symmetrization |
+| `uno/reference/` | slow trusted exact walkers and sizing |
+| `uno/compiled/` | array trees, exact evaluation/BR/CFR, gradients, diagnostics |
+| `uno/eval/` | runners, estimators, seeds, search, beliefs, critics, targets, attacks |
+| `uno/experiments/` | reproducible experiments dispatched by `uno/cli.py` |
+| `uno/store.py` | versioned tree, strategy, and tabulation cache |
+| `tests/` | mirrored package structure; pinned values in `tests/known.py` |
 
 ```sh
 uv sync
@@ -134,65 +177,5 @@ uv run pytest tests/<relevant-path>
 uv run pytest
 ```
 
-Read an experiment's module docstring for positional arguments. The existing
-`.venv/bin/uno` and `.venv/bin/python` also run the installed environment.
-`bash scripts/rerun_all.sh` is an hours-long experiment suite, not a routine check.
-Do not launch large trees or full sweeps merely to inspect the repo.
-
-## Correctness and performance guardrails
-
-- Agents return **action distributions**, not sampled actions. Probabilities must
-  match the actual policy; AIVAT relies on this. Names identify policies. Give
-  checkpoints distinct names; use explicit shared `stream` for coupled comparisons.
-- Exact quotient evaluation requires color/rank symmetry and uniform probabilities
-  within stabilizer action orbits. Canonicalizing observations alone is insufficient.
-  An equivariant policy is the proposed learner design; `Symmetrized` is a toy oracle.
-  Do not enumerate full UNO's enormous permutation group in a training loop.
-- **Coarse-key warning:** K0 includes a public-history clock; K1 adds discard
-  counts; current K2 adds only draw colors since the opponent's last play.
-  K2 is not the later `voids` belief. `memoryless_response` is an iterative search,
-  not a certified optimal imperfect-recall solver. Step 10a.3A repaired the old
-  quotient coordinate leak and pinned raw-input measurability; the refreshed
-  values are achieved local-search scores, not certified memory ceilings.
-- `voids` assumes play-first behavior and immediate play of playable drawn cards.
-  `soft(0.1)` relaxes that assumption; its toy robustness is not universal calibration.
-  The failed deal-time particle sampler does not disprove all particle filters.
-- Current PIMC working budget: 32 worlds, depth 2. `response` uses the known
-  target policy; fixed-Heuristic continuation is a measured column-free player.
-  Search settings and strength must be rechecked when beliefs/leaves/opponents change.
-- `determinize_l1` fabricates opponent private history. Existing rulebots tolerate
-  this; memoryful/recurrent opponent models need consistent reconstructed histories.
-- AIVAT's chance value model uses L2, not real pile order. Evaluation can correct
-  both players; the shipped training target corrects chance + opponent + deal,
-  **never the learner's own actions**. Do not silently use evaluation returns as
-  training returns. The existing gradient check does not validate all PPO/GAE choices.
-- Deal shaping/correction can be cheap; full sibling corrections were expensive
-  even after batched inference. Judge variance reduction per wall time, not just
-  per trajectory. Preserve terminal potential zero and avoid double correction.
-- Keep computations vectorized and stream summaries. Thousands of full-UNO traces
-  cost GB; do not retain every matchup's traces concurrently.
-- `.cache/` is ignored and expensive to rebuild. `TOY2_FULL` files are ~2–3 GB
-  each with multi-GB RAM usage. Bump `CACHE_VERSION` when engine/chance/key/symmetry/
-  layout changes affect caches, or cached baseline policy behavior changes.
-
-## Experiments, validation, and handoff
-
-- DEV pool: `[0, 1_000_000)` for fitting/tuning/selection. EVAL pool:
-  `[1_000_000, 2_000_000)`, persistent claims in `uno/eval/seeds.py`.
-  Block 00 is spent on selection; block 01 belongs to 10a.2. Claim fresh blocks
-  for new confirmatory experiments; do not repeatedly select checkpoints on a test set.
-- Pair comparisons on the same deals and opponent streams; retain per-seat
-  results and uncertainty. Mirrored self-play is degenerate under shared randomness.
-  Report power, units, sample counts, and whether intervals are SEs or CIs.
-- Exact toy values contain no trajectory sampling noise; training seeds still
-  produce variation across learned policies. Full-UNO LBR is sampled too.
-- Validate against reference solvers and meaningful pinned toy values, not only
-  tiny/singleton cases. Check that a test can detect the defect it targets.
-- Keep Hypothesis/reference examples bounded; put long measurements in experiments.
-  Run relevant checks and report what was actually run, not historical suite counts.
-- Results belong in `docs/results/<phase>/<step>.md` with base commit, rerun
-  command, configuration, seed provenance, checks, and limitations; update the
-  results index, spec, plan, and context when the corresponding facts change.
-  Preserve historical results and explicitly mark superseded interpretations.
-- Handoff: summarize changed files, substantive findings, checks, and next decisions.
-  Leave commits to Benji.
+Handoffs summarize changed files, substantive findings, checks, and unresolved
+decisions. Leave commits to Benji.

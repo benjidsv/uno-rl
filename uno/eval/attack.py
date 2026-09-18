@@ -1,11 +1,11 @@
-"""The approximate-response attack instrument (step 10a.3C, docs/spec.md section 32).
+"""The approximate-response attack instrument (step 10a.3C, docs/foundations/spec.md section 32).
 
 An **attack** takes a frozen target policy and tries to beat it from one seat. Its *achieved
 score in real games* is a lower bound on the best-response score against that target, so an
 attack needs no exact belief and no exact Q to be valid -- it only has to be an admissible L1
 policy. What it can be is **insensitive**: a weak attack that fails to find a target's weakness
 reports a small number, and a small number is not evidence of safety
-([Lisy & Bowling 2017](https://arxiv.org/abs/1612.07547), and docs/results/10-readiness/10-review.md section 4).
+([Lisy & Bowling 2017](https://arxiv.org/abs/1612.07547), and docs/foundations/results/10-readiness/10-review.md section 4).
 So the instrument is calibrated against the exact toy best responses, where the answer is known.
 
 **Why the seat sum is the reportable quantity.** On full UNO the seat-specific Nash value is
@@ -78,7 +78,7 @@ QUERIES_TARGET = ("response",)
 class Budget:
     """One attack configuration: what the attacker is allowed to spend, and how it believes.
 
-    `worlds` / `depth` are `PimcSearch`'s own knobs (docs/spec.md section 25); `belief` is the
+    `worlds` / `depth` are `PimcSearch`'s own knobs (docs/foundations/spec.md section 25); `belief` is the
     opponent-hand rung of section 26, a **separate** field from the continuation because the two
     axes are independent and folding one into the other silently drops rows from a ladder (the
     step 9.5f lesson, pinned by `tests/eval/test_pimc_configs.py`). `seed` selects the attacker's
@@ -124,11 +124,11 @@ class Support:
     `tested` counts only decisions where the perturbed observation genuinely differs from the
     original: a perturbation that changes nothing cannot detect anything, and counting it would
     make the detector look thorough while testing nothing (the vacuity trap this repo keeps
-    finding -- docs/spec.md section 26.5). `raised` counts targets that reject a fabricated
+    finding -- docs/foundations/spec.md section 26.5). `raised` counts targets that reject a fabricated
     observation outright, which is also a refusal to be queried.
 
     **This is not an L1-validity test, and must never be used as one.** An L1 policy is *entitled*
-    to read its own initial hand and own draws -- that is what L1 *is* (docs/spec.md section 10).
+    to read its own initial hand and own draws -- that is what L1 *is* (docs/foundations/spec.md section 10).
     Worse, those fields plus the public plays *determine* the current hand, so any policy that
     rebuilds its position from the L1 key (`CompiledAgent`, `Symmetrized`, a recurrent arm) answers
     differently here for a legitimate reason. What this measures is the narrower property the
@@ -244,7 +244,7 @@ class HiddenProbe:
 
 
 def hidden_state_probe(rs: Ruleset, agent, games: int = 20, cap: int = 60) -> HiddenProbe:
-    """Does the policy read what it cannot see? The L1-validity test (docs/spec.md section 11,
+    """Does the policy read what it cannot see? The L1-validity test (docs/foundations/spec.md section 11,
     property 9; the observation contract's invariance test 2).
 
     `determinize_l1` builds a state consistent with the observer's own L1 observation but with the
@@ -294,7 +294,7 @@ def check_supported(rs: Ruleset, target, continuation: str, games: int = 40) -> 
     if not sup.position_only:
         raise UnsupportedTarget(
             f"{sup.name!r} reads its own private history ({sup}), and the {continuation!r} continuation evaluates the "
-            "target inside determinized worlds whose private history is fabricated (docs/spec.md section 32). "
+            "target inside determinized worlds whose private history is fabricated (docs/foundations/spec.md section 32). "
             "Measured on TOY against the tabulated Nash strategy, 79.5 % of such queries miss the keying and silently "
             "return the first legal action, so the search would best-respond to a policy the target does not follow. "
             "Use continuation='surrogate' (a fixed stand-in opponent), 'minimax', or 'rollout' instead."
@@ -321,7 +321,7 @@ def build(rs: Ruleset, target, budget: Budget, leaf=None, surrogate=None, rollou
     against."""
     if check:
         check_supported(rs, target, budget.continuation)
-    # A name identifies a policy (docs/spec.md section 13) and keys both the action rng and the
+    # A name identifies a policy (docs/foundations/spec.md section 13) and keys both the action rng and the
     # world sampling, so every knob that changes the policy has to appear in it -- including the
     # target, since a `response` attacker is a different policy per target.
     label = name or f"lbr_{budget.label}_vs_{getattr(target, 'name', 'target')}"
@@ -331,7 +331,7 @@ def build(rs: Ruleset, target, budget: Budget, leaf=None, surrogate=None, rollou
         if budget.belief != "prior":
             # `PimcRollout` determinizes without a belief, so any other value would put a rung in
             # the agent's name that its policy does not use -- and a name must identify a policy
-            # (docs/spec.md section 13). Refuse rather than mislabel.
+            # (docs/foundations/spec.md section 13). Refuse rather than mislabel.
             raise ValueError(f"the rollout continuation has no belief rung, so belief={budget.belief!r} would mislabel it; use belief='prior'")
         return PimcRollout(rs, rollout_agents, worlds=budget.worlds, rollouts=budget.rollouts, name=label, seed=budget.seed)
     if budget.continuation == "response":
@@ -397,7 +397,7 @@ def nashconv_bound(b0, b1, z: float = 1.96) -> NashConvBound:
     pair. The standard error is taken from the per-deal *sum*, which is what carries the covariance
     whatever its sign, so the seats are never assumed independent. The measured correlation is mild
     and not always negative: -0.30 on `TOY` and -0.10 on `FULL_UNO` for a rulebot row
-    (docs/results/index.md), and +0.10 +- 0.16 for an attacker against Random over 40 full-UNO deals.
+    (docs/foundations/results/index.md), and +0.10 +- 0.16 for an attacker against Random over 40 full-UNO deals.
     So this is not a large correction in practice -- it is simply the one that needs no assumption."""
     x, y = np.asarray(b0, dtype=float), np.asarray(b1, dtype=float)
     if x.shape != y.shape:

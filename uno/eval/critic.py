@@ -1,4 +1,4 @@
-"""A fitted value function for AIVAT on rulesets with no exact tree (step 9.5b, docs/spec.md
+"""A fitted value function for AIVAT on rulesets with no exact tree (step 9.5b, docs/foundations/spec.md
 section 23): colour- and rank-symmetric features of a position, a fractional logistic
 regression fitted by IRLS (numpy only), and `CriticValues`, the value model that feeds it
 to `uno.eval.aivat` through the chance model `uno.game.chance.draw_outcomes`.

@@ -4,7 +4,7 @@
 
 Three cached trees, each with one keying: the lazy tree with L1 (the
 opponents' strategies and the Nash agent), the lazy tree with L2 (the L2
-responder; the L1 keying is attached to it, docs/spec.md section 16) and the
+responder; the L1 keying is attached to it, docs/foundations/spec.md section 16) and the
 world tree with L1 (the L3 responder needs no keying, `best_response_perfect`).
 Prints BR L1 / L2 / L3 per seat against Random, the Heuristic and the Nash
 agent, with the information gaps, next to the forced-play ruleset's.

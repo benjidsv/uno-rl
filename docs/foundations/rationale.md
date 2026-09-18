@@ -1,4 +1,12 @@
-# UNO RL v5: project context
+# UNO RL v5: foundation rationale and history
+
+> **Foundation reference, frozen 2026-09-18.** This is the long-form record of
+> Steps 1-10: why techniques were chosen, what they measured, corrections, failed
+> approaches, and practical notes from that project. It is not the entrypoint for
+> current RL work and some status prose is historical. Search the headings or a
+> topic and read only the relevant section. Start in
+> [`../rl/README.md`](../rl/README.md); use
+> [`results/index.md`](results/index.md) for canonical foundation numbers.
 
 **Status update, 2026-09-18:** all of **10a.3, 10B and 10C** are complete. Step
 10C froze four cheap policies as an equal-weight league after an exact toy
@@ -8,10 +16,10 @@ memory ablation has the best held-out aggregate, but no variant establishes an
 improvement over the Heuristic across both seats and columns. The coarse-memory
 evidence has been repaired and refreshed (10a.3A); the learner observation
 contract is defined with three comparison arms (10a.3B,
-[docs/observation-contract.md](observation-contract.md)); and the **LBR attack
+[docs/rl/observation-contract.md](../rl/observation-contract.md)); and the **LBR attack
 instrument** is built and calibrated (10a.3C, [spec section 32](spec.md),
 [results](results/10-readiness/10a3c-results.md)). **Step 11** follows. See
-[the execution plan](10-to-11-plan.md), [the review](results/10-readiness/10-review.md), and
+[the execution plan](history/transition-to-rl-plan.md), [the review](results/10-readiness/10-review.md), and
 [the repair results](results/10-readiness/10a3a-results.md). Older memory-sufficiency claims
 below must be read with this update. A side diagnostic of the same day, **9.5g**
 (section 5.26, [results](results/09-evaluation/09.5g-results.md)), declines a proposal to replace
@@ -32,10 +40,10 @@ training-target, shaping, belief, column-free-player, corrected toy-memory
 contracts, learner observation contract, calibrated attack instrument, 10B
 figures, and frozen 10C rulebot league are built. Next is Step 11.
 
-The repo's detailed sources, if you have them: `docs/plan.md` (build order,
-motivation), `docs/spec.md` (the rules and every algorithm; it wins over the
-code), `docs/results/<phase>/<step>.md` (one file per step, numbers as measured then),
-`docs/results/index.md` (current headline numbers). If this file and
+The repo's detailed sources, if you have them: `docs/foundations/history/original-plan.md` (build order,
+motivation), `docs/foundations/spec.md` (the rules and every algorithm; it wins over the
+code), `docs/foundations/results/<phase>/<step>.md` (one file per step, numbers as measured then),
+`docs/foundations/results/index.md` (current headline numbers). If this file and
 `index.md` disagree on a number, `index.md` is right.
 
 ---
@@ -639,7 +647,7 @@ named toys never take (duplicate cards, +2 / +4 penalty draws) are checked on a
 
 **What it bought:** section 6 readings now carry their scoring and fill-in
 caveats (section 7); checkpoint comparisons on full UNO turned out affordable
-with pairing on a shared stream. Results: `docs/results/09-evaluation/09-results.md`.
+with pairing on a shared stream. Results: `docs/foundations/results/09-evaluation/09-results.md`.
 
 ### 5.15 Step 9.5a tools: memory ceilings, edge attribution, node lookup
 
@@ -707,7 +715,7 @@ against `"heuristic"` as soon as both sides are available and immediately
 slimming the trace away, the same pattern `uno.experiments.transfer` already
 used elsewhere.
 
-**What it bought at the time:** `docs/results/09-evaluation/09.5a-results.md`. Its claim that
+**What it bought at the time:** `docs/foundations/results/09-evaluation/09.5a-results.md`. Its claim that
 K1 recovered 96-99.8 % of BR L1's edge is historical and superseded by 5.24:
 the policy was not strictly K1-measurable, and the ratio used return relative to
 zero instead of skill relative to the same-seat Random baseline. The qualitative
@@ -725,7 +733,7 @@ dissimilar policies remove ~10 % (section 6.6). AIVAT (section 9) needed an
 exactly validated implementation, a chance model with reshuffles, and a value
 function that exists where no tree does.
 
-**Techniques** (`docs/spec.md` section 23):
+**Techniques** (`docs/foundations/spec.md` section 23):
 
 - **The estimator as records.** A value model emits per decision the value at the
   state, the pre-chance value of every action of the support and the value of the
@@ -831,7 +839,7 @@ deal correction 0.38 / 0.39 (1,483 deals). On the toys the network is nearly the
 - At a fixed rollout budget, **many noisy targets beat few clean ones** (n = 2 on 20,000 games over
   n = 32 on 1,250), and network width barely matters: the limit is the features.
 
-Results: `docs/results/09-evaluation/09.5c-results.md`.
+Results: `docs/foundations/results/09-evaluation/09.5c-results.md`.
 
 ### 5.18 Step 9.5d: PIMC as an agent, exact on the toys and sampled on full UNO
 
@@ -839,7 +847,7 @@ Results: `docs/results/09-evaluation/09.5c-results.md`.
 *player* -- and what its known biases (strategy fusion, non-locality) actually cost -- was untested.
 The toys can answer it exactly, which is what they are for.
 
-**Techniques** (`docs/spec.md` section 25):
+**Techniques** (`docs/foundations/spec.md` section 25):
 
 - **Exact PIMC-infinity** (`uno/compiled/pimc.py`) on the toy **world trees**. Every non-root arc of
   a world tree has one edge of probability 1 and `reach(...)[:, 2]` is the world's prior, so the
@@ -896,14 +904,14 @@ value network at both seats (`d2` uses the right one), so at seat 1 it searches 
 fitted on a different state distribution. One line to fix, and every seat-1 number in step 9.5d is
 mildly pessimistic until it is.
 
-Results: `docs/results/09-evaluation/09.5d-results.md`.
+Results: `docs/foundations/results/09-evaluation/09.5d-results.md`.
 
 ### 5.19 Step 9.5e: the continuation rule, the largest full-UNO lever so far
 
 **Problem:** 9.5d closed with three untested approximations in the full-UNO PIMC agent and a known
 wiring defect. The toys had already ranked them, so this step spent the budget in that order.
 
-**Techniques** (`docs/spec.md` section 25):
+**Techniques** (`docs/foundations/spec.md` section 25):
 
 - **The `response` continuation** (`uno.eval.search.response_value`): each determinized world is
   solved as a perfect-information best response to the column's *real* policy -- max at the agent's
@@ -969,7 +977,7 @@ uniform prior it replaced*. What works conditions instead of weighting. The toy 
 above as the reason to defer (0.0-0.6 points against Random) also did not transfer: full UNO gives
 +2.83 / +4.40 at both seats.
 
-Results: `docs/results/09-evaluation/09.5e-results.md`.
+Results: `docs/foundations/results/09-evaluation/09.5e-results.md`.
 
 ### 5.20 Step 9.5f: the opponent-hand belief, and a design in the plan that does not work
 
@@ -986,7 +994,7 @@ collapse at 62 % of decisions, scored **worse than the prior it replaced** (Brie
 0.085). The lesson generalises: **condition, never weight** -- build a world consistent with what
 was observed rather than sampling one and testing it afterwards.
 
-**Techniques** (`docs/spec.md` section 26), both sampling the hand at the *current* split, where
+**Techniques** (`docs/foundations/spec.md` section 26), both sampling the hand at the *current* split, where
 consistency is automatic, and using the history only to constrain or score it:
 
 - **`voids`**: a draw proves the drawer held nothing playable against the board then in force; if
@@ -1089,7 +1097,7 @@ it weighs all `tries` candidates where `voids` returns on the first survivor -- 
 several times `voids` per call, with `tries` as a quality/cost knob that interacts with the decay;
 that one is a scratch benchmark so far, not yet a repo section.
 
-Results: `docs/results/09-evaluation/09.5f-results.md`.
+Results: `docs/foundations/results/09-evaluation/09.5f-results.md`.
 
 ### 5.21 After 9.5f: a 2.6-4.5x speed-up that changes no number
 
@@ -1099,7 +1107,7 @@ time in the leaf value network** and most of that in torch's per-call dispatch, 
 the search called the leaf once per leaf state, so every forward was a batch of one. Measured on
 `FULL_UNO`, 78.5 us a row at batch 1 against 7.0 us at batch 32-256.
 
-**Technique** (`docs/spec.md` section 25): a decision searches a whole *sample* of determinized
+**Technique** (`docs/foundations/spec.md` section 25): a decision searches a whole *sample* of determinized
 worlds, all independent, so `uno.eval.search.batched_search_q` plans every one of their
 depth-limited trees before consulting the leaf (`_plan` defers each leaf state into one list and
 leaves its index in the plan), evaluates them all in one call, and backs the values up (`_fold`).
@@ -1164,7 +1172,7 @@ share of impossible worlds, neither of which more speed answers.
 
 **Problem:** step 11 will produce checkpoints, and nothing decided in advance what gets
 measured about one, on which seeds, or what counts as better. Three items
-(`docs/results/10-readiness/10a-results.md`); the other three of the brainstorm's six, plus LBR,
+(`docs/foundations/results/10-readiness/10a-results.md`); the other three of the brainstorm's six, plus LBR,
 follow in 10a.2.
 
 - **The seed registry** (`uno.eval.seeds`, spec section 27.1). `EVAL_POOL` is partitioned
@@ -1209,7 +1217,7 @@ follow in 10a.2.
 
 **Problem:** 10a fixed what gets measured about a checkpoint; this fixes what a checkpoint is
 *trained on*, plus the two ladder rows and the shaping artifacts that were designs rather than
-files (`docs/results/10-readiness/10a2-results.md`).
+files (`docs/foundations/results/10-readiness/10a2-results.md`).
 
 - **The training target** (`uno.eval.target.TRAINING`, spec section 28): chance + opponent +
   deal, **never the agent's own decisions**. The argument was in the brainstorm; what is new
@@ -1296,7 +1304,7 @@ Heuristic and BR L1 controls are unchanged. The refreshed K1 gaps to BR L1 remai
 small on several toys but are nonzero, including 1.49 / 1.66 points against Random
 on `TOY2_SKIP` and 0.39 / 0.46 on `TOY2_FULL`. They are gaps of an achieved local
 iterate, not proofs of representational loss or of the K1 optimum. Full-UNO K1
-sufficiency remains untested. Results: `docs/results/10-readiness/10a3a-results.md`.
+sufficiency remains untested. Results: `docs/foundations/results/10-readiness/10a3a-results.md`.
 
 ### 5.25 Steps 10a.3B and 10a.3C: the observation contract, and an attack instrument
 
@@ -1305,7 +1313,7 @@ feed-forward, K1 plus structured draw/play evidence, recurrent public/private hi
 explicit field list, the shared legality mask, colour/rank equivariance, the seat-0 frame, and what
 the evaluator can query. Its load-bearing clause is negative: a recurrent target **cannot** be
 queried through fabricated private history as though that were its real conditional policy
-(docs/observation-contract.md, spec section 31).
+(docs/rl/observation-contract.md, spec section 31).
 
 **Problem for 10a.3C.** On full UNO there was still **no exploitability number of any kind**. Every
 quality measure was "score against a fixed column", which cannot distinguish "learned to beat this
@@ -1340,7 +1348,7 @@ claimed). The pilot itself read those ~7.8 and ~3.9 points *higher*, which is ex
 number comes off a block nothing was selected on; the pilot also showed the bound climbing +7.0
 points from w = 8 to w = 32, so it is budget-limited rather than target-limited. Against the
 column-free PIMC row the attack finds nothing (+1.00 +- 6.11 on 100 DEV deals): a reported result,
-not a safety claim. Results: `docs/results/10-readiness/10a3c-results.md`.
+not a safety claim. Results: `docs/foundations/results/10-readiness/10a3c-results.md`.
 
 **What it taught.**
 
@@ -1444,7 +1452,7 @@ on the same grouping.
   is this project's headline quality measure. Sound search under imperfect information is CFR
   re-solving, not ISMCTS; neither is on the 10 -> 11 path.
 
-Results: `docs/results/09-evaluation/09.5g-results.md`.
+Results: `docs/foundations/results/09-evaluation/09.5g-results.md`.
 
 ## 6. Results: what we know
 
@@ -1774,13 +1782,13 @@ Kept because they show where this kind of analysis goes wrong.
 | 8.7 | TOY2 family sized and solved, DCFR / PCFR+, validation | done |
 | 8.8 | review, methodology fixes M1-M4 | done |
 | 8.9 | duplicate-card deal fix, rng-name check, cache version, full rerun | done |
-| 9 | review follow-ups (`docs/results/09-evaluation/09-review.md`, `09-results.md`): split share, test power, exhaustion scorings, two-sided values, equilibrium choice, fill-in, deal model, pairing on full UNO, ticket draws, speed-ups; the review's section D (where the skill is, memory ceiling, metrics) is still to discuss | done |
-| 9.5a | exact: memory keys (K0/K1/K2), edge-by-decision decomposition, fixed-opponent metric, deal model at 100k seeds, divergence statistic, node lookup, sampled D2 cross-check; brainstorm and section D verdicts in `docs/results/09-evaluation/09.5-brainstorm.md` | done |
-| 9.5b | AIVAT: exact validation on the toys (exact moments, scorings, tickets, imperfect-V curve, deal term at 5M seeds), chance model with reshuffle, L2-state logistic critic, `MID_12` / `MID_25`, full UNO, transfer curve (`docs/results/09-evaluation/09.5b-results.md`) | done |
-| 9.5c | PIMC values as a teacher: determinized rollouts against the exact toys, the deal floor, a symmetric value network as AIVAT's V (full UNO 0.71/0.76 → 0.46/0.47), the Monte Carlo deal mean, the cost of rollouts as V (`docs/results/09-evaluation/09.5c-results.md`) | done |
-| 9.5d | PIMC agent: exact PIMC-∞ on the toy world trees vs BR L1 / L2 (with and without opponent-reach weighting), PIMC-n, the full-UNO PIMC **search** row evaluated with 9.5c's network (the rollout player is a weaker comparator), full-UNO D2 with a search Q, and the worlds-versus-depth budget study (MCTS deferred) (`docs/results/09-evaluation/09.5d-results.md`) | done |
-| 9.5e | the `response` continuation (each determinized world solved as a best response to the known column: +10.2 / +5.2 points on full UNO, and *cheaper* than two-sided), per-seat leaf networks (9.5d used the seat-0 one at both seats), AIVAT on the new row; inference deferred to a particle-filter sub-step (`docs/results/09-evaluation/09.5e-results.md`) | done |
-| 9.5f | **PIMC inference**: the particle filter over the deal that `plan.md` specified **does not work** (survival 0.156 -> 0 over the opponent's first five plays; the built version scored worse than the prior it replaced). Replaced by rungs that condition instead of weighting -- `voids` (a draw proves the drawer held nothing playable; no policy *probabilities*, though it assumes a playable drawn card is played at once, so the row does **not** stay general unchanged) and `window` (plus the opponent's real probabilities over their trailing no-draw run of plays). **+2.83 / +4.40** points against Random at both seats for `voids`, where the toys predicted 0.0-0.6; the soft rung adds nothing measurable on top (`window - voids` +0.93 / -0.87) (`docs/results/09-evaluation/09.5f-results.md`) | done |
+| 9 | review follow-ups (`docs/foundations/results/09-evaluation/09-review.md`, `09-results.md`): split share, test power, exhaustion scorings, two-sided values, equilibrium choice, fill-in, deal model, pairing on full UNO, ticket draws, speed-ups; the review's section D (where the skill is, memory ceiling, metrics) is still to discuss | done |
+| 9.5a | exact: memory keys (K0/K1/K2), edge-by-decision decomposition, fixed-opponent metric, deal model at 100k seeds, divergence statistic, node lookup, sampled D2 cross-check; brainstorm and section D verdicts in `docs/foundations/results/09-evaluation/09.5-brainstorm.md` | done |
+| 9.5b | AIVAT: exact validation on the toys (exact moments, scorings, tickets, imperfect-V curve, deal term at 5M seeds), chance model with reshuffle, L2-state logistic critic, `MID_12` / `MID_25`, full UNO, transfer curve (`docs/foundations/results/09-evaluation/09.5b-results.md`) | done |
+| 9.5c | PIMC values as a teacher: determinized rollouts against the exact toys, the deal floor, a symmetric value network as AIVAT's V (full UNO 0.71/0.76 → 0.46/0.47), the Monte Carlo deal mean, the cost of rollouts as V (`docs/foundations/results/09-evaluation/09.5c-results.md`) | done |
+| 9.5d | PIMC agent: exact PIMC-∞ on the toy world trees vs BR L1 / L2 (with and without opponent-reach weighting), PIMC-n, the full-UNO PIMC **search** row evaluated with 9.5c's network (the rollout player is a weaker comparator), full-UNO D2 with a search Q, and the worlds-versus-depth budget study (MCTS deferred) (`docs/foundations/results/09-evaluation/09.5d-results.md`) | done |
+| 9.5e | the `response` continuation (each determinized world solved as a best response to the known column: +10.2 / +5.2 points on full UNO, and *cheaper* than two-sided), per-seat leaf networks (9.5d used the seat-0 one at both seats), AIVAT on the new row; inference deferred to a particle-filter sub-step (`docs/foundations/results/09-evaluation/09.5e-results.md`) | done |
+| 9.5f | **PIMC inference**: the particle filter over the deal that `plan.md` specified **does not work** (survival 0.156 -> 0 over the opponent's first five plays; the built version scored worse than the prior it replaced). Replaced by rungs that condition instead of weighting -- `voids` (a draw proves the drawer held nothing playable; no policy *probabilities*, though it assumes a playable drawn card is played at once, so the row does **not** stay general unchanged) and `window` (plus the opponent's real probabilities over their trailing no-draw run of plays). **+2.83 / +4.40** points against Random at both seats for `voids`, where the toys predicted 0.0-0.6; the soft rung adds nothing measurable on top (`window - voids` +0.93 / -0.87) (`docs/foundations/results/09-evaluation/09.5f-results.md`) | done |
 | **10** | **formalise the toy results: figures and tables that RL relies on** | **next** |
 | 11 | RL | |
 
@@ -1874,7 +1882,7 @@ Planned design and checks (from the plan and step 8.9):
   config token and `pimc uno` a trailing `r` argument, both selecting the `response` continuation
   (each determinized world solved as a best response to the known column). Since step 9.5f
   `pimc belief [deals] [worlds] [depth] [workers] [column=random|heuristic]` runs the belief ladder
-  (`prior` / `voids` / `window`, docs/spec.md section 26) against the named column -- the column is
+  (`prior` / `voids` / `window`, docs/foundations/spec.md section 26) against the named column -- the column is
   part of the question, since Random's play choices are nearly uniform and so say little, which is
   why the toys put the belief axis at 0.0-0.6 points against Random but up to 2.6 against the
   Heuristic -- and a further `v` / `w` on a `sweep` config token (`s32x2rv`) climbs any ladder
@@ -1929,13 +1937,15 @@ Planned design and checks (from the plan and step 8.9):
   `uno/experiments/` (one module per step).
 - About the author: comfortable with RL and PPO, newer to game-tree methods
   (minimax, CFR, best response, OpenSpiel); explain those plainly.
-- A session starts by reading this file and `git log`, then brainstorming.
-- Workflow: brainstorm the next step before building (recommendation +
-  pros/cons, few questions); a review of existing code alongside, with findings
-  batched into an "X.5"-style fix step; results go in `docs/results/<phase>/<step>.md`
-  (header: commit + rerun command) and `index.md`; algorithm/rule changes go in
-  `docs/spec.md`; build order in `docs/plan.md`; **this file** is updated at the
-  end of each step. The user makes the git commits.
+- During the foundation project, a session started by reading this file and
+  `git log`. That is now historical practice: active sessions follow `AGENTS.md`
+  and start in `docs/rl/README.md`; this file is searched only when its rationale
+  is relevant.
+- Foundation-era workflow: brainstorm the next step before building
+  (recommendation + pros/cons, few questions); review existing code alongside;
+  put measurements in `docs/foundations/results/<phase>/<step>.md` and contracts
+  in `docs/foundations/spec.md`. This rationale is now frozen except for explicit
+  corrections. The user makes the git commits.
 - Keep tests bounded: cap hypothesis example size by census, small
   `max_examples` when an example calls a reference solver, long checks in
   experiments. Check a new test file's runtime before handing over: a sudden

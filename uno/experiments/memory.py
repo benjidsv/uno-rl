@@ -6,7 +6,7 @@ memoryless ceiling: does the RL observation need history?").
     uv run uno memory [ruleset=TOY] [iterations=20]
 
 Responses to Random and to the Heuristic, per seat, at three nested coarse keys
-(`uno.compiled.coarse`, docs/spec.md section 20):
+(`uno.compiled.coarse`, docs/foundations/spec.md section 20):
 
 - K0: hand, top, current colour, opponent hand size, pile size, phase, drawn card;
 - K1: K0 + the discard pile as a multiset;

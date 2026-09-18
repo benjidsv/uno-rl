@@ -1,6 +1,6 @@
 """AIVAT (Burch et al. 2016, arXiv:1612.06915) over recorded games: a fourth estimator
 on the same traces as raw, mirrored and paired ("play once, estimate many ways",
-`uno.eval.estimate`). See docs/spec.md section 23.
+`uno.eval.estimate`). See docs/foundations/spec.md section 23.
 
 For a value model V (seat-0 return units) with node values `nu` and, for an action,
 its pre-chance value `alpha(h, a)` (the expectation of `nu` over the action's chance
@@ -79,7 +79,7 @@ class StepRecord:
 
 
 class ValueModel(Protocol):
-    exhaustion: str  # the scoring of exhaustion endings the model's values use (docs/spec.md section 9)
+    exhaustion: str  # the scoring of exhaustion endings the model's values use (docs/foundations/spec.md section 9)
     deal_mean: float | None  # E over deals of V at the first state; None when not computable (full UNO)
 
     def records(self, trace: Trace) -> list[StepRecord]: ...
@@ -178,7 +178,7 @@ def stream_pairs(rs: Ruleset, agents, seeds, models: tuple[ValueModel, ValueMode
     ~1 GB of states (step 9.5a, bug 4); this holds one pair at a time."""
     names = (getattr(agents[0], "name", "?"), getattr(agents[1], "name", "?"))
     if agents[0] is not agents[1] and (names[0] == names[1] or stream_name(agents[0]) == stream_name(agents[1])):
-        raise ValueError(f"two different agents named {names[0]!r} would share action rng streams (docs/spec.md section 13)")
+        raise ValueError(f"two different agents named {names[0]!r} would share action rng streams (docs/foundations/spec.md section 13)")
     swapped = (agents[1], agents[0])
     for seed in seeds:
         try:
@@ -263,6 +263,6 @@ def bootstrap_ratio(x: np.ndarray, y: np.ndarray, reps: int = 2000, level: float
 def mirror_regret(records: list[StepRecord], seat: int) -> float:
     """Sum over `seat`'s decisions of `V(h) - sum_a sigma(a|h) alpha(h, a)`: with V the
     values of a reference profile, the sampled edge decomposition of
-    `uno.compiled.edge.sampled_mirror` (docs/spec.md section 21), read off the same
+    `uno.compiled.edge.sampled_mirror` (docs/foundations/spec.md section 21), read off the same
     records AIVAT uses. Seat-0 return units; negate for seat 1."""
     return sum(r.node - sum(p * r.alpha[a] for a, p in r.probs.items()) for r in records if r.player == seat)

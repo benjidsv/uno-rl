@@ -1,4 +1,4 @@
-"""One hand-built position per rule in docs/spec.md."""
+"""One hand-built position per rule in docs/foundations/spec.md."""
 
 from dataclasses import replace
 

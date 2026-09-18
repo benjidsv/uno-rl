@@ -1,5 +1,5 @@
 """Step 10B: reproducible report-card figures
-(`docs/results/10-readiness/10-brainstorm.md` section 6).
+(`docs/foundations/results/10-readiness/10-brainstorm.md` section 6).
 
     uv run uno figures [output_root=docs/generated/report-card]
 
@@ -28,7 +28,7 @@ Two things are **not** recomputed here, named rather than silently pinned:
 `index.md`'s hand-written tables are not spliced over by this command: its
 tables interleave prose and footnotes with the numbers throughout, so
 generating replacement markdown for the whole file is out of scope here (see
-`docs/results/10-readiness/10b-results.md`). The check above is the regression instrument
+`docs/foundations/results/10-readiness/10b-results.md`). The check above is the regression instrument
 the brainstorm's "staleness has bitten before" concern actually asked for.
 """
 
@@ -60,10 +60,10 @@ FAILS: list[str] = []
 RULESETS = ("TOY", "TOY_FULL", "TOY2", "TOY2_SKIP", "TOY2_FULL")
 NASH_CONFIG = {"TOY": (1000, "cfr+"), "TOY_FULL": (1000, "cfr+"), "TOY2": (1000, "cfr+"), "TOY2_SKIP": (1000, "cfr+"), "TOY2_FULL": (150, "dcfr")}
 
-# Nash seat-0 score, docs/results/index.md "Nash value and seat gaps".
+# Nash seat-0 score, docs/foundations/results/index.md "Nash value and seat gaps".
 NASH_SEAT0 = {"TOY": 0.6196, "TOY_FULL": 0.5866, "TOY2": 0.5784, "TOY2_SKIP": 0.5748, "TOY2_FULL": 0.5564}
 
-# (ruleset, opponent, seat) -> (BR L1, BR L2, BR L3) score, docs/results/index.md
+# (ruleset, opponent, seat) -> (BR L1, BR L2, BR L3) score, docs/foundations/results/index.md
 # "Best-response columns". Doubles as the digit-check target for every cell this script
 # recomputes live, and as the only source for TOY2_FULL's L2/L3 (never live here, see above).
 BR_PUBLISHED: dict[tuple[str, str, int], tuple[float, float, float]] = {
@@ -81,7 +81,7 @@ BR_PUBLISHED: dict[tuple[str, str, int], tuple[float, float, float]] = {
 
 # Sampled full-UNO results that are not cheaply reproducible here (source file in each comment).
 HISTORICAL = {
-    # variance ratio (raw = 1.0), heuristic vs random, seat 0 / seat 1 (docs/results/index.md "AIVAT").
+    # variance ratio (raw = 1.0), heuristic vs random, seat 0 / seat 1 (docs/foundations/results/index.md "AIVAT").
     "variance_ratio": {
         ("TOY", "fitted critic, no deal"): (0.73, 0.88),
         ("TOY", "fitted network, no deal"): (0.45, 0.51),
@@ -91,16 +91,16 @@ HISTORICAL = {
         ("FULL_UNO", "fitted network, + deal"): (0.38, 0.39),
     },
     # deals for a 3-point claim at 3 sigma / 80% power, raw -> AIVAT fitted network (09.5c),
-    # heuristic vs random (docs/results/index.md "AIVAT").
+    # heuristic vs random (docs/foundations/results/index.md "AIVAT").
     "deals_3pt": {"seat 0": (3860, 1776), "seat 1": (3956, 1854)},
-    # the full-UNO lever ladder, points at both seats (docs/results/09-evaluation/09.5e-results.md, 09.5f section 7.2).
+    # the full-UNO lever ladder, points at both seats (docs/foundations/results/09-evaluation/09.5e-results.md, 09.5f section 7.2).
     "levers": [
         ("continuation\n(response vs minimax)", 9.73, 4.57),
         ("belief\n(voids vs prior)", 2.83, 4.40),
         ("worlds\n(8 -> 32, d=2)", 5.57, 3.33),
         ("depth\n(2 -> 3, w=32)", 0.0, 0.0),  # "every difference within 1.5 sigma of zero" (09.5e)
     ],
-    # D2 (docs/results/index.md "D2 with a search Q"): ~97% of the Heuristic's disagreement with a
+    # D2 (docs/foundations/results/index.md "D2 with a search Q"): ~97% of the Heuristic's disagreement with a
     # w=32 search falls in these two node-kind-like buckets (a different taxonomy from
     # uno.eval.decisions.NODE_KINDS, so not stacked against the live TOY bar's own categories).
     "d2_shares": {"action-card timing": (0.68, 0.73), "wild handling": (0.25, 0.29)},
@@ -214,7 +214,7 @@ def fig_values_of_information(data: dict, path: Path) -> None:
     ax.set_xticks(x)
     ax.set_xticklabels(RULESETS, rotation=20, ha="right")
     ax.set_ylabel("score points")
-    ax.set_title("Values of information: hidden information grows with the toy\n(hollow = TOY2_FULL, not live-recomputed; docs/results/index.md)")
+    ax.set_title("Values of information: hidden information grows with the toy\n(hollow = TOY2_FULL, not live-recomputed; docs/foundations/results/index.md)")
     ax.legend(fontsize=8)
     ax.axhline(0, color="#dddddd", lw=1, zorder=0)
     fig.tight_layout()
@@ -225,7 +225,7 @@ def fig_values_of_information(data: dict, path: Path) -> None:
 def fig_budget(path: Path) -> None:
     """3. The budget picture: AIVAT variance ratio (raw = 1.0) by estimator, toys next to
     full UNO, seat 0 / seat 1. Lower is better -- less of the estimator is luck. Where the
-    deal count for a 3-point claim is known (fitted network, docs/results/index.md 'AIVAT'),
+    deal count for a 3-point claim is known (fitted network, docs/foundations/results/index.md 'AIVAT'),
     it is annotated on the bar. All values: HISTORICAL, sampled full-UNO/toy results."""
     ratios = HISTORICAL["variance_ratio"]
     cats = ["fitted critic, no deal", "fitted network, no deal", "fitted network, + deal"]
@@ -243,7 +243,7 @@ def fig_budget(path: Path) -> None:
     ax.set_yticks(y)
     ax.set_yticklabels(cats)
     ax.set_xlabel("variance ratio, AIVAT / raw (lower = fewer deals needed)")
-    ax.set_title("The budget picture: heuristic vs random,\ntoy vs full UNO (docs/results/index.md 'AIVAT')")
+    ax.set_title("The budget picture: heuristic vs random,\ntoy vs full UNO (docs/foundations/results/index.md 'AIVAT')")
     handles, labels = ax.get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     ax.legend(by_label.values(), by_label.keys(), fontsize=7, loc="center left", bbox_to_anchor=(1.01, 0.5))
@@ -254,7 +254,7 @@ def fig_budget(path: Path) -> None:
 
 def fig_edge_by_decision(data: dict, path: Path) -> None:
     """4. Edge by decision: the Heuristic's gap to BR L1(random), live on TOY, by
-    `uno.eval.decisions.node_kind`; next to the full-UNO D2 finding (docs/results/index.md
+    `uno.eval.decisions.node_kind`; next to the full-UNO D2 finding (docs/foundations/results/index.md
     'D2 with a search Q'), a different taxonomy (action-card timing / wild handling), so the
     two bars are shown side by side rather than stacked against the same categories."""
     tree = data["TOY"]["lazy"]
@@ -292,7 +292,7 @@ def fig_edge_by_decision(data: dict, path: Path) -> None:
 
 
 def fig_lever_ladder(path: Path) -> None:
-    """5. The full-UNO lever ladder: where 9.5's points came from (docs/results/09-evaluation/09.5e-results.md,
+    """5. The full-UNO lever ladder: where 9.5's points came from (docs/foundations/results/09-evaluation/09.5e-results.md,
     09.5f section 7.2), seat 0 / seat 1. HISTORICAL -- specifically about full-UNO PIMC."""
     levers = HISTORICAL["levers"]
     fig, ax = plt.subplots(figsize=(8, 4.5))

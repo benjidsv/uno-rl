@@ -1,4 +1,4 @@
-"""`observation_from_key` rebuilds the observation at every decision node from the key alone (docs/spec.md section 10).
+"""`observation_from_key` rebuilds the observation at every decision node from the key alone (docs/foundations/spec.md section 10).
 Step 10a: and `batch_l1_observations` rebuilds many at once, to the same values (item A2)."""
 
 from __future__ import annotations

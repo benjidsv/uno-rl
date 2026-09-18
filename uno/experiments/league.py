@@ -14,10 +14,10 @@ project has actually built: true uniform-random (`UniformLegal`), the ladder's
 10a.2 (`uno.experiments.colfree.column_free_row`, assume-heuristic and minimax, both
 with the `voids` belief, w=32 d=2 -- the working general-player set that step
 established). The `response` / `window` PIMC continuations are **excluded on purpose**:
-they read their column's real policy by construction (docs/results/10-readiness/10a2-results.md,
-docs/results/09-evaluation/09.5f-results.md), so "X vs Random" and "X vs Heuristic" are not the same
+they read their column's real policy by construction (docs/foundations/results/10-readiness/10a2-results.md,
+docs/foundations/results/09-evaluation/09.5f-results.md), so "X vs Random" and "X vs Heuristic" are not the same
 policy under those continuations -- they are ladder *instruments*, and a name identifies
-a policy (docs/spec.md section 13). Folding them into one league row would silently
+a policy (docs/foundations/spec.md section 13). Folding them into one league row would silently
 report several different agents under one name.
 
 Round-robin: every ordered (row, column) pair, including self-play, scored at both
@@ -31,7 +31,7 @@ reimplemented). Figures:
   reference, e.g. 09.5e) against mean league score (both seats, every opponent
   including self-play), log-x, with the Pareto-efficient points connected.
 - `deal-floor.svg`: the deal floor by game length (`uv run uno pimc_value floor`,
-  docs/results/index.md "PIMC as an agent"), entirely historical -- five already-published
+  docs/foundations/results/index.md "PIMC as an agent"), entirely historical -- five already-published
   numbers, not re-measured.
 """
 
@@ -55,8 +55,8 @@ from uno.game import rules
 
 # Average decisions ("actions") per game and the deal floor's share of the outcome variance
 # (Heuristic vs Random, 2,000 EVAL deals x 32 pile determinizations), seat 0 / seat 1.
-# docs/results/index.md "PIMC as an agent" / "the deal floor"; docs/results/09-evaluation/09.5b-results.md
-# section 4 (actions/game); docs/results/03-08-foundations/08.7-toy2.md (TOY / TOY2 dec/game).
+# docs/foundations/results/index.md "PIMC as an agent" / "the deal floor"; docs/foundations/results/09-evaluation/09.5b-results.md
+# section 4 (actions/game); docs/foundations/results/03-08-foundations/08.7-toy2.md (TOY / TOY2 dec/game).
 DEAL_FLOOR = [
     ("TOY", 6.5, 0.42, 0.47),
     ("TOY2", 7.1, 0.38, 0.40),
@@ -143,7 +143,7 @@ def fig_cost_vs_strength(names: list[str], seat0: np.ndarray, seat1: np.ndarray,
 
 
 def fig_deal_floor(path: Path) -> None:
-    """8. The deal floor by game length: entirely historical (docs/results/index.md)."""
+    """8. The deal floor by game length: entirely historical (docs/foundations/results/index.md)."""
     labels = [d[0] for d in DEAL_FLOOR]
     x = [d[1] for d in DEAL_FLOOR]
     y0 = [d[2] for d in DEAL_FLOOR]
@@ -155,7 +155,7 @@ def fig_deal_floor(path: Path) -> None:
         ax.annotate(label, (xi, yi), fontsize=8, xytext=(6, 6), textcoords="offset points")
     ax.set_xlabel("average decisions per game")
     ax.set_ylabel("deal floor: share of outcome variance fixed at the deal")
-    ax.set_title("The deal floor falls as the game gets longer\n(heuristic vs random, docs/results/index.md 'the deal floor')")
+    ax.set_title("The deal floor falls as the game gets longer\n(heuristic vs random, docs/foundations/results/index.md 'the deal floor')")
     ax.legend(fontsize=8)
     ax.set_ylim(0, 0.55)
     fig.tight_layout()

@@ -1,6 +1,6 @@
 """Exact computations as passes over a compiled tree: evaluation, outcome
 distributions, best responses (keyed, and perfect-information on a world tree),
-exploitability and the exact mirrored moments. See docs/spec.md section 16.
+exploitability and the exact mirrored moments. See docs/foundations/spec.md section 16.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def best_response(
     information set, from the deepest level up, the action maximising the
     reach-weighted sum of its histories' continuation values. Ties: the lowest action
     id, as `uno.reference.solve`. On a symmetric tree the choice is an *orbit* of
-    actions under the set's stabilizer, played uniformly (docs/spec.md section 18):
+    actions under the set's stabilizer, played uniformly (docs/foundations/spec.md section 18):
     the value equals the full game's best-response value against a symmetric
     opponent, and the strategy is symmetric.
 
@@ -72,7 +72,7 @@ def best_response(
     their first orbit, or `completion` (a strategy over the same keying, e.g. the
     Nash strategy) when given. What is played there still matters when another
     opponent steers the game there, i.e. for the exploitability of the best
-    response as a row agent (docs/spec.md section 16).
+    response as a row agent (docs/foundations/spec.md section 16).
 
     `own` (step 9.5a, `uno.compiled.coarse`): the responder's own per-arc weights
     (e.g. `tree.weights(level, sigma_t, seat)`), folded into the reach used to

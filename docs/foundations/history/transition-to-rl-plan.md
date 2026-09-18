@@ -1,9 +1,14 @@
-# Steps 10–11: revised execution plan
+# Steps 10–11: completed transition plan
+
+> **Historical transition plan.** The Step 10 work described here is complete. The
+> active learning phases have been distilled into
+> [`../../rl/plan.md`](../../rl/plan.md); current status lives in
+> [`../../rl/README.md`](../../rl/README.md).
 
 Agreed direction, 2026-09-17; **10a.3, 10B and 10C complete as of 2026-09-18**.
 10C froze its four-agent equal-weight league and confirmed it on fresh EVAL
 block 03 after exact toy and full-UNO DEV selection. Based on the
-[Step 10 review](results/10-readiness/10-review.md) and Benji's request to retain the existing
+[Step 10 review](../results/10-readiness/10-review.md) and Benji's request to retain the existing
 10B → 10C → 11 sequence.
 
 ## Placement and scope
@@ -27,7 +32,7 @@ paths, with measured throughput and bounded memory.
 
 ## 10a.3A: repair the memory measurement (done)
 
-Completed on 2026-09-17; see [the results](results/10-readiness/10a3a-results.md). The
+Completed on 2026-09-17; see [the results](../results/10-readiness/10a3a-results.md). The
 implementation canonicalizes coarse fields and actions together, pins the
 review's positive-reach collision, checks the same lifted policies across full
 and quotient `SMALL` trees, and refreshes all five planned rulesets. The
@@ -56,7 +61,7 @@ documented. This establishes trustworthy toy evidence, not full-UNO sufficiency.
 
 ## 10a.3B: define the observation contract (done)
 
-Completed on 2026-09-17; the contract is defined in [observation-contract.md](observation-contract.md). Tests verify the extraction fields and invariance properties.
+Completed on 2026-09-17; the contract is defined in [observation-contract.md](../../rl/observation-contract.md). Tests verify the extraction fields and invariance properties.
 
 Specify three Step 11 comparison arms without building the learner yet:
 
@@ -82,8 +87,8 @@ particle filter is a possible later arm, not a dependency of 10B or 10C.
 
 ## 10a.3C: build and calibrate LBR (done)
 
-Completed on 2026-09-18; see [the results](results/10-readiness/10a3c-results.md) and
-[spec section 32](spec.md). All six items below were built: the interface with an
+Completed on 2026-09-18; see [the results](../results/10-readiness/10a3c-results.md) and
+[spec section 32](../spec.md). All six items below were built: the interface with an
 explicitly enforced (and *measured*) rejection of unsupported private-history
 queries, response-PIMC plus a rollout comparator, exact toy calibration against
 Random, the Heuristic, `passer0.5`, Nash, a near-Nash graft and deliberately
@@ -129,7 +134,7 @@ corresponding work is completed; this plan alone does not mark anything done.
 
 ## 10B: retain the presentation step (done)
 
-Completed on 2026-09-18; see [the results](results/10-readiness/10b-results.md). `uv run uno figures`
+Completed on 2026-09-18; see [the results](../results/10-readiness/10b-results.md). `uv run uno figures`
 writes the five figures the brainstorm named, recomputing every cheaply-exact number live
 from `.cache/` and checking it against `index.md` to the digit rather than copying it
 (0 failed checks); full-UNO-sampled numbers are read from a cited table instead of

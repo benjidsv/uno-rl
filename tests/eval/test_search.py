@@ -481,7 +481,7 @@ def test_scores_split_is_the_same_worlds_cut_in_two():
 
     Pinned because reading a reference value off the worlds that chose the action is the winner's
     curse, and summing it over a game's decisions inflated a D2 total by ~34 score points per game
-    (docs/spec.md section 25)."""
+    (docs/foundations/spec.md section 25)."""
     rs = RESH
     agent = PimcSearch(rs, _leaf, worlds=6, depth=2, name="pimc")  # even, so the halves are exhaustive
     n = 0

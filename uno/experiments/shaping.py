@@ -59,7 +59,7 @@ NO_DEAL = Corrections(chance=True, row=True, column=True, deal=False)
 FAILS: list[str] = []
 
 # The exact "every correction but the deal" variance ratio, published in
-# docs/results/index.md's AIVAT table (heuristic vs random, exact values). The L2 deal
+# docs/foundations/results/index.md's AIVAT table (heuristic vs random, exact values). The L2 deal
 # potential's own variance ratio must reproduce it: with an exact value function and every
 # other correction applied, the deal term is all the variance AIVAT has left.
 PUBLISHED_NO_DEAL = {"TOY": (0.42, 0.49)}

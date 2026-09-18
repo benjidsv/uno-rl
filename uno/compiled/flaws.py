@@ -5,7 +5,7 @@ exactly. Random and the Heuristic supply two such targets and the Nash strategy 
 share a weakness as calibration cases: Random and the Heuristic are weak *everywhere*, so an
 attacker can score well against them without detecting anything in particular, and a mixture like
 `(1 - eps) * nash + eps * uniform` is likewise diffusely bad. Neither can tell a sharp attack from
-a blunt one, which is the check docs/results/10-readiness/10-review.md section 4 asks for: "include a case where
+a blunt one, which is the check docs/foundations/results/10-readiness/10-review.md section 4 asks for: "include a case where
 the attack must detect a known flaw so a vacuous detector cannot pass unnoticed".
 
 So this module grafts **one** bad action class onto an otherwise near-optimal strategy. The result
@@ -15,7 +15,7 @@ strategy lives on the compiled keying, so `uno.compiled.solvers.exploitability` 
 NashConv and the attack's miss is an exact number rather than an estimate.
 
 **The class must be symmetry-closed**, or the grafted strategy stops being symmetric and the
-quotient tree no longer evaluates it correctly (docs/spec.md section 18). "Every `Pass`", "every
+quotient tree no longer evaluates it correctly (docs/foundations/spec.md section 18). "Every `Pass`", "every
 wild play", "every action-card play" are closed under colour and rank renaming; "play the red 3"
 is not. `graft` asserts orbit-uniformity afterwards rather than trusting the argument.
 
@@ -76,7 +76,7 @@ def graft(tree: CompiledTree, sigma: np.ndarray, klass: str, mode: str, level: L
     Raises when the class carries no mass under `sigma` and `mode="never"`, or is available at no
     set for `mode="always"`: such a graft would return the original strategy while claiming to be a
     flawed one, and a calibration target that is secretly unflawed is worse than none. Also asserts
-    the result is still orbit-uniform, i.e. a symmetric strategy (docs/spec.md section 18)."""
+    the result is still orbit-uniform, i.e. a symmetric strategy (docs/foundations/spec.md section 18)."""
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}: one of {', '.join(MODES)}")
     classes = action_classes(tree.rs)
@@ -101,7 +101,7 @@ def graft(tree: CompiledTree, sigma: np.ndarray, klass: str, mode: str, level: L
         out = np.where(available, np.where(in_class, sigma, 0.0), sigma)
     out = k.normalize(out)
     if tree.symmetric and not k.is_symmetric(out, 1e-9):
-        raise AssertionError(f"grafting {mode} {klass} broke symmetry: the class is not closed under the colour/rank group (docs/spec.md section 18)")
+        raise AssertionError(f"grafting {mode} {klass} broke symmetry: the class is not closed under the colour/rank group (docs/foundations/spec.md section 18)")
     return out
 
 

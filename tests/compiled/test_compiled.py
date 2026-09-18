@@ -121,7 +121,7 @@ def test_exploitability_of_uniform_is_best_response_to_uniform_legal():
 
 def test_toy_reproduces_steps_5_6():
     """The eight L1 / L2 best-response values on the full tree of TOY: Random from
-    docs/results/03-08-foundations/05-06-best-response.md, the Heuristic from step 8.6 (symmetric tie-breaks; the
+    docs/foundations/results/03-08-foundations/05-06-best-response.md, the Heuristic from step 8.6 (symmetric tie-breaks; the
     values were pinned with the pure-Python reference solver). Regression for a
     reach bug that every small-ruleset check missed (see notes, step 8). The
     quotient tree has its own copy in test_symmetry."""

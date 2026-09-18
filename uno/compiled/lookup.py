@@ -5,7 +5,7 @@ decomposition (`uno.compiled.edge`, the "sampled D2 check") need this: given a
 node and arc of a compiled tree, so `CompiledTree.values`' node/arc values (`V`,
 `Q`) can be read off directly instead of recomputed.
 
-Built on the **L2** keying, the finest one available: `docs/spec.md` section 16 --
+Built on the **L2** keying, the finest one available: `docs/foundations/spec.md` section 16 --
 "on the full `TOY` tree the L2 keying has exactly one node per set... the L2 key
 of a played state *is* its node". On a symmetric (quotient) tree, up to `|G|`
 nodes share one canonical L2 set, with equal values for a symmetric profile
@@ -13,7 +13,7 @@ nodes share one canonical L2 set, with equal values for a symmetric profile
 arbitrary one, here the tree's lowest-numbered node of that set, stands in for
 all of them. `build` needs an L2 keying on the tree: cached for `TOY`, `TOY_FULL`,
 `TOY2` and `TOY2_SKIP`; skip `TOY2_FULL`, whose L2 keying alone is ~3 GB
-(docs/plan.md).
+(docs/foundations/history/original-plan.md).
 """
 
 from __future__ import annotations

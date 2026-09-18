@@ -3,7 +3,7 @@ policy (never worth more than BR L1), the perfect-information values it acts on 
 `best_response_perfect` / `two_sided` produce, the prior belief never leaves a set without
 mass, every policy is orbit-uniform, and on a small ruleset the quotient's value is the value
 of that same policy lifted onto the full tree -- which is what makes the quotient number the
-full game's (docs/spec.md section 18).
+full game's (docs/foundations/spec.md section 18).
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ def test_prior_belief_leaves_no_set_without_mass(continuation):
 @pytest.mark.parametrize("weighting,continuation", VARIANTS)
 def test_policies_are_uniform_within_action_orbits(weighting, continuation):
     """A symmetric strategy is uniform within every orbit of its set's stabilizer; a pure choice
-    there would condition on hidden information and break the quotient (docs/spec.md section 18)."""
+    there would condition on hidden information and break the quotient (docs/foundations/spec.md section 18)."""
     world, opps = _toy()
     k = world.keyings[L1]
     for opp in opps.values():
@@ -120,7 +120,7 @@ def test_pimc_n_closes_the_gap_to_pimc_infinity_as_n_grows(seat):
 
     The gap is asserted to shrink and to end near zero, not to stay positive: PIMC-infinity
     maximises the belief-weighted perfect-information score rather than the true value, so a
-    randomised `pi_n` may end up slightly the better policy (docs/spec.md section 25)."""
+    randomised `pi_n` may end up slightly the better policy (docs/foundations/spec.md section 25)."""
     world, opps = _toy()
     limit = pimc_response(world, opps["random"], seat, "posterior", "response")
     gaps = [limit.value - pimc_n(world, opps["random"], seat, n, realizations=32, weighting="posterior", continuation="response", seed=1).value for n in (1, 64)]

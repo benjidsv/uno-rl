@@ -6,7 +6,7 @@
     uv run uno pimc_value aivat [games=4000] [fit_games=20000] [n=2] [rulesets=TOY,TOY2,TOY2_SKIP,MID_12,MID_25,FULL_UNO] [all|first]
     uv run uno pimc_value mc [pairs=200] [n=16]
 
-docs/spec.md section 24. Every check prints ok / XX; the last line counts the failures.
+docs/foundations/spec.md section 24. Every check prints ok / XX; the last line counts the failures.
 
 `check`: rollout values (`uno.eval.pimc`) against the exact tree. TOY, TOY2_SKIP and DUPS, pile and
 ticket draws, heuristic vs random at both seats. At the decisions of EVAL games, `n` rollouts of the

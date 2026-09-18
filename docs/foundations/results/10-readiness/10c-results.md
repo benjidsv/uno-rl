@@ -169,10 +169,10 @@ and the Heuristic/memory-ablation distance is 0.0311.
 
 ## Generated artifacts and checks
 
-- [`rulebot-toy-transfer.svg`](../../generated/rulebots/figures/rulebot-toy-transfer.svg): exact toy profiles.
-- [`rulebot-strength.svg`](../../generated/rulebots/figures/rulebot-strength.svg): full-UNO EVAL strength and cost.
-- [`rulebot-behavior.svg`](../../generated/rulebots/figures/rulebot-behavior.svg): conditional rates and per-game counts.
-- [`rulebot-diversity.svg`](../../generated/rulebots/figures/rulebot-diversity.svg): common-state policy distance.
+- [`rulebot-toy-transfer.svg`](../../../generated/rulebots/figures/rulebot-toy-transfer.svg): exact toy profiles.
+- [`rulebot-strength.svg`](../../../generated/rulebots/figures/rulebot-strength.svg): full-UNO EVAL strength and cost.
+- [`rulebot-behavior.svg`](../../../generated/rulebots/figures/rulebot-behavior.svg): conditional rates and per-game counts.
+- [`rulebot-diversity.svg`](../../../generated/rulebots/figures/rulebot-diversity.svg): common-state policy distance.
 - `rulebot-toy-scores.csv`, `rulebot-scores.csv`, `rulebot-behavior.csv`, and
   `rulebot-policy-distance.csv`: generated source tables, including denominators
   and score SEs, under `docs/generated/rulebots/data/`.

@@ -1,4 +1,10 @@
-# Results index: the current numbers
+# Foundation results index: current Steps 1-10 numbers
+
+> **Canonical foundation measurements.** Search the headings and read the section
+> relevant to the current question; this page is not default RL onboarding. The
+> curated learning handoff is [`../../rl/starting-point.md`](../../rl/starting-point.md),
+> and new learner measurements belong in
+> [`../../rl/results/index.md`](../../rl/results/index.md).
 
 The headline numbers of every toy as the code produces them today, with the
 step that measured them. Each step's file keeps its numbers as measured at the
@@ -391,7 +397,7 @@ playable drawn card.
 ## Figures ([step 10B](10-readiness/10b-results.md))
 
 `uv run uno figures` writes five SVGs to the
-[`report-card` figure directory](../generated/report-card/figures/): the range, values of
+[`report-card` figure directory](../../generated/report-card/figures/): the range, values of
 information, the budget picture, edge by decision, and the full-UNO lever ladder. Every
 cheaply-exact number on this page that the figures also draw is recomputed live and
 checked to the digit by that command (0 failed checks); the full-UNO-sampled figures read
@@ -423,7 +429,7 @@ not evidence that K1 is sufficient on full UNO or that the local solver found th
 
 ## Learner observation contract (step 10a.3B)
 
-Defined in [`docs/observation-contract.md`](../observation-contract.md). Specifies the
+Defined in [`docs/rl/observation-contract.md`](../../rl/observation-contract.md). Specifies the
 three comparison arms that Step 11 will implement and compare (K1 feed-forward,
 K1+structured evidence, and recurrent public/private history), with explicit
 field lists, legality masks, equivariance requirements, and evaluator

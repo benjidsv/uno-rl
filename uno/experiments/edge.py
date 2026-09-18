@@ -20,7 +20,7 @@ gap to that ceiling). For each (row, opponent, seat):
   point (0.02 return units).
 
 Every mirror set-action total must be >= 0 when the reference is the best response
-(docs/spec.md section 21): checked at set level, printed ok / XX per (row, opponent,
+(docs/foundations/spec.md section 21): checked at set level, printed ok / XX per (row, opponent,
 seat). `light` (TOY2_FULL): DCFR only, fewer iterations for Nash, as `robustness`.
 
 Also, unless `light`: a sampled cross-check of the exact decomposition

@@ -1,9 +1,9 @@
 """The exact policy gradient on a compiled tree, and the exact mean of the *sampled*
-gradient of a luck-corrected return (step 10a.2, item A6). See docs/spec.md section 28.
+gradient of a luck-corrected return (step 10a.2, item A6). See docs/foundations/spec.md section 28.
 
 Step 11's objective is a policy gradient, and step 10's question is which of AIVAT's
 corrections may appear in the return it is taken of. The argument
-(docs/results/10-readiness/10-brainstorm.md 5.2) is that the agent's own (row) correction must not,
+(docs/foundations/results/10-readiness/10-brainstorm.md 5.2) is that the agent's own (row) correction must not,
 because with an exact V the row term *is* `Q(s, a) - V(s)`, so subtracting it removes
 exactly the part of the return that depends on the action. This module turns that
 argument into two exact computations, so the claim is measured and not asserted.
@@ -29,7 +29,7 @@ that the raw one is biased under. `estimator_mean` computes both, so the cancell
 visible rather than argued.
 
 **Orbits are the parameters on a quotient tree.** A symmetric strategy is uniform within
-every action orbit of a set's stabiliser (docs/spec.md section 18), so an equivariant
+every action orbit of a set's stabiliser (docs/foundations/spec.md section 18), so an equivariant
 learner has one logit per orbit, not per action, and
 `d J / d theta(orbit) = sum over the orbit's actions of dJ/dtheta(I, a)` -- the orbit
 *sum* of the vector these functions return (`orbit_gradient`). The exact gradient is
@@ -65,7 +65,7 @@ def logit_form(k: Keying, sigma: np.ndarray, per_action: np.ndarray) -> np.ndarr
 def orbit_gradient(k: Keying, g: np.ndarray) -> np.ndarray:
     """(n_orbits,) the per-orbit logit gradient: the orbit sum of a per-set-action one.
 
-    For a symmetric learner an orbit is one parameter (docs/spec.md section 18), so this
+    For a symmetric learner an orbit is one parameter (docs/foundations/spec.md section 18), so this
     is the vector a learner on the quotient actually descends."""
     return np.bincount(k.ia_orbit, weights=g, minlength=k.n_orbits)
 
@@ -216,7 +216,7 @@ def finite_difference(tree: CompiledTree, learner: Strategy, opponent: Strategy,
     own backward pass, and it is the definition rather than a rearrangement of it. A
     symmetric strategy is uniform within an orbit, so perturbing one orbit's logit means
     re-normalising its whole set -- which is why the parameter here is the orbit and not
-    the action (docs/spec.md section 18).
+    the action (docs/foundations/spec.md section 18).
 
     **The softmax is over the set's support, not all of its actions.** An action at
     probability zero is a logit at minus infinity; it stays there under any perturbation of

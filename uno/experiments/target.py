@@ -6,7 +6,7 @@ Step 11's objective is a policy gradient, and the question step 10 has to answer
 checkpoint exists is which of AIVAT's corrections may appear in the return it is taken of.
 The declared answer is `uno.eval.target.TRAINING` -- **chance + opponent + deal, never the
 learner's own decisions** -- and the argument for the exclusion
-(docs/results/10-readiness/10-brainstorm.md 5.2) is that with an exact V the row term *is* `Q(s, a) -
+(docs/foundations/results/10-readiness/10-brainstorm.md 5.2) is that with an exact V the row term *is* `Q(s, a) -
 V(s)`, so subtracting it removes exactly the part of the return that depends on the action.
 
 This makes that a measurement. On a compiled tree the exact policy gradient of a tabulated
@@ -34,7 +34,7 @@ of corrections (`uno.compiled.gradient`), so the bias is a number and not a limi
 
 Seeds: **dev** (`uno.eval.seeds.dev_block`). Nothing is selected here and no performance
 number is claimed -- section 2 is a closure check against an exact value and section 3
-measures wall-clock -- so no eval block is spent (docs/spec.md section 27.1).
+measures wall-clock -- so no eval block is spent (docs/foundations/spec.md section 27.1).
 
 Every check prints ok / XX; the last line counts the failures and the false alarms expected
 at |z| > 3.

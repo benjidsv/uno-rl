@@ -1,6 +1,6 @@
 """Skill-carrying decision kinds, action classes and situations, as functions of
-an observation and legal actions rather than a `State`. See docs/plan.md ("Which
-decisions carry skill") and docs/spec.md section 21.
+an observation and legal actions rather than a `State`. See docs/foundations/history/original-plan.md ("Which
+decisions carry skill") and docs/foundations/spec.md section 21.
 
 Working from an observation (not a `State`) means the same classifiers apply to
 played games (`observe`) and to the compiled tree's information sets, whose only

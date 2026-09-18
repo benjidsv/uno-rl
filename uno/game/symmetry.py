@@ -1,4 +1,4 @@
-"""Color and rank symmetry of a ruleset. See docs/spec.md section 18.
+"""Color and rank symmetry of a ruleset. See docs/foundations/spec.md section 18.
 
 The rules never mention a particular color or a particular rank: renaming the
 colors (any permutation) and renaming the ranks (any permutation among ranks
@@ -211,7 +211,7 @@ class Symmetry:
 
     def action_orbits(self, stabilizer: tuple[int, ...], actions: tuple[int, ...]) -> tuple[int, ...]:
         """Orbit index (in order of first appearance) of each action under the stabilizer.
-        A symmetric strategy is uniform within every orbit (docs/spec.md section 18)."""
+        A symmetric strategy is uniform within every orbit (docs/foundations/spec.md section 18)."""
         if len(stabilizer) == 1:
             return tuple(range(len(actions)))
         rep: dict[int, int] = {}

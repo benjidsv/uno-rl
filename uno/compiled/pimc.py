@@ -1,4 +1,4 @@
-"""Exact PIMC-infinity on a world tree (step 9.5d). See docs/spec.md section 25.
+"""Exact PIMC-infinity on a world tree (step 9.5d). See docs/foundations/spec.md section 25.
 
 PIMC (perfect-information Monte Carlo) samples worlds consistent with what the player
 knows, solves each with perfect information, and plays the action that scores best on
@@ -38,18 +38,18 @@ and `V_L3(h, a)` the perfect-information value after `a`, under either continuat
 **Orbits.** On a quotient tree the choice is an *orbit* of actions played uniformly, not
 a pure action, exactly as `best_response` does: a pure choice at a set with a non-trivial
 stabilizer is not a symmetric strategy and would let the policy condition on hidden
-information (docs/spec.md section 18, the step 8.6 bug -- "a best response above the
+information (docs/foundations/spec.md section 18, the step 8.6 bug -- "a best response above the
 maximum is not a strategy"). The world tree's L1 keying carries the same orbit partition
 as the lazy tree's, so this is the same discipline one step over.
 
 **Unreached sets.** Under `"posterior"` the sets the opponent never lets the player reach
-carry no belief mass and get no real choice, exactly as in `best_response` (docs/spec.md
+carry no belief mass and get no real choice, exactly as in `best_response` (docs/foundations/spec.md
 section 16, the step 8.8 fill-in problem): they take their first orbit, or `completion`.
 Under `"prior"` every set of the tree has at least one world and the mass is always
 positive, so no fill-in arises at all -- which is worth keeping in mind when comparing
 the two weightings, since a chunk of `"posterior"`'s sets are then an arbitrary fill-in
 rather than a decision (42-84 % of them on the toys, mirroring the best response's own
-table in docs/context.md section 5.12).
+table in docs/foundations/rationale.md section 5.12).
 
 `value` is the PIMC policy's *actual* return against the opponent, from an ordinary
 `evaluate` pass -- never the argmax's own optimistic sum, which is the perfect-information
@@ -182,7 +182,7 @@ def pimc_response(
     mine = np.nonzero(tree.arc_player == seat)[0]
     ia = k.arc_ia[mine]
     # the belief-weighted value of each (set, action), then of each action *orbit* played
-    # uniformly: a symmetric strategy is uniform within an orbit (docs/spec.md section 18).
+    # uniformly: a symmetric strategy is uniform within an orbit (docs/foundations/spec.md section 18).
     q = np.bincount(ia, weights=b[tree.arc_node[mine]] * av[mine], minlength=k.n_ia)
     qo = np.bincount(k.ia_orbit, weights=q, minlength=k.n_orbits) / k.orbit_size
 

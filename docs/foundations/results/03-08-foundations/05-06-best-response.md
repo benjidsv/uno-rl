@@ -7,7 +7,7 @@ L1 + opponent's initial hand + opponent's draws in order, L3 = full state with
 pile order). L1/L2 walk the lazy tree; L3 enumerates *worlds* (deal x pile
 order) and walks the bare engine. (The first version keyed L2 on the
 opponent's *current* hand to keep its memory out of L2; that partition has
-imperfect recall, see "Information sets and recall" in [the plan](../../plan.md). Same values on
+imperfect recall, see "Information sets and recall" in [the plan](../../history/original-plan.md). Same values on
 Random and Heuristic to 4 decimals.)
 
 Cost on `TOY`: 12-16 s and ~1 GB per L1/L2 solve against Random (0.94M

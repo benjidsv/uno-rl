@@ -6,7 +6,7 @@
 10-card ruleset with duplicate cards, +2 and +4: multi-card chance edges). Matchups (row
 vs column): heuristic vs random, BR L1(random) vs random, nash vs random, nash vs
 heuristic, the row at both seats. Estimator: `uno.eval.aivat`; exact moments and value
-functions: `uno.compiled.aivat` (docs/spec.md section 23).
+functions: `uno.compiled.aivat` (docs/foundations/spec.md section 23).
 
 0. The deal model through AIVAT's deal term (`deal_section`): 5 disjoint ranges of 1,000,000
    seeds, mean of `nu(first state) - E_model nu` for three profiles, pooled z (a check).

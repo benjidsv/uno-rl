@@ -1,5 +1,5 @@
 """PIMC values: Monte Carlo rollouts on determinized states, the teacher of step 9.5c's value
-network (docs/spec.md section 24).
+network (docs/foundations/spec.md section 24).
 
 **Determinization at L2.** AIVAT's value function may see both hands, the public history and the
 pile as a multiset, never the pile order (`uno.eval.aivat`). Given that, the order of the unknown

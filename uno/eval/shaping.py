@@ -1,4 +1,4 @@
-"""Potential-based reward shaping as artifacts (step 10a.2, item A4). See docs/spec.md
+"""Potential-based reward shaping as artifacts (step 10a.2, item A4). See docs/foundations/spec.md
 section 29.
 
 D5 of the step 9 review asked for shaping and got a design; this emits the objects. For a
@@ -36,7 +36,7 @@ function read at a level of information:
   per-step reward).
 - **L2** (`None` on a lazy tree): the node's own value, i.e. both hands and the public
   history but never the pile order. This is the finest level AIVAT admits as a value
-  function (docs/spec.md section 23), and its deal term **is** AIVAT's deal correction.
+  function (docs/foundations/spec.md section 23), and its deal term **is** AIVAT's deal correction.
 - **L3** (`None` on a world tree): the world's value, pile order included. Inadmissible as
   AIVAT's `nu` -- a V that reads the pile order makes every draw deterministic and leaves
   only intractable expectations for the chance corrections -- but perfectly admissible for

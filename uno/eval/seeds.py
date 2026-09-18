@@ -46,7 +46,7 @@ class Block:
     name: str
     start: int
     stop: int
-    step: str  # the build-order step that claimed it (docs/plan.md)
+    step: str  # the build-order step that claimed it (docs/foundations/history/original-plan.md)
     purpose: str
     spent: bool = False  # True: something was *selected* on it, so it may not carry a reported number
 

@@ -1,4 +1,4 @@
-"""The PIMC agent on rulesets with no tree (step 9.5d, docs/spec.md section 25).
+"""The PIMC agent on rulesets with no tree (step 9.5d, docs/foundations/spec.md section 25).
 
 Section 24 determinizes at **L2** to *value* a state under a fixed profile. A PIMC player is an
 L1 player: it cannot see the opponent's hand either, so `determinize_l1` samples that too, from
@@ -9,7 +9,7 @@ history) and, until the first reshuffle, the cards skipped at setup, which sit a
 the pile and are public. Everything else -- the opponent's hand and the pile -- is a uniformly
 random split of the unseen multiset. On a **free-play** ruleset -- which `FULL_UNO` is -- that is
 *exactly* the conditional the deal model implies once the public history is fixed: measured at
-0.0000 total variation over ~94,000 information sets following an opponent draw (docs/spec.md
+0.0000 total variation over ~94,000 information sets following an opponent draw (docs/foundations/spec.md
 section 26.6). On a **forced-play** ruleset it is not, because drawing is legal only with nothing
 playable, so the pile order and the hand are coupled: 6-23 % of post-draw sets there exclude hands
 this split still proposes. `determinize_l1` deals `opp_hand_size` of them to the opponent, shuffles
@@ -20,8 +20,8 @@ reshuffles and rollouts inside the search are independent of the real game.
 with no inference at all. Given a `uno.eval.belief.Belief`, `determinize_l1` instead draws the
 opponent's hand from what their own actions implied -- a voluntary draw proves they held nothing
 playable, and their trailing run of plays is scored by their real policy. The belief chooses only
-the *hand*; the pile is the remainder in a uniform order either way. See docs/spec.md section 26,
-including why the particle filter over the deal that docs/plan.md originally called for collapses
+the *hand*; the pile is the remainder in a uniform order either way. See docs/foundations/spec.md section 26,
+including why the particle filter over the deal that docs/foundations/history/original-plan.md originally called for collapses
 (a particle survives the opponent's first play with probability `hand_size / unseen` ~ 7/98).
 
 The opponent's `initial_hands` / `own_draws` are fabricated to match the hand we just dealt them:

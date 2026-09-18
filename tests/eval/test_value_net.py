@@ -82,7 +82,7 @@ def test_at_a_fixed_batch_size_a_row_does_not_depend_on_its_neighbours():
     search needs, is that at a **fixed** number of rows a row's value depends on that row alone --
     otherwise a decision's value would depend on which worlds happened to be sampled alongside it,
     and the agent would stop being the deterministic function of the information state that
-    AIVAT's row correction assumes (docs/spec.md section 25).
+    AIVAT's row correction assumes (docs/foundations/spec.md section 25).
     """
     net, _ = small_net()
     rows = [state_features(s) for s, _, _ in games(SMALL, 20)][:40]

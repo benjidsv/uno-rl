@@ -298,7 +298,7 @@ def _leaf(s):
 def test_the_agent_stays_a_deterministic_function_of_the_information_state():
     """AIVAT subtracts `sum_a sigma(a|h) alpha(h, a)` using the probabilities the agent reports,
     so a search that sampled worlds afresh would report a deterministic policy while following a
-    stochastic one and the row correction would stop being zero-mean (docs/spec.md section 25).
+    stochastic one and the row correction would stop being zero-mean (docs/foundations/spec.md section 25).
     The belief adds a second source of sampling inside `policy`, so the invariant is re-checked
     with it wired in."""
     rs = rules.TOY_FULL

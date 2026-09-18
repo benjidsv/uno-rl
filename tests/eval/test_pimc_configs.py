@@ -16,7 +16,7 @@ in two specific ways these tests pin:
   them. A stray rename would turn a regression check into a fresh sample and nobody would notice.
 
 `TOY_FULL` throughout: free play, 9 cards, and the void constraint is live at 16.5 % of its
-decisions (docs/spec.md section 26.2), so the axis has teeth here without full UNO's cost.
+decisions (docs/foundations/spec.md section 26.2), so the axis has teeth here without full UNO's cost.
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ def test_the_no_belief_rows_keep_step_9_5e_names_and_carry_no_belief():
 
 
 def test_every_config_of_one_sweep_carries_a_distinct_name():
-    """A name identifies a policy (docs/context.md section 3): two agents sharing one would share
+    """A name identifies a policy (docs/foundations/rationale.md section 3): two agents sharing one would share
     an action rng stream, and `play_pairs` raises on it. The belief makes a different policy, so
     it has to reach the name."""
     rs = rules.TOY_FULL

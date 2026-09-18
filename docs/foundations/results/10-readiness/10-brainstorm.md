@@ -2,7 +2,7 @@
 
 > On top of commit `29bccad`. **Nothing built**: this is the brainstorm before step 10, per the
 > workflow in `context.md` section 10. Numbers quoted are from [index.md](../index.md) and the
-> 9.5a-9.5f results files. Plan: [plan.md](../../plan.md) row 10.
+> 9.5a-9.5f results files. Plan: [plan.md](../../history/original-plan.md) row 10.
 > Planned as **three commits**: 10a (the contract), 10b (figures and generated tables),
 > 10c (the distilled rulebot and the transfer test).
 

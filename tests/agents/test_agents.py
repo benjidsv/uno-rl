@@ -1,4 +1,4 @@
-"""Baseline agents (uno/agents/baseline.py, docs/spec.md section 13)."""
+"""Baseline agents (uno/agents/baseline.py, docs/foundations/spec.md section 13)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Ticket draws (docs/spec.md section 8, step 9): the same game as the pile, coupled across games."""
+"""Ticket draws (docs/foundations/spec.md section 8, step 9): the same game as the pile, coupled across games."""
 
 from __future__ import annotations
 

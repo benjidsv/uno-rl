@@ -1,4 +1,9 @@
-# Specification
+# Foundation specification
+
+> **Authoritative foundation contract.** Search the numbered headings and read the
+> section relevant to the component being changed; this file is not default RL
+> onboarding. Learner-specific inputs are owned by the
+> [RL observation contract](../rl/observation-contract.md).
 
 One parametrized ruleset. The toy game and full UNO are the same rules with
 different parameters. Two players, always. Everything below is what the engine
@@ -1473,7 +1478,7 @@ the `"response"` continuation (under `"minimax"` it is ~0 even on `TOY_FULL`).
 
 ### 26.1 The design that does not work, and why
 
-docs/plan.md's original sampled-oracle design is a **particle filter over the deal**: sample the
+docs/foundations/history/original-plan.md's original sampled-oracle design is a **particle filter over the deal**: sample the
 opponent's initial hand, replay the public history, weight each particle by the opponent's action
 probabilities, resample per step. Measured before the rungs below were written, it collapses:
 
@@ -1754,7 +1759,7 @@ Normalised skill is an affine rescaling **per cell**, so a difference in scale u
 score points: both are always printed, and nothing is ever *selected* on the normalised number.
 
 The card is its own regression test: for the agents whose values are published
-(`docs/results/index.md`) every printed number must reproduce them **to the digit**, which is the
+(`docs/foundations/results/index.md`) every printed number must reproduce them **to the digit**, which is the
 step 9.5f device. On a toy every cell is exact and no deals are spent; a full-UNO card claims a
 fresh block from 27.1 rather than re-spending block 00.
 
@@ -1941,37 +1946,33 @@ they share a name and therefore a world-sampling stream, so the per-game scores 
 **array-equal** -- which they are, at both columns. Reported on **EVAL block 01**; block 00 is
 spent (section 27.1).
 
-## 31. Observation contract for Step 11 learner arms (`docs/observation-contract.md`)
+## 31. Observation contract for Step 11 learner arms (`docs/rl/observation-contract.md`)
 
-Step 10a.3B. Three comparison arms for the Step 11 learner, with explicit field
-lists, legality masks, equivariance requirements, seat conventions, and
-evaluator compatibility:
+The learner contract originated in Step 10a.3B and was revised in the RL project
+on 2026-09-18. The authoritative current field lists, symmetry requirements,
+seat/clock conventions, and actor/critic/attacker boundaries are in
+[the observation contract](../rl/observation-contract.md). Historical foundation
+measurements are unchanged by that revision.
 
-- **Arm A (K1 feed-forward):** position + discard multiset, no sequential
-  history. The explicit memory ablation.
-- **Arm B (K1 + structured evidence):** Arm A plus a fixed-size summary of
-  draw/play evidence extending the measured `voids` signal — per-colour void
-  counts, penalty/voluntary distinction, evidence age. A new representation,
-  not K2.
-- **Arm C (recurrent history):** current position plus the full public event
-  sequence and private draw history. The arm that can recover any L1-measurable
-  policy.
+- **A:** K1-style position plus full discard counts, a memory ablation. Its clock
+  differs from the historical coarse key, whose achieved scores are not certified
+  representation optima.
+- **B:** A plus structured public draw/play evidence preserving color and rank/kind
+  relationships; the first practical actor.
+- **C:** all of A, including discard counts, plus recurrent public/private history.
 
-All arms share: the static action space, a legality mask derived from
-(hand, top, color, phase, drawn), color/rank equivariance under the group of
-section 18, the seat-0 input frame of section 24, and the turn clock / reshuffle
-count. The actor is always L1; the training critic may use L2 (section 23–24);
-the training target is chance + opponent + deal, never the row (section 28).
+Equivariance must hold in the production architecture and preprocessing; a generic
+recurrent cell or value-network policy head does not establish it. Actors are L1.
+Initial learning uses ordinary terminal returns plus a baseline; the optional
+`TRAINING` corrections in section 28 exclude learner actions. Evaluation AIVAT may
+correct either player when its probability and conditional-value queries are valid.
 
-Arms A and B are fully compatible with `determinize_l1` (section 25) and all
-existing evaluator paths. Arm C reads only the actor's own L1 information state
-and is compatible with ordinary game evaluation and AIVAT. Querying a recurrent
-target inside determinized worlds requires consistent private history
-reconstruction; this is a Step 11 integration gate, not a prerequisite for
-10a.3C's baseline LBR instrument.
-
-The full contract is in [observation-contract.md](observation-contract.md);
-invariance tests in `tests/game/test_observation_contract.py`.
+A/B avoid fabricated private-history dependence. Response search against C requires
+validated latent-history treatment or a different attack; ordinary real-game
+matches and exact history replay remain available. Existing contract tests use
+test-only extractors and do not certify the revised production learner. See the
+[readiness review](../rl/readiness-review.md) and [RL plan](../rl/plan.md) for known
+gaps and implementation gates.
 
 ## 32. The attack instrument (`uno/eval/attack.py`, `uno/compiled/flaws.py`)
 

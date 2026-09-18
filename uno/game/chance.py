@@ -113,7 +113,7 @@ def chance_outcomes(state: State, action: int) -> list[Outcome]:
 
 
 def draw_outcomes(state: State, action: int, rng: random.Random | None = None, samples: int = 64, enum_cap: int = 256) -> list[Outcome] | None:
-    """The chance model of any ruleset, for AIVAT (docs/spec.md section 23, step 9.5b):
+    """The chance model of any ruleset, for AIVAT (docs/foundations/spec.md section 23, step 9.5b):
     children of `state` under `action` with probabilities summing to 1, the drawn cards
     uniform over the unknown part of the pile given everything but the pile order (the
     same for pile and ticket draws, section 8).
@@ -208,7 +208,7 @@ def _multisets(counts: dict[int, int], n: int) -> list[tuple[tuple[int, ...], fl
 def initial_deals(rs: Ruleset, symmetric: bool = False) -> list[Outcome]:
     """All distinct initial states with their probabilities (sum to 1), or with
     `symmetric` one representative per color / rank orbit carrying the orbit's
-    probability (`uno.game.symmetry`, docs/spec.md section 18).
+    probability (`uno.game.symmetry`, docs/foundations/spec.md section 18).
 
     Conditioned on the deal being valid (a number card exists for the first
     discard); on the named toy rulesets every deal is valid.
@@ -273,7 +273,7 @@ Expand = Callable[[State], dict[int, list[Outcome]]]
 def worlds(rs: Ruleset, symmetric: bool = False) -> list[Outcome]:
     """L3 roots: every deal x every order of the unknown part of the pile.
     `symmetric`: one representative per orbit under `uno.game.symmetry`, carrying
-    the orbit's probability (docs/spec.md section 18)."""
+    the orbit's probability (docs/foundations/spec.md section 18)."""
     out: list[Outcome] = []
     for s, p in initial_deals(rs):
         unknown, tail = pile_split(s)

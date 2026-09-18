@@ -1,6 +1,6 @@
 """Exact edge attribution: where a row agent's score, against a fixed opponent,
 is won or lost relative to a reference strategy (normally the best response), by
-decision. See docs/plan.md ("An edge-by-decision tool") and docs/spec.md section 21
+decision. See docs/foundations/history/original-plan.md ("An edge-by-decision tool") and docs/foundations/spec.md section 21
 (step 9.5a, items D2 / D4 of the step 9 review's section D).
 
 **The identity** (performance-difference lemma, Kakade & Langford 2002, adapted to
@@ -22,14 +22,14 @@ Both identities are exact and, summed over all of A's (B's) own arcs, equal
 `V^B - V^A` to numerical precision; the two need not agree term-by-term, since they
 group the same total differently (by A's decisions or by B's). When B is a best
 response to O, **every mirror term is non-negative**: B maximises the
-reach-weighted sum of continuation values at every information set (docs/spec.md
+reach-weighted sum of continuation values at every information set (docs/foundations/spec.md
 section 16), and A's own reach is a positive common factor within a perfect-recall
 set (section 14), so grouping mirror terms by set never changes sign. That is
 tested in `tests/compiled/test_edge.py`.
 
 `br_gap` (BR L1's return minus a row's, at `seat`) is the D4 metric: the gap to the
 best response against a *fixed* training opponent, luck-free and independent of the
-fill-in problems that make raw exploitability numbers upper bounds (docs/spec.md
+fill-in problems that make raw exploitability numbers upper bounds (docs/foundations/spec.md
 section 16, step 8.8). `mirror_terms` grouped by `uno.eval.decisions.node_kind` /
 `action_class` / `situation` (`uno.store.load_or_label`) is the edge-by-decision
 report; `stakes` is a separate, always-defined diagnostic (how much a decision could

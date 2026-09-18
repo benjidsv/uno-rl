@@ -65,7 +65,7 @@ def test_random_and_heuristic_are_constant_within_every_k0_set():
 
 
 def test_review_k1_collision_is_measurable_from_the_raw_input():
-    """Regression for docs/results/10-readiness/10-review.md's positive-reach counterexample.
+    """Regression for docs/foundations/results/10-readiness/10-review.md's positive-reach counterexample.
 
     Full-L1 canonicalisation puts these symmetry images in different coordinate
     frames even though their raw K1 fields are identical. A K1 policy must not use

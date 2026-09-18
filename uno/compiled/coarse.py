@@ -2,7 +2,7 @@
 response: how much of BR L1's edge needs history at all. Step 9.5a, D3 of the step
 9 review's section D ("Memory: BR L1 conditions on the full history. A backward
 pass on a coarse, history-free key gives a valid policy, a lower bound on the
-memoryless ceiling: does the RL observation need history?"). See docs/spec.md
+memoryless ceiling: does the RL observation need history?"). See docs/foundations/spec.md
 section 20.
 
 **Three keys**, each a deterministic function of the L1 observation rebuilt from a
@@ -10,7 +10,7 @@ canonical L1 set's key (`uno.game.observe.observation_from_key`), nested:
 
 - K0: (seat, tree level, hand, top, current color, opponent hand size, pile size,
   phase, drawn card). The tree level (`2 * len(public) + [phase == TURN_START]`,
-  docs/spec.md section 16, `uno.compiled.tree.node_level`) is included so a coarse
+  docs/foundations/spec.md section 16, `uno.compiled.tree.node_level`) is included so a coarse
   set never spans two tree levels, which the per-level backward pass of
   `best_response` needs (a set whose arcs span two levels would have its choice
   finalised, wrongly, at the first level it is seen); it also acts as a weak clock,
@@ -354,7 +354,7 @@ def project_onto_coarse(tree: CompiledTree, coarsening: Coarsening, l1_sigma: np
     On a symmetric tree the representative's actions are first mapped from its L1
     canonical frame into the independently canonical coarse frame. `orbit_mean`
     then enforces the coarse key's own stabilizer, as required for a deployable
-    equivariant policy (docs/spec.md section 18)."""
+    equivariant policy (docs/foundations/spec.md section 18)."""
     k1 = tree.keyings[Level.L1]
     kc = coarsening.keying
     sigma = np.zeros(kc.n_ia)
@@ -451,7 +451,7 @@ def memoryless_response(
     starting policy projected onto the coarse keying (`project_onto_coarse`),
     repeatedly compute the best response to `opponent` with `own` fixed at the
     *current* iterate's weights (`best_response(..., own=tree.weights(keying,
-    sigma, seat))`, docs/spec.md section 21), then evaluate the new policy exactly
+    sigma, seat))`, docs/foundations/spec.md section 21), then evaluate the new policy exactly
     and keep going. Every iterate is a real (history-free) policy, so the best
     value seen is a valid lower bound on the best achievable memoryless policy
     against `opponent`; `best_response(tree, Level.L1, opponent, seat)` (full

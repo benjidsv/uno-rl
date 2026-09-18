@@ -1,6 +1,6 @@
 """Core engine: immutable State, deal / initial_state, legal_actions, step, returns.
 
-See docs/spec.md sections 3, 4, 6, 7, 8, 9. Everything is a pure function of
+See docs/foundations/spec.md sections 3, 4, 6, 7, 8, 9. Everything is a pure function of
 (permutation, seed, action sequence).
 """
 
@@ -172,7 +172,7 @@ def win_prob(state: State, player: int) -> float:
 
 
 def ticket_index(rs: Ruleset, seed: int, player: int, k: int, pile) -> int:
-    """Position in `pile` of the card drawn under `draws == "tickets"` (docs/spec.md
+    """Position in `pile` of the card drawn under `draws == "tickets"` (docs/foundations/spec.md
     section 8). For `player`'s draw number `k` every physical card of the deck gets
     an independent uniform ticket, seeded by (seed, player, k), the i-th copy of a
     type holding that type's i-th ticket; the card of the pile with the lowest

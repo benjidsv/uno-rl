@@ -6,7 +6,7 @@ Step 8.5 found that pairing removes ~10 % of the variance on full UNO, from
 Heuristic against Random, two policies that part on the first move. This
 measures what steps 10-11 need, two variants of one policy, and a draw rule that
 keeps the games of a pair coupled after their draw counts part (`draws =
-"tickets"`, docs/spec.md section 8):
+"tickets"`, docs/foundations/spec.md section 8):
 
 1. tickets are the same game: on TOY, TOY_FULL and a small ruleset with duplicate
    cards, +2 and +4 (the ticket paths the named toys never take), the exact score on each seed's

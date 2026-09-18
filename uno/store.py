@@ -130,7 +130,7 @@ def keying_fingerprint(tree: CompiledTree, level: Level) -> str:
 def load_or_tabulate(tree: CompiledTree, level: Level, agent, cache: str | Path = CACHE) -> np.ndarray:
     """`uno.compiled.strategies.tabulate` through the cache (step 9): a Python call per
     set costs ~50 s per agent on TOY2_FULL. Keyed on the agent's name (a name
-    identifies a policy, docs/spec.md section 13) and on a fingerprint of the keying; a
+    identifies a policy, docs/foundations/spec.md section 13) and on a fingerprint of the keying; a
     file of another `CACHE_VERSION` or keying is tabulated again and overwritten. Meant
     for the fixed baseline agents: bump `CACHE_VERSION` when one of their policies changes."""
     from uno.compiled.strategies import tabulate

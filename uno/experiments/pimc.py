@@ -23,7 +23,7 @@ continuation letter**, so `sweep` groups its ladders by (continuation, belief) a
 into the other: the groupings filter on `cont in ("m", "r")`, and a belief encoded there would
 silently drop the rows it touched rather than compare them.
 
-docs/spec.md section 25. Every check prints ok / XX; the last line counts the failures.
+docs/foundations/spec.md section 25. Every check prints ok / XX; the last line counts the failures.
 
 `pimcn`: PIMC with a finite number of sampled worlds, as a behavioural policy scored by one exact
 `evaluate` (so the numbers carry no game-playing noise), against `exact`'s n -> infinity limit.
@@ -51,11 +51,11 @@ uniform split, i.e. the 9.5e row unchanged), `voids` (the hard constraints a *vo
 implies, needing no policy *probabilities*, though not assumption-free -- see `closure`) and
 `window` (plus the opponent's real action probabilities over their trailing run of plays, where
 their hand is exactly recoverable) -- all at one budget, so the difference is the belief alone.
-The particle filter over the deal that docs/plan.md originally specified **collapses**: a particle
+The particle filter over the deal that docs/foundations/history/original-plan.md originally specified **collapses**: a particle
 survives the opponent's first play only if it holds the played card, ~7/98 on full UNO, so 64 of
 them decay 0.156 -> 0.018 -> 0.002 -> 0.0004 -> 0 over their first five plays, and a version that
 reset on collapse scored worse than the prior it replaced. These rungs therefore condition instead
-of weighting. docs/spec.md section 26. The `column` argument picks the opponent the ladder is
+of weighting. docs/foundations/spec.md section 26. The `column` argument picks the opponent the ladder is
 scored against: step 9.5f ran only `random`, which is nearly uniform and so says little through its
 play choices, while the exact toys put the belief axis at 0.0-0.6 points against Random and up to
 2.6 against the Heuristic. `heuristic` is therefore where the soft `window` rung has to earn its
@@ -98,9 +98,9 @@ metric). Checks, all exact:
   "minimax": the per-arc perfect-information values are the ones those solvers produce;
 - "prior" never has an unreached set (every information set of the tree contains at least one
   world, so the prior mass is always positive), while "posterior" inherits the best response's
-  fill-in problem at the sets the opponent never allows (docs/spec.md section 16);
+  fill-in problem at the sets the opponent never allows (docs/foundations/spec.md section 16);
 - every policy is orbit-uniform, which is what makes the quotient value the full game's
-  (docs/spec.md section 18).
+  (docs/foundations/spec.md section 18).
 
 **Tie-breaking is value-relevant here, unlike a best response.** For a best response a tie
 between action orbits means equal continuation value, so any tie-break scores the same. A PIMC
@@ -597,7 +597,7 @@ def belief_section(games: int, worlds: int, depth: int, workers: int | None, col
     - `window`: additionally the opponent's real action probabilities over their trailing run of
       plays with no draw in between, where their hand is exactly recoverable.
 
-    **Why not a particle filter over the deal**, which is what docs/plan.md's original design
+    **Why not a particle filter over the deal**, which is what docs/foundations/history/original-plan.md's original design
     called for: it collapses. A particle survives the opponent's first play with probability
     `hand_size / unseen` ~ 7/98, and 64 particles decay 0.156 -> 0.018 -> 0.002 -> 0.0004 -> 0
     over their first five plays. A filter that resets on collapse scored *worse than the prior it
@@ -623,7 +623,7 @@ def belief_section(games: int, worlds: int, depth: int, workers: int | None, col
     for label in ("prior", "voids", "window", "soft"):
         belief = None if label == "prior" else Belief(rs, kind=label, opponent=col if label == "window" else None)
         beliefs[label] = belief
-        # A name identifies a policy (docs/context.md section 3). A response row is already a
+        # A name identifies a policy (docs/foundations/rationale.md section 3). A response row is already a
         # different policy per column, so the column goes in the name beside the rung -- which
         # also keeps the vs-Random names byte-identical to step 9.5f's, so re-running that column
         # replays its games rather than merely resampling them.
@@ -659,7 +659,7 @@ def belief_section(games: int, worlds: int, depth: int, workers: int | None, col
     # Real checks. Step 9.5f shipped this section with none, so its "0 failed checks" line was
     # vacuous (09.5f-results.md item 5). Both are sized to catch a *broken* belief, not to police
     # a close call: a threshold sitting just above the observed value is a test that fails on a
-    # different seed range by construction (docs/context.md section 7).
+    # different seed range by construction (docs/foundations/rationale.md section 7).
     sizes = {label: len(a) for label, a in scores.items()}
     check(len(set(sizes.values())) == 1, f"belief: the rungs did not score the same deals ({sizes}), so the paired differences above are not paired")
     for label, z in zs.items():
@@ -681,7 +681,7 @@ def belief_section(games: int, worlds: int, depth: int, workers: int | None, col
 
 
 def calibration_section(games: int, samples: int) -> None:
-    """Is the belief *correct*, or only more confident? (step 9.5f, docs/spec.md section 26.5)
+    """Is the belief *correct*, or only more confident? (step 9.5f, docs/foundations/spec.md section 26.5)
 
     Over-pruning is the dangerous failure of any inference: a belief that rules out the world the
     opponent is actually in looks sharp and is wrong, and nothing downstream notices -- the search
@@ -699,7 +699,7 @@ def calibration_section(games: int, samples: int) -> None:
     (it missed by 0.89). The bound is deliberately loose: its job is to catch catastrophic
     miscalibration, not to police the gap between two already-calibrated rungs, and a threshold
     sitting just above the observed value is a test that fails on a different seed range by
-    construction (docs/context.md section 7, first entry).
+    construction (docs/foundations/rationale.md section 7, first entry).
 
     Measured on the shipped rungs at the defaults: Brier prior 0.0846, `voids` 0.0828, `window`
     0.0825; worst reliability-bin gap 0.088 / 0.093 / 0.135. Note `window` is the **least**

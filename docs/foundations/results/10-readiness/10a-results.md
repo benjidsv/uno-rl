@@ -1,6 +1,6 @@
 # Step 10a: the contract (2026-09-17)
 
-> On top of commit `29bccad`. Plan: [plan.md](../../plan.md) row 10, brainstorm:
+> On top of commit `29bccad`. Plan: [plan.md](../../history/original-plan.md) row 10, brainstorm:
 > [10-brainstorm.md](10-brainstorm.md) section 5.
 > Re-run: `uv run uno report TOY heuristic`, `uv run uno report TOY random`,
 > `uv run uno report TOY2 heuristic`, `uv run uno report TOY2_SKIP heuristic`; tests

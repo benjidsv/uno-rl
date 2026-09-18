@@ -1,6 +1,6 @@
 """Estimators over recorded games: raw, mirrored (duplicate deals), paired
-comparison, and their exact counterparts on the toy. See docs/spec.md section 15
-and docs/plan.md ("A better evaluator").
+comparison, and their exact counterparts on the toy. See docs/foundations/spec.md section 15
+and docs/foundations/history/original-plan.md ("A better evaluator").
 
 Play once, estimate many ways. `play_pairs` plays every seed from both seats
 (the first-named agent at seat 0, then at seat 1, same deal and pile order)
@@ -90,7 +90,7 @@ def play_pairs(rs: Ruleset, agents: tuple[Agent, Agent], seeds, levels: Levels =
     names = (getattr(agents[0], "name", "?"), getattr(agents[1], "name", "?"))
     if agents[0] is not agents[1] and (names[0] == names[1] or stream_name(agents[0]) == stream_name(agents[1])):
         raise ValueError(
-            f"two different agents named {names[0]!r} would share action rng streams (docs/spec.md section 13): "
+            f"two different agents named {names[0]!r} would share action rng streams (docs/foundations/spec.md section 13): "
             "give them distinct names, or pass the same object twice for self-play"
         )
     swapped, lv_swapped = (agents[1], agents[0]), (levels[1], levels[0])
@@ -227,7 +227,7 @@ class Comparison:
     corr: tuple[float, float]  # per seat, correlation of the two agents' scores on the same deal
     # step 9.5a: how much of the pairing's variance reduction each seed's games actually get, since
     # under common random numbers the two rows' own games (same seat, same column, same deal) are
-    # identical until the row agents' choices first differ (docs/spec.md section 15). `None` when
+    # identical until the row agents' choices first differ (docs/foundations/spec.md section 15). `None` when
     # `compare` was called with `divergence=False` (no traces to read, e.g. a slimmed-down `Pairs`).
     identical: tuple[float, float] | None = None  # per seat: share of seeds whose two games have the same action sequence
     diverge_at: tuple[float, float] | None = None  # per seat: mean index of the first differing action, over the non-identical seeds (nan if none)
@@ -285,7 +285,7 @@ def compare(a: Pairs, b: Pairs, divergence: bool = True) -> Comparison:
     seeds whose two rows' own games are identical start to finish and, among the
     rest, where the first differing action falls. This is what "pairing removes
     77-85 % of the variance between near-identical variants on one rng stream but
-    only ~10 % between dissimilar policies" (docs/results/09-evaluation/09-results.md) actually
+    only ~10 % between dissimilar policies" (docs/foundations/results/09-evaluation/09-results.md) actually
     measures: how much of a pair's length the two games spend walking the exact
     same path. Needs full traces (`play_pairs`'s `Pairs`, not a slimmed-down copy
     with `trace=None`, e.g. `uno.experiments.transfer`'s `Played.pairs`): pass

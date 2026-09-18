@@ -1,10 +1,10 @@
-"""The opponent-hand belief for the PIMC agent (step 9.5f, docs/spec.md section 26).
+"""The opponent-hand belief for the PIMC agent (step 9.5f, docs/foundations/spec.md section 26).
 
 `uno.eval.search.determinize_l1` splits the unseen cards **uniformly**, which is the `"prior"`
 weighting `uno.compiled.pimc` measures exactly on the toys: PIMC with no inference at all. This
 module narrows that split towards the `"posterior"`, using what the opponent's own actions said.
 
-**What was tried first, and why it does not work.** docs/plan.md's original design is a particle
+**What was tried first, and why it does not work.** docs/foundations/history/original-plan.md's original design is a particle
 filter over the deal: sample the opponent's initial hand, replay the public history, weight each
 particle by the opponent's action probabilities. Measured before this module was written, that
 collapses outright -- a particle survives the opponent's first play with probability
@@ -167,7 +167,7 @@ def void_weight(rs: Ruleset, hand, vs: list[Void], decay: float) -> float:
     this one function spans both rungs. Module-level rather than a method because the *exact*
     side needs it too: `uno.compiled.rungs` weights a toy world tree's worlds with it, and a
     closure test that reimplemented the arithmetic there would be checking a copy of the rung
-    rather than the rung (docs/spec.md section 30)."""
+    rather than the rung (docs/foundations/spec.md section 30)."""
     table = playable_table(rs)
     w = 1.0
     for v in vs:
@@ -217,7 +217,7 @@ class Belief:
 
     Stateless across decisions by construction -- there is nothing to carry, because nothing is
     propagated -- so the policy stays a deterministic function of the information state, which
-    AIVAT's row correction needs (docs/spec.md section 25). `_constraints` memoises what a decision
+    AIVAT's row correction needs (docs/foundations/spec.md section 25). `_constraints` memoises what a decision
     derives from its public history, which is a memo and not state: it is keyed on that history, so
     it answers exactly what a freshly built `Belief` would."""
 
@@ -288,7 +288,7 @@ class Belief:
             # so drawing one proportionally to its likelihood targets the windowed posterior.
             # Returning the argmax instead would collapse every world onto one explanation, which
             # is the same mistake as reading a reference value off the worlds that chose the action
-            # (the winner's curse of docs/spec.md section 25), one level over.
+            # (the winner's curse of docs/foundations/spec.md section 25), one level over.
             total = sum(weights)
             r = rng.random() * total
             acc = 0.0

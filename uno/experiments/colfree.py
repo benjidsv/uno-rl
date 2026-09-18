@@ -16,13 +16,13 @@ at all, and 9.5f's own open list records that no such PIMC has ever been measure
   competent play-first player"), or assumes a clairvoyant one (`minimax`, which reads
   nothing whatsoever). Either way the assumption does not change with who sits opposite;
 - the belief is `voids`, which reads no policy *probabilities*. It is not assumption-free --
-  it assumes a playable drawn card is played at once (docs/spec.md section 26.2) -- but that
+  it assumes a playable drawn card is played at once (docs/foundations/spec.md section 26.2) -- but that
   assumption is a fixed property of the row, not a reading of the column. `window` is
   therefore excluded by construction, whatever it scores.
 
 **The check that makes this a measurement rather than a new agent.** Handed its own column
 as the surrogate, the column-free row *is* the `response` row: same worlds, same searches,
-same games. Since a name identifies a policy (docs/spec.md section 13) and these two
+same games. Since a name identifies a policy (docs/foundations/spec.md section 13) and these two
 constructions are one policy, they share a name -- hence a world-sampling stream -- and the
 per-game scores must be **array-equal**, not merely close. If the builder differs from the
 ladder's own construction in any parameter (the per-seat leaves, the belief, the budget), the
@@ -30,7 +30,7 @@ games diverge and the equality fails.
 
 Seeds: **EVAL block 01** (`uno.eval.seeds`), claimed for this item. Block 00 -- the original
 `EVAL_SEEDS` -- is spent: 9.5d-9.5f selected the working set on it, so a row reported there
-would be scored on the seeds its own budget was chosen on (docs/spec.md section 27.1).
+would be scored on the seeds its own budget was chosen on (docs/foundations/spec.md section 27.1).
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ def identity_section(rs, leaves, worlds: int, depth: int, workers: int | None, d
     print(f"\n== 1. the identity: handed its own column as the surrogate, the column-free row is the `response` row ({deals} dev deals)")
     seeds = seed_registry.dev_block(0, deals)
     for column in (PlayFirstRandom(rs), Heuristic(rs)):
-        name = f"pimc_resp_{column.name}_voids"  # one policy, one name (docs/spec.md section 13)
+        name = f"pimc_resp_{column.name}_voids"  # one policy, one name (docs/foundations/spec.md section 13)
         ref, _ = play(rs, response_row(rs, leaves, column, worlds, depth), column, seeds, workers)
         cf, _ = play(rs, column_free_row(rs, leaves, column, worlds, depth, name=name), column, seeds, workers)
         same = ref.shape == cf.shape and np.array_equal(ref, cf)

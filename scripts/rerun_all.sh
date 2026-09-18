@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Re-run every experiment of docs/results/, in dependency order, with a live status line and a final report.
+# Re-run every experiment of docs/foundations/results/, in dependency order, with a live status line and a final report.
 #
 #   bash scripts/rerun_all.sh
 #

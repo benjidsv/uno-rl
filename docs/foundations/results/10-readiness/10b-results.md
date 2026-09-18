@@ -3,12 +3,12 @@
 > On top of commit `9a30e80`. Rerun:
 > `uv run uno figures [output_root=docs/generated/report-card]`.
 > New code: `uno/experiments/figures.py`. New dependency: `matplotlib` (Agg/SVG backend
-> only). Design: [`docs/results/10-readiness/10-brainstorm.md`](10-brainstorm.md) section 6,
-> [`docs/10-to-11-plan.md`](../../10-to-11-plan.md).
+> only). Design: [`docs/foundations/results/10-readiness/10-brainstorm.md`](10-brainstorm.md) section 6,
+> [`docs/foundations/history/transition-to-rl-plan.md`](../../history/transition-to-rl-plan.md).
 
 ## What this is for
 
-`docs/results/index.md`'s numbers have been hand-copied from each step's stdout into
+`docs/foundations/results/index.md`'s numbers have been hand-copied from each step's stdout into
 markdown since step 3. The brainstorm named the risk directly: "staleness has bitten
 before" (review item B6), and step 11 was expected to produce rows faster than
 hand-editing survives. `uv run uno figures` is the first script that turns already-published

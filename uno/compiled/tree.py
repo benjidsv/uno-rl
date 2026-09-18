@@ -1,7 +1,7 @@
 """Compiled game tree: the lazy-chance tree (or the world tree) as flat numpy
 arrays, and the exact computations that become vectorized passes over them.
 
-See docs/spec.md section 16. Why: the pure-Python solvers of `uno.reference.solve` walk
+See docs/foundations/spec.md section 16. Why: the pure-Python solvers of `uno.reference.solve` walk
 `State` objects through `step` at ~150k histories/s, so one pass over `TOY`
 (1.25M histories) costs 7-15 s. CFR needs hundreds of passes and the RL rows
 of the ladder need a best response per checkpoint, so the tree is walked
@@ -91,7 +91,7 @@ class Keying:
     keys: dict[bytes, int]  # encoded (canonical, on a symmetric tree) information-set key -> id
     # orbits of a set's actions under the stabilizer of its canonical key (singletons on a
     # non-symmetric tree). A strategy over ia is a symmetric strategy iff it is uniform within
-    # every orbit, see docs/spec.md section 18. Orbits are numbered in set order, so a set's orbits
+    # every orbit, see docs/foundations/spec.md section 18. Orbits are numbered in set order, so a set's orbits
     # are a contiguous range.
     ia_orbit: np.ndarray  # (K,) int32
     orbit_info: np.ndarray  # (O,) int32
@@ -368,7 +368,7 @@ class CompiledTree:
         return self.util[self.terminals] * (1.0 if seat == 0 else -1.0)
 
     def rescored(self, exhaustion: str = "hand") -> CompiledTree:
-        """The same tree under another scoring of exhaustion endings (docs/spec.md
+        """The same tree under another scoring of exhaustion endings (docs/foundations/spec.md
         section 9): "hand" is the ruleset's own (fewer cards wins); "draw" scores
         every exhaustion ending as a draw (on a free-play ruleset a trailing player
         then stalls into a draw: drawing the pile empty and claiming is always
@@ -398,7 +398,7 @@ def compile_tree(rs: Ruleset, levels: tuple[Level, ...] = (Level.L1,), symmetric
     Roots are the worlds when L3 is requested (its sets are the histories, which
     the lazy tree merges), the deals otherwise; `world=True` forces world roots
     without an L3 keying (for `best_response_perfect` on trees too big for one).
-    `symmetric`: one root per color / rank orbit and canonical keys (docs/spec.md
+    `symmetric`: one root per color / rank orbit and canonical keys (docs/foundations/spec.md
     section 18); exact for symmetric policies only. `cache`: a directory; the
     tree is loaded from it if a file for this (ruleset, levels, symmetric,
     world) exists there under the current `uno.store.CACHE_VERSION`, compiled

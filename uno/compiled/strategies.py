@@ -1,5 +1,5 @@
 """Strategies over a keying of a compiled tree, from agents and from
-best-response tables. See docs/spec.md sections 16 and 18.
+best-response tables. See docs/foundations/spec.md sections 16 and 18.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def tabulate(tree: CompiledTree, level: Level, agent: Agent) -> np.ndarray:
         for a, p in probs.items():
             sigma[start + legal.index(a)] = p
     if tree.symmetric and not k.is_symmetric(sigma, 1e-9):
-        raise ValueError(f"{agent.name} is not symmetric: it is not uniform within some orbit of a canonical set (docs/spec.md section 18)")
+        raise ValueError(f"{agent.name} is not symmetric: it is not uniform within some orbit of a canonical set (docs/foundations/spec.md section 18)")
     return sigma
 
 
@@ -98,7 +98,7 @@ def tabulate_batched(tree: CompiledTree, level: Level, policy: BatchPolicy, chun
             sigma[lo:hi] = probs
             progress.update(len(sel))
     if tree.symmetric and not k.is_symmetric(sigma, 1e-9):
-        raise ValueError(f"{policy.name} is not symmetric: it is not uniform within some orbit of a canonical set (docs/spec.md section 18)")
+        raise ValueError(f"{policy.name} is not symmetric: it is not uniform within some orbit of a canonical set (docs/foundations/spec.md section 18)")
     return sigma
 
 
@@ -121,7 +121,7 @@ def br_row(tree: CompiledTree, opponent: Strategy, completion: np.ndarray | None
     `opponent` as one strategy over the keying (each seat's sets from its own best
     response), and the two best responses. `completion` is played at the sets the
     opponent never lets the responder reach; None keeps the solver's first orbit
-    there (docs/spec.md section 16)."""
+    there (docs/foundations/spec.md section 16)."""
     brs = (best_response(tree, level, opponent, 0, completion), best_response(tree, level, opponent, 1, completion))
     k = tree.keyings[level]
     return (level, np.where(k.info_player[k.ia_info] == 0, brs[0].sigma, brs[1].sigma)), brs

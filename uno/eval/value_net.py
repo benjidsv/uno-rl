@@ -1,4 +1,4 @@
-"""A value network for AIVAT, fitted on PIMC rollout targets (step 9.5c, docs/spec.md section 24).
+"""A value network for AIVAT, fitted on PIMC rollout targets (step 9.5c, docs/foundations/spec.md section 24).
 
 **What it may see**: the L2 state, as the critic (`uno.eval.critic`): both hands, the discard (so the
 pile as a multiset), top card and colour, mover, phase, the drawn card, pile size, reshuffles. Never
@@ -357,7 +357,7 @@ class NetLeaf:
     which rows accompany it or where it sits among them** (`tests/eval/test_value_net.py`). A
     decision's batch is a deterministic function of its information state -- the worlds are drawn
     from an rng keyed on that state -- so the agent's policy stays the deterministic function of
-    the information state that AIVAT's row correction assumes (docs/spec.md section 25). Only the
+    the information state that AIVAT's row correction assumes (docs/foundations/spec.md section 25). Only the
     absolute value moves, by an ulp, which is far below any margin that flips an argmax: measured,
     the batched and unbatched agents play identical action sequences.
     """

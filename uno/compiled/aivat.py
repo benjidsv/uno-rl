@@ -1,6 +1,6 @@
 """AIVAT on a compiled tree: the exact moments of the estimator of `uno.eval.aivat`, the
 value functions it is validated with, and `TreeValues`, the value model that reads them
-for played games. See docs/spec.md section 23 (step 9.5b).
+for played games. See docs/foundations/spec.md section 23 (step 9.5b).
 
 Values are seat-0 returns. A value function is a node vector `nu` (terminals included:
 it must be a function of the terminal's return, which every family below satisfies);

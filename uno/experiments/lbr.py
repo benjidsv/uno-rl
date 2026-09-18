@@ -6,7 +6,7 @@
     uv run uno lbr eval   [deals=4000] [workers]
 
 An attack's *achieved score in real games* lower-bounds the best-response score against a frozen
-target, so a weak or biased planner still produces a valid bound (docs/results/10-readiness/10-review.md
+target, so a weak or biased planner still produces a valid bound (docs/foundations/results/10-readiness/10-review.md
 section 4). The risk is an **insensitive** attack: a small number from a blunt instrument looks
 exactly like a safe target. The toys are where that can be settled, because the exact best
 response is computable there -- so `exact` measures how much of each target's *known*
@@ -19,18 +19,18 @@ information set, so a whole `TOY` attacker is a couple of seconds.
 
 `games`: the sampled path, checked against the exact one. The attacker that is *played* is the same
 `Symmetrized` object that was tabulated, and its score is compared with `scores_on_seeds` -- the
-exact value **on the same deals**, which is the calibrated scale (docs/spec.md section 14). A
+exact value **on the same deals**, which is the calibrated scale (docs/foundations/spec.md section 14). A
 comparison against the whole-game value would be the wrong scale: on 60 `TOY` deals the deal luck
 alone is ~1.9 score points. This section also reports the attacker's internal **search Q** beside
 its achieved score, because the two are different objects and only the second is a bound.
 
 `pilot`: a bounded full-UNO DEV cost/sensitivity run. Nothing here is reported on EVAL seeds: the
 configuration and the measurement budget are frozen from this pilot's variances *first*, and only
-then does a confirmatory block get claimed from `uno.eval.seeds` (docs/spec.md section 27.1). Cost
+then does a confirmatory block get claimed from `uno.eval.seeds` (docs/foundations/spec.md section 27.1). Cost
 measured at 0.26 s/game against a rulebot target and 8.11 s/game against a target that is itself a
 search, which is why the search-target row runs on its own small deal count.
 
-Every check prints ok / XX; the last line counts the failures. docs/spec.md section 32.
+Every check prints ok / XX; the last line counts the failures. docs/foundations/spec.md section 32.
 """
 
 from __future__ import annotations
@@ -209,7 +209,7 @@ def exact_section(names: list[str], ladder: tuple[int, ...], n_seeds: int, budge
         print("      attacker's own world-sampling seed moves a single seat by 0.6-0.8 score points at these")
         print("      budgets (section 5), so a per-seat wobble of a few tenths is below the instrument's own")
         print("      resolution and checking it would be checking noise. And not that it reaches zero: PIMC's")
-        print("      structural bias does not vanish with more worlds (docs/spec.md section 25).")
+        print("      structural bias does not vanish with more worlds (docs/foundations/spec.md section 25).")
         flaw_label = next((k for k in ("nash_never_action_card", "nash_never_wild_play", "nash_always_pass") if k in targets), None)
         rungs = [("heuristic", "response", {}), *([(flaw_label, "surrogate", dict(surrogate=Heuristic(rs)))] if flaw_label else [])]
         for label, family, kw in rungs:
@@ -356,10 +356,10 @@ def games_section(name: str, deals: int, worlds: int) -> None:
     # 2. the search Q is not the achieved score
     print("\n   2. the attacker's internal search Q beside its achieved score. These are different objects:")
     print("      the Q is an optimistic perfect-information average over sampled worlds, not a value estimate,")
-    print("      and only the achieved score is a bound (docs/spec.md section 25 on the winner's curse).")
+    print("      and only the achieved score is a bound (docs/foundations/spec.md section 25 on the winner's curse).")
     # The Q is read through `scores_split`, as `uno.experiments.pimc._d2_chunk` does: the action is
     # chosen on one half of the worlds and valued on the other, so this is not additionally inflated
-    # by the winner's curse (docs/spec.md section 25). What remains is the optimism that *is* the
+    # by the winner's curse (docs/foundations/spec.md section 25). What remains is the optimism that *is* the
     # point -- a perfect-information average over sampled worlds is not the value of the real game.
     # Only the Q at the attacker's **first** decision is comparable to a game score: both are then
     # "the expected outcome of this game". Averaging Q over decisions at every depth and comparing

@@ -1,11 +1,11 @@
 """The sampled belief rungs as *exact* beliefs on a toy world tree (step 10a.2, item A5b).
-See docs/spec.md section 30.
+See docs/foundations/spec.md section 30.
 
 `uno.compiled.pimc` measures two beliefs exactly: `"prior"` (the uniform split, no
 inference) and `"posterior"` (the true Bayesian belief given the opponent's strategy). The
 rungs that actually ship on full UNO are neither: `"voids"` keeps the worlds a voluntary
 draw does not rule out, and `"soft"` weights them by `decay ** excess` instead of rejecting
-(docs/spec.md section 26). 9.5f closed those against the exact posterior as *distributions*
+(docs/foundations/spec.md section 26). 9.5f closed those against the exact posterior as *distributions*
 over hands (`uv run uno pimc closure`), but never asked what an agent playing them is
 **worth**, or how exploitable it is -- and the toys' own warning is that fitting a belief to
 one opponent *costs* exploitability (`TOY2_SKIP`: `posterior/response` 3.52 / 6.43 against
@@ -62,7 +62,7 @@ def rung_belief(tree: CompiledTree, seat: int, kind: str = "voids", decay: float
     if kind not in RUNGS:
         raise ValueError(f"unknown rung {kind!r}: one of {RUNGS} ('window' needs the opponent's action probabilities and has no exact counterpart)")
     if tree.symmetric:
-        raise ValueError("rung_belief needs the full world tree (compile_tree(rs, (L1, L3), symmetric=False)): on a quotient each member world carries its own canonicalising element, so an opponent hand decoded from its L3 key is in that member's coordinates, not the set's (docs/spec.md section 30)")
+        raise ValueError("rung_belief needs the full world tree (compile_tree(rs, (L1, L3), symmetric=False)): on a quotient each member world carries its own canonicalising element, so an opponent hand decoded from its L3 key is in that member's coordinates, not the set's (docs/foundations/spec.md section 30)")
     if Level.L3 not in tree.keyings or Level.L1 not in tree.keyings:
         raise ValueError("rung_belief needs both an L1 and an L3 keying: compile_tree(rs, (Level.L1, Level.L3), symmetric=False)")
     rs = tree.rs
@@ -99,6 +99,6 @@ def rung_belief(tree: CompiledTree, seat: int, kind: str = "voids", decay: float
 
 
 def rung_label(kind: str, decay: float = 0.1) -> str:
-    """The name of the policy a rung produces. A name identifies a policy (docs/spec.md
+    """The name of the policy a rung produces. A name identifies a policy (docs/foundations/spec.md
     section 13), and `soft` is a one-parameter family, so the decay belongs in it."""
     return f"soft({decay:g})" if kind == "soft" else kind

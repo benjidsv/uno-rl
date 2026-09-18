@@ -15,7 +15,7 @@ checkpoint and runs every instrument on it.
 - **normalised skill**, 0 = Random at that seat against that column, 1 = BR L1 against
   it. An affine rescaling per cell, so a difference in scale units is *not* score
   points: both are printed, always, and nothing is ever *selected* on the normalised
-  number (docs/results/10-readiness/10-brainstorm.md section 3);
+  number (docs/foundations/results/10-readiness/10-brainstorm.md section 3);
 - `br_gap` against each column (`uno.compiled.edge`): the D4 fixed-opponent metric,
   the row's gap to the best response to its own training column;
 - **exploitability** per seat and NashConv: the one luck-free quality measure, and the
@@ -39,7 +39,7 @@ force it on or `0` to skip it.
 
 **The checks.** Run on the two agents whose values are pinned (`random`, `heuristic`),
 every printed number must reproduce the published one *to the digit*
-(`docs/results/index.md`), which is the step 9.5f device: a report card that agreed
+(`docs/foundations/results/index.md`), which is the step 9.5f device: a report card that agreed
 only to a tolerance would not catch a rewiring that moved a number by a point. The
 sampled block is deliberately absent here: on a toy every cell is exact, and a
 full-UNO card claims a fresh seed block from `uno.eval.seeds` (item A1) rather than
@@ -64,7 +64,7 @@ from uno.game.observe import Level
 L1 = Level.L1
 FAILS: list[str] = []
 
-# Published values every card must reproduce to the digit (docs/results/index.md).
+# Published values every card must reproduce to the digit (docs/foundations/results/index.md).
 # (ruleset, row): {"vs <column>": (seat 0, seat 1), "exploitability": (seat 0, seat 1)}
 PINNED: dict[tuple[str, str], dict[str, tuple[float, float]]] = {
     ("TOY", "random"): {"vs random": (0.6493, 0.3507), "exploitability": (17.1, 17.4)},
