@@ -1,6 +1,7 @@
 """Step 10B addendum: the full-UNO league (win rates, cost, and the deal floor).
 
-    uv run uno league [games=150] [worlds=32] [depth=2] [workers=4] [out_dir=docs/results/figures]
+    uv run uno league [games=150] [worlds=32] [depth=2] [workers=4]
+        [output_root=docs/generated/league]
 
 Three more figures on top of `uv run uno figures`. This one plays real full-UNO games
 (minutes, not seconds) rather than exact toy math, on **DEV-pool seeds**
@@ -13,8 +14,8 @@ project has actually built: true uniform-random (`UniformLegal`), the ladder's
 10a.2 (`uno.experiments.colfree.column_free_row`, assume-heuristic and minimax, both
 with the `voids` belief, w=32 d=2 -- the working general-player set that step
 established). The `response` / `window` PIMC continuations are **excluded on purpose**:
-they read their column's real policy by construction (docs/results/10a2-results.md,
-docs/results/09.5f-results.md), so "X vs Random" and "X vs Heuristic" are not the same
+they read their column's real policy by construction (docs/results/10-readiness/10a2-results.md,
+docs/results/09-evaluation/09.5f-results.md), so "X vs Random" and "X vs Heuristic" are not the same
 policy under those continuations -- they are ladder *instruments*, and a name identifies
 a policy (docs/spec.md section 13). Folding them into one league row would silently
 report several different agents under one name.
@@ -24,12 +25,12 @@ seats from the same `games` DEV seeds (`uno.experiments.colfree.play`, which alr
 plays both seatings of each deal and times the wall clock -- reused rather than
 reimplemented). Figures:
 
-- `06-league-winrate.svg`: two heatmaps (seat 0, seat 1), row agent's score against
+- `league-winrate.svg`: two heatmaps (seat 0, seat 1), row agent's score against
   the column agent.
-- `07-cost-vs-strength.svg`: ms/game (vs the Heuristic, the project's standard cost
+- `cost-vs-strength.svg`: ms/game (vs the Heuristic, the project's standard cost
   reference, e.g. 09.5e) against mean league score (both seats, every opponent
   including self-play), log-x, with the Pareto-efficient points connected.
-- `08-deal-floor.svg`: the deal floor by game length (`uv run uno pimc_value floor`,
+- `deal-floor.svg`: the deal floor by game length (`uv run uno pimc_value floor`,
   docs/results/index.md "PIMC as an agent"), entirely historical -- five already-published
   numbers, not re-measured.
 """
@@ -54,8 +55,8 @@ from uno.game import rules
 
 # Average decisions ("actions") per game and the deal floor's share of the outcome variance
 # (Heuristic vs Random, 2,000 EVAL deals x 32 pile determinizations), seat 0 / seat 1.
-# docs/results/index.md "PIMC as an agent" / "the deal floor"; docs/results/09.5b-results.md
-# section 4 (actions/game); docs/results/08.7-toy2.md (TOY / TOY2 dec/game).
+# docs/results/index.md "PIMC as an agent" / "the deal floor"; docs/results/09-evaluation/09.5b-results.md
+# section 4 (actions/game); docs/results/03-08-foundations/08.7-toy2.md (TOY / TOY2 dec/game).
 DEAL_FLOOR = [
     ("TOY", 6.5, 0.42, 0.47),
     ("TOY2", 7.1, 0.38, 0.40),
@@ -168,8 +169,9 @@ def main(argv: list[str] | None = None) -> None:
     worlds = int(argv[1]) if len(argv) > 1 else 32
     depth = int(argv[2]) if len(argv) > 2 else 2
     workers = int(argv[3]) if len(argv) > 3 else 4
-    out_dir = Path(argv[4]) if len(argv) > 4 else Path("docs/results/figures")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    output_root = Path(argv[4]) if len(argv) > 4 else Path("docs/generated/league")
+    figure_dir = output_root / "figures"
+    figure_dir.mkdir(parents=True, exist_ok=True)
     rs = rules.FULL_UNO
 
     print(f"== the full-UNO league: {games} DEV deals/pair, w={worlds} d={depth}, {workers} workers")
@@ -179,12 +181,12 @@ def main(argv: list[str] | None = None) -> None:
     seeds = seed_registry.dev_block(0, games)
     names, seat0, seat1, ms = round_robin(rs, agents, seeds, workers)
 
-    print(f"\n== writing figures to {out_dir}")
-    fig_winrate(names, seat0, seat1, out_dir / "06-league-winrate.svg")
-    fig_cost_vs_strength(names, seat0, seat1, ms, out_dir / "07-cost-vs-strength.svg")
-    fig_deal_floor(out_dir / "08-deal-floor.svg")
-    for name in ("06-league-winrate", "07-cost-vs-strength", "08-deal-floor"):
-        print(f"   {out_dir / (name + '.svg')}")
+    print(f"\n== writing figures to {figure_dir}")
+    fig_winrate(names, seat0, seat1, figure_dir / "league-winrate.svg")
+    fig_cost_vs_strength(names, seat0, seat1, ms, figure_dir / "cost-vs-strength.svg")
+    fig_deal_floor(figure_dir / "deal-floor.svg")
+    for name in ("league-winrate", "cost-vs-strength", "deal-floor"):
+        print(f"   {figure_dir / (name + '.svg')}")
 
 
 if __name__ == "__main__":

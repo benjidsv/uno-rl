@@ -3,7 +3,7 @@
 Agreed direction, 2026-09-17; **10a.3, 10B and 10C complete as of 2026-09-18**.
 10C froze its four-agent equal-weight league and confirmed it on fresh EVAL
 block 03 after exact toy and full-UNO DEV selection. Based on the
-[Step 10 review](results/10-review.md) and Benji's request to retain the existing
+[Step 10 review](results/10-readiness/10-review.md) and Benji's request to retain the existing
 10B → 10C → 11 sequence.
 
 ## Placement and scope
@@ -27,7 +27,7 @@ paths, with measured throughput and bounded memory.
 
 ## 10a.3A: repair the memory measurement (done)
 
-Completed on 2026-09-17; see [the results](results/10a3a-results.md). The
+Completed on 2026-09-17; see [the results](results/10-readiness/10a3a-results.md). The
 implementation canonicalizes coarse fields and actions together, pins the
 review's positive-reach collision, checks the same lifted policies across full
 and quotient `SMALL` trees, and refreshes all five planned rulesets. The
@@ -82,7 +82,7 @@ particle filter is a possible later arm, not a dependency of 10B or 10C.
 
 ## 10a.3C: build and calibrate LBR (done)
 
-Completed on 2026-09-18; see [the results](results/10a3c-results.md) and
+Completed on 2026-09-18; see [the results](results/10-readiness/10a3c-results.md) and
 [spec section 32](spec.md). All six items below were built: the interface with an
 explicitly enforced (and *measured*) rejection of unsupported private-history
 queries, response-PIMC plus a rollout comparator, exact toy calibration against
@@ -129,7 +129,7 @@ corresponding work is completed; this plan alone does not mark anything done.
 
 ## 10B: retain the presentation step (done)
 
-Completed on 2026-09-18; see [the results](results/10b-results.md). `uv run uno figures`
+Completed on 2026-09-18; see [the results](results/10-readiness/10b-results.md). `uv run uno figures`
 writes the five figures the brainstorm named, recomputing every cheaply-exact number live
 from `.cache/` and checking it against `index.md` to the digit rather than copying it
 (0 failed checks); full-UNO-sampled numbers are read from a cited table instead of
@@ -139,7 +139,7 @@ re-measured. Two scope cuts, named in the results file: `TOY2_FULL`'s BR L2/L3 s
 footnotes are interleaved with the numbers throughout) -- the digit-check is the concrete
 form of the staleness concern below, without a full markdown-generation pipeline.
 
-Keep the figure/table generation proposed in `results/10-brainstorm.md` section 6.
+Keep the figure/table generation proposed in `results/10-readiness/10-brainstorm.md` section 6.
 Use corrected memory results and label full-UNO PIMC as an achievable benchmark,
 not a certified ceiling. Include LBR's lower-bound status and attacker budget.
 Historical search gains from different configurations are not an additive causal

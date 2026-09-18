@@ -3,7 +3,7 @@ gradient of a luck-corrected return (step 10a.2, item A6). See docs/spec.md sect
 
 Step 11's objective is a policy gradient, and step 10's question is which of AIVAT's
 corrections may appear in the return it is taken of. The argument
-(docs/results/10-brainstorm.md 5.2) is that the agent's own (row) correction must not,
+(docs/results/10-readiness/10-brainstorm.md 5.2) is that the agent's own (row) correction must not,
 because with an exact V the row term *is* `Q(s, a) - V(s)`, so subtracting it removes
 exactly the part of the return that depends on the action. This module turns that
 argument into two exact computations, so the claim is measured and not asserted.

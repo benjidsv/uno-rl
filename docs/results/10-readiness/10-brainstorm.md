@@ -1,8 +1,8 @@
 # Step 10 brainstorm: formalising the results for RL (2026-09-17)
 
 > On top of commit `29bccad`. **Nothing built**: this is the brainstorm before step 10, per the
-> workflow in `context.md` section 10. Numbers quoted are from [index.md](index.md) and the
-> 9.5a-9.5f results files. Plan: [plan.md](../plan.md) row 10.
+> workflow in `context.md` section 10. Numbers quoted are from [index.md](../index.md) and the
+> 9.5a-9.5f results files. Plan: [plan.md](../../plan.md) row 10.
 > Planned as **three commits**: 10a (the contract), 10b (figures and generated tables),
 > 10c (the distilled rulebot and the transfer test).
 
@@ -20,7 +20,7 @@ experiment rather than an assembly job.
 
 ## 1. What the charter asked, and what 9.5 already delivered
 
-The step 9 review ([09-review](09-review.md) section D) chartered two artifacts: **a performance
+The step 9 review ([09-review](../09-evaluation/09-review.md) section D) chartered two artifacts: **a performance
 range with several ceilings**, and **an edge-by-decision tool**. Since then 9.5a-9.5f built most of
 the machinery for the second and answered two of its supporting items outright:
 
@@ -306,7 +306,7 @@ measurement; do not inherit 9.5c's conclusion into a different regime.
 ## 6. Commit 10b: figures and generated tables
 
 A plain script in the `uv run uno <experiment>` convention (`uv run uno figures`) writing SVG into
-`docs/results/figures/`, so a figure is reproducible like every other number; matplotlib as a new
+`docs/generated/report-card/figures/`, so a figure is reproducible like every other number; matplotlib as a new
 dependency. A notebook is welcome on top for exploration but is not the artifact -- the script is,
 because it can be rerun by `scripts/rerun_all.sh` and diffed.
 

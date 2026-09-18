@@ -1,4 +1,4 @@
-"""TOY2 (docs/results/08.7-toy2.md): the sizes, best-response values and Nash value are pinned."""
+"""TOY2 (docs/results/03-08-foundations/08.7-toy2.md): the sizes, best-response values and Nash value are pinned."""
 
 from __future__ import annotations
 

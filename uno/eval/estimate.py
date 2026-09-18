@@ -285,7 +285,7 @@ def compare(a: Pairs, b: Pairs, divergence: bool = True) -> Comparison:
     seeds whose two rows' own games are identical start to finish and, among the
     rest, where the first differing action falls. This is what "pairing removes
     77-85 % of the variance between near-identical variants on one rng stream but
-    only ~10 % between dissimilar policies" (docs/results/09-results.md) actually
+    only ~10 % between dissimilar policies" (docs/results/09-evaluation/09-results.md) actually
     measures: how much of a pair's length the two games spend walking the exact
     same path. Needs full traces (`play_pairs`'s `Pairs`, not a slimmed-down copy
     with `trace=None`, e.g. `uno.experiments.transfer`'s `Played.pairs`): pass

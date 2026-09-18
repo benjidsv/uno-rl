@@ -1,6 +1,6 @@
 # Step 3 results: census (2026-09-14, `uno census`)
 
-> Commit `fbca563` (2026-09-14). Rerun: `uv run uno census [node_cap] [games] [letters]`. Code: `uno/reference/census.py`, `uno/game/chance.py`. The Heuristic of this step broke ties on the lowest type id; current values in [index](index.md).
+> Commit `fbca563` (2026-09-14). Rerun: `uv run uno census [node_cap] [games] [letters]`. Code: `uno/reference/census.py`, `uno/game/chance.py`. The Heuristic of this step broke ties on the lowest type id; current values in [index](../index.md).
 
 Method: the **lazy-chance tree** (`uno/game/chance.py`), not permutations. A draw is a
 chance node over the distinct types left in the unknown part of the pile; the
@@ -75,7 +75,7 @@ Rules for the ladder that fell out of this:
    never a pre-registered threshold. Fine for design; it means the steps 5-6
    numbers are the first computed on a ruleset fixed *before* they were run.
 4. ~19 % of toy games end by exhaustion, so part of the toy's skill is the
-   pile-parity / card-count tactic of [spec section 9](../spec.md), which full UNO does
+   pile-parity / card-count tactic of [spec section 9](../../spec.md), which full UNO does
    not have. Conclusions about what PPO could or could not learn transfer only
    for the decisions the toy shares with full UNO (color management, holding
    the wild, the hold-after-draw choice).

@@ -6,7 +6,7 @@
     uv run uno lbr eval   [deals=4000] [workers]
 
 An attack's *achieved score in real games* lower-bounds the best-response score against a frozen
-target, so a weak or biased planner still produces a valid bound (docs/results/10-review.md
+target, so a weak or biased planner still produces a valid bound (docs/results/10-readiness/10-review.md
 section 4). The risk is an **insensitive** attack: a small number from a blunt instrument looks
 exactly like a safe target. The toys are where that can be settled, because the exact best
 response is computable there -- so `exact` measures how much of each target's *known*

@@ -5,7 +5,7 @@ score in real games* is a lower bound on the best-response score against that ta
 attack needs no exact belief and no exact Q to be valid -- it only has to be an admissible L1
 policy. What it can be is **insensitive**: a weak attack that fails to find a target's weakness
 reports a small number, and a small number is not evidence of safety
-([Lisy & Bowling 2017](https://arxiv.org/abs/1612.07547), and docs/results/10-review.md section 4).
+([Lisy & Bowling 2017](https://arxiv.org/abs/1612.07547), and docs/results/10-readiness/10-review.md section 4).
 So the instrument is calibrated against the exact toy best responses, where the answer is known.
 
 **Why the seat sum is the reportable quantity.** On full UNO the seat-specific Nash value is

@@ -2,7 +2,7 @@
 
     uv run uno robustness [ruleset=TOY] [iterations=1000] [light] [seeds=20000]
 
-The review of step 9 (docs/results/09-review.md) found readings that depend on
+The review of step 9 (docs/results/09-evaluation/09-review.md) found readings that depend on
 choices nobody had varied. This experiment varies them, on the cached trees:
 
 1. (A1) the split share of the mirrored evaluator against the split share of two

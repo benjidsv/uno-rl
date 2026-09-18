@@ -1,6 +1,7 @@
-"""Step 10B: reproducible figures (docs/results/10-brainstorm.md section 6).
+"""Step 10B: reproducible report-card figures
+(`docs/results/10-readiness/10-brainstorm.md` section 6).
 
-    uv run uno figures [out_dir=docs/results/figures]
+    uv run uno figures [output_root=docs/generated/report-card]
 
 Five SVGs, one function each, written with matplotlib (Agg backend, no display
 needed). Every number that is cheap to recompute exactly (the toy best-response
@@ -27,7 +28,7 @@ Two things are **not** recomputed here, named rather than silently pinned:
 `index.md`'s hand-written tables are not spliced over by this command: its
 tables interleave prose and footnotes with the numbers throughout, so
 generating replacement markdown for the whole file is out of scope here (see
-`docs/results/10b-results.md`). The check above is the regression instrument
+`docs/results/10-readiness/10b-results.md`). The check above is the regression instrument
 the brainstorm's "staleness has bitten before" concern actually asked for.
 """
 
@@ -92,7 +93,7 @@ HISTORICAL = {
     # deals for a 3-point claim at 3 sigma / 80% power, raw -> AIVAT fitted network (09.5c),
     # heuristic vs random (docs/results/index.md "AIVAT").
     "deals_3pt": {"seat 0": (3860, 1776), "seat 1": (3956, 1854)},
-    # the full-UNO lever ladder, points at both seats (docs/results/09.5e-results.md, 09.5f section 7.2).
+    # the full-UNO lever ladder, points at both seats (docs/results/09-evaluation/09.5e-results.md, 09.5f section 7.2).
     "levers": [
         ("continuation\n(response vs minimax)", 9.73, 4.57),
         ("belief\n(voids vs prior)", 2.83, 4.40),
@@ -291,7 +292,7 @@ def fig_edge_by_decision(data: dict, path: Path) -> None:
 
 
 def fig_lever_ladder(path: Path) -> None:
-    """5. The full-UNO lever ladder: where 9.5's points came from (docs/results/09.5e-results.md,
+    """5. The full-UNO lever ladder: where 9.5's points came from (docs/results/09-evaluation/09.5e-results.md,
     09.5f section 7.2), seat 0 / seat 1. HISTORICAL -- specifically about full-UNO PIMC."""
     levers = HISTORICAL["levers"]
     fig, ax = plt.subplots(figsize=(8, 4.5))
@@ -315,8 +316,9 @@ def fig_lever_ladder(path: Path) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
-    out_dir = Path(argv[0]) if argv else Path("docs/results/figures")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    output_root = Path(argv[0]) if argv else Path("docs/generated/report-card")
+    figure_dir = output_root / "figures"
+    figure_dir.mkdir(parents=True, exist_ok=True)
 
     print("== gathering exact toy data (cached trees/CFR; a fresh solve only if the cache is stale)")
     data = {}
@@ -325,14 +327,14 @@ def main(argv: list[str] | None = None) -> None:
         print(f"   {name} done")
         sys.stdout.flush()
 
-    print(f"\n== writing figures to {out_dir}")
-    fig_range(data, out_dir / "01-range.svg")
-    fig_values_of_information(data, out_dir / "02-values-of-information.svg")
-    fig_budget(out_dir / "03-budget.svg")
-    fig_edge_by_decision(data, out_dir / "04-edge-by-decision.svg")
-    fig_lever_ladder(out_dir / "05-lever-ladder.svg")
-    for name in ("01-range", "02-values-of-information", "03-budget", "04-edge-by-decision", "05-lever-ladder"):
-        print(f"   {out_dir / (name + '.svg')}")
+    print(f"\n== writing figures to {figure_dir}")
+    fig_range(data, figure_dir / "range.svg")
+    fig_values_of_information(data, figure_dir / "values-of-information.svg")
+    fig_budget(figure_dir / "budget.svg")
+    fig_edge_by_decision(data, figure_dir / "edge-by-decision.svg")
+    fig_lever_ladder(figure_dir / "lever-ladder.svg")
+    for name in ("range", "values-of-information", "budget", "edge-by-decision", "lever-ladder"):
+        print(f"   {figure_dir / (name + '.svg')}")
 
     print(f"\n== {len(FAILS)} failed checks" + (": " + "; ".join(FAILS) if FAILS else ""))
 

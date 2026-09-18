@@ -1,7 +1,8 @@
 """Step 10C cheap rulebots: exact transfer, sampled scores, behavior, and diversity.
 
-    uv run uno rulebots [games=1000] [out_dir=docs/results/figures] [probe_games=300] [dev|eval]
-    uv run uno rulebots select [out_dir=docs/results/figures]
+    uv run uno rulebots [games=1000] [output_root=docs/generated/rulebots]
+        [probe_games=300] [dev|eval]
+    uv run uno rulebots select [output_root=docs/generated/rulebots]
 
 Toy profiles are exact. Full-UNO defaults to the DEV selection harness; the
 explicit `eval` mode uses the frozen policies on EVAL block 03. Every row agent
@@ -329,13 +330,17 @@ def write_tables(out_dir: Path, names, columns, score, score_se, samples, costs,
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "select":
-        select_transfer(Path(argv[1]) if len(argv) > 1 else Path("docs/results/figures"))
+        output_root = Path(argv[1]) if len(argv) > 1 else Path("docs/generated/rulebots")
+        select_transfer(output_root / "data")
         return
     games = int(argv[0]) if argv else 1000
-    out_dir = Path(argv[1]) if len(argv) > 1 else Path("docs/results/figures")
+    output_root = Path(argv[1]) if len(argv) > 1 else Path("docs/generated/rulebots")
+    figure_dir = output_root / "figures"
+    data_dir = output_root / "data"
     probe_games = int(argv[2]) if len(argv) > 2 else min(games, 300)
     sample = argv[3] if len(argv) > 3 else "dev"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
     rs = rules.FULL_UNO
     rows = agents(rs)
     columns = {"random": rows["random"], "heuristic": rows["heuristic"]}
@@ -364,14 +369,16 @@ def main(argv: list[str] | None = None) -> None:
         cells = [".." if not np.isfinite(stats[name].rate(x)) else f"{100 * stats[name].rate(x):10.1f}%" for x in RATE_METRICS]
         print(f"   {label(name):20s} " + " ".join(cells))
 
-    write_tables(out_dir, names, list(columns), score, score_se, samples, costs, stats, distance, toy_names, toy_score, games, sample_label)
-    fig_toy_transfer(names, toy_names, toy_score, out_dir / "09-rulebot-toy-transfer.svg")
-    fig_strength(names, list(columns), score, costs, sample_label, out_dir / "10-rulebot-strength.svg")
-    fig_behavior(names, stats, sample_label, out_dir / "11-rulebot-behavior.svg")
-    fig_diversity(names, distance, out_dir / "12-rulebot-diversity.svg")
+    write_tables(data_dir, names, list(columns), score, score_se, samples, costs, stats, distance, toy_names, toy_score, games, sample_label)
+    fig_toy_transfer(names, toy_names, toy_score, figure_dir / "rulebot-toy-transfer.svg")
+    fig_strength(names, list(columns), score, costs, sample_label, figure_dir / "rulebot-strength.svg")
+    fig_behavior(names, stats, sample_label, figure_dir / "rulebot-behavior.svg")
+    fig_diversity(names, distance, figure_dir / "rulebot-diversity.svg")
     print("\n== wrote")
-    for name in ("09-rulebot-toy-transfer.svg", "10-rulebot-strength.svg", "11-rulebot-behavior.svg", "12-rulebot-diversity.svg", "rulebot-behavior.csv", "rulebot-scores.csv", "rulebot-deltas.csv", "rulebot-toy-scores.csv", "rulebot-policy-distance.csv"):
-        print(f"   {out_dir / name}")
+    for name in ("rulebot-toy-transfer.svg", "rulebot-strength.svg", "rulebot-behavior.svg", "rulebot-diversity.svg"):
+        print(f"   {figure_dir / name}")
+    for name in ("rulebot-behavior.csv", "rulebot-scores.csv", "rulebot-deltas.csv", "rulebot-toy-scores.csv", "rulebot-policy-distance.csv"):
+        print(f"   {data_dir / name}")
 
 
 if __name__ == "__main__":

@@ -39,8 +39,14 @@ session read `docs/context.md` and `docs/results/index.md`, then relevant code.
 - `docs/plan.md`: build order and status. Earlier prose includes superseded plans.
 - `docs/10-to-11-plan.md`: current execution plan and exit criteria: insert 10a.3
   before 10B, then retain 10B → 10C → Step 11's three phases.
-- `docs/results/<step>.md`: historical experiment, command, provenance, caveats.
-- `docs/results/10-review.md`: September 2026 second opinion, including a reproduced
+- `docs/results/<phase>/<step>.md`: historical experiment, command, provenance,
+  caveats. Phases group the chronology without changing the step identifiers.
+- `docs/generated/<producer>/`: committed, reproducible documentation artifacts,
+  owned by the command that generates them rather than the step that first used
+  them. Keep rendered figures under `figures/` and small generated source tables
+  under `data/`; do not hand-edit either. Large or raw run outputs stay out of
+  `docs/`. Generators must write to their producer directory by default.
+- `docs/results/10-readiness/10-review.md`: September 2026 second opinion, including a reproduced
   K1 measurability problem. All three of its recommendations are now implemented:
   the memory repair in 10a.3A, the observation contract in 10a.3B, and the LBR
   attack instrument in 10a.3C (`uno/eval/attack.py`, docs/spec.md section 32).
@@ -117,6 +123,7 @@ Python >=3.14, `uv`, NumPy, PyTorch; dependency/config source is `pyproject.toml
 | `uno/eval/` | Game runners, estimators, seeds, search, beliefs, critics, targets, shaping |
 | `uno/experiments/` | Reproducible step experiments, dispatched by `uno/cli.py` |
 | `uno/store.py` | Versioned tree, strategy, and tabulation cache |
+| `docs/generated/` | Small committed figures/tables grouped by generating workflow |
 | `tests/` | Mirrored package structure; pinned values in `tests/known.py` |
 
 ```sh
@@ -183,9 +190,9 @@ Do not launch large trees or full sweeps merely to inspect the repo.
   tiny/singleton cases. Check that a test can detect the defect it targets.
 - Keep Hypothesis/reference examples bounded; put long measurements in experiments.
   Run relevant checks and report what was actually run, not historical suite counts.
-- Results belong in `docs/results/<step>.md` with base commit, rerun command,
-  configuration, seed provenance, checks, and limitations; update the results index,
-  spec, plan, and context when the corresponding facts change. Preserve historical
-  results and explicitly mark superseded interpretations.
+- Results belong in `docs/results/<phase>/<step>.md` with base commit, rerun
+  command, configuration, seed provenance, checks, and limitations; update the
+  results index, spec, plan, and context when the corresponding facts change.
+  Preserve historical results and explicitly mark superseded interpretations.
 - Handoff: summarize changed files, substantive findings, checks, and next decisions.
   Leave commits to Benji.

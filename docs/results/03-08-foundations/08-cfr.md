@@ -1,12 +1,12 @@
 # Step 8 results: compiled tree and Nash L1 by CFR+ (2026-09-14, `uno/compiled/`, `uno/compiled/cfr.py`, `uno cfr`)
 
-> Commit `eafb7e7` (2026-09-14). Rerun: `uv run uno cfr TOY 1000` (on the quotient tree since step 8.6; the full-tree run of this step took 203 s). The Heuristic rows are the step 4 Heuristic; current values in [index](index.md).
+> Commit `eafb7e7` (2026-09-14). Rerun: `uv run uno cfr TOY 1000` (on the quotient tree since step 8.6; the full-tree run of this step took 203 s). The Heuristic rows are the step 4 Heuristic; current values in [index](../index.md).
 
 ## What was built
 
 The step was going to be "CFR", and the blocker was speed: the pure-Python
 walkers cost 7-16 s per pass over `TOY` and CFR needs hundreds of passes. So
-the tree is now walked **once** into flat numpy arrays (`compile_tree`, [spec section 16](../spec.md)) and every exact computation became a vectorized pass over them,
+the tree is now walked **once** into flat numpy arrays (`compile_tree`, [spec section 16](../../spec.md)) and every exact computation became a vectorized pass over them,
 CFR included: evaluate, outcome distributions, best response at L1 / L2 / L3,
 exploitability, exact mirrored moments. The old walkers in `uno/reference/solve.py` and
 `uno/eval/estimate.py` stay as the independent reference; `tests/compiled/test_compiled.py`

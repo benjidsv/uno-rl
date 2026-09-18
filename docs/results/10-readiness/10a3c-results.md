@@ -6,7 +6,7 @@
 > `uv run uno report TOY heuristic|random|nash`, `uv run pytest tests/eval/test_attack.py`.
 > New code: `uno/eval/attack.py`, `uno/compiled/flaws.py`, `uno/experiments/lbr.py`,
 > `tests/eval/test_attack.py`; the attack block in `uno/experiments/report.py`; EVAL
-> block 02 in `uno/eval/seeds.py`. Contract: [spec section 32](../spec.md).
+> block 02 in `uno/eval/seeds.py`. Contract: [spec section 32](../../spec.md).
 
 ## What this is for
 

@@ -9,7 +9,7 @@ and paired-comparison estimates are pure functions of the records, and AIVAT
 where it can be: `exact_mirrored` walks the 10,080 worlds of `TOY` (deal x
 pile order) and gets the per-seat means, variances, the covariance between
 the two seats' scores on the same deal and the share of split pairs; the
-sampled numbers must match them. [spec section 15](../spec.md).
+sampled numbers must match them. [spec section 15](../../spec.md).
 
 What was built:
 
@@ -24,7 +24,7 @@ What was built:
 - `uno/eval/play.py`: `DEV_SEEDS` / `EVAL_SEEDS` (below). `uno ladder`
   reports on the held-out range from now on.
 - `uno mirror` prints the tables below; `tests/eval/test_estimate.py` (8
-  tests) holds the checks listed in [spec section 15](../spec.md). Whole suite: 66
+  tests) holds the checks listed in [spec section 15](../../spec.md). Whole suite: 66
   tests, ~95 s.
 - In passing: `test_chance_outcomes_on_real_play` (tree tests) tripped
   hypothesis' filter-too-much health check on one run (the `deck_size <= 16`
@@ -99,7 +99,7 @@ Reading:
    Heuristic, the intro said ~2400). That is the budget iterations 1-4 never
    set. *Step 9 note: "N games at 3 sigma" is the n where the edge equals 3
    standard errors, so a 3-sigma test detects it half the time; 80 % power
-   needs 1.64x (2,800-3,900 here), 95 % 2.4x ([step 9 review](09-review.md)).*
+   needs 1.64x (2,800-3,900 here), 95 % 2.4x ([step 9 review](../09-evaluation/09-review.md)).*
 2. **Mirroring is worth 30-65 %** of the variance on the seat mean, and more
    the more the deal decides the game: 61 % of Heuristic-vs-Random pairs
    split, 77-80 % once a best responder is involved. Splits are a luck-share
@@ -108,7 +108,7 @@ Reading:
    decided by the deal. Two independent games at the same per-seat scores
    already split 39-50 % of the time (exact, ties included, step 8.6
    Heuristic); the deal adds 13-29 points on top of that, and only 4 % of `TOY`
-   worlds have a result no play can change ([step 9 review](09-review.md)).*
+   worlds have a result no play can change ([step 9 review](../09-evaluation/09-review.md)).*
 3. **Pairing two agents on the same deals is the big win** (common random
    numbers): the Heuristic's +8.7 / +4.8 over Random is measured with 45 % of
    the unpaired variance, the best response's edge over the Heuristic with

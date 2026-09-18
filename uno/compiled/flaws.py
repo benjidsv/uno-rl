@@ -5,7 +5,7 @@ exactly. Random and the Heuristic supply two such targets and the Nash strategy 
 share a weakness as calibration cases: Random and the Heuristic are weak *everywhere*, so an
 attacker can score well against them without detecting anything in particular, and a mixture like
 `(1 - eps) * nash + eps * uniform` is likewise diffusely bad. Neither can tell a sharp attack from
-a blunt one, which is the check docs/results/10-review.md section 4 asks for: "include a case where
+a blunt one, which is the check docs/results/10-readiness/10-review.md section 4 asks for: "include a case where
 the attack must detect a known flaw so a vacuous detector cannot pass unnoticed".
 
 So this module grafts **one** bad action class onto an otherwise near-optimal strategy. The result

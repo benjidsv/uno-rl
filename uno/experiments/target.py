@@ -6,7 +6,7 @@ Step 11's objective is a policy gradient, and the question step 10 has to answer
 checkpoint exists is which of AIVAT's corrections may appear in the return it is taken of.
 The declared answer is `uno.eval.target.TRAINING` -- **chance + opponent + deal, never the
 learner's own decisions** -- and the argument for the exclusion
-(docs/results/10-brainstorm.md 5.2) is that with an exact V the row term *is* `Q(s, a) -
+(docs/results/10-readiness/10-brainstorm.md 5.2) is that with an exact V the row term *is* `Q(s, a) -
 V(s)`, so subtracting it removes exactly the part of the return that depends on the action.
 
 This makes that a measurement. On a compiled tree the exact policy gradient of a tabulated

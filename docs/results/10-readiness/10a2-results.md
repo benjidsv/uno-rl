@@ -1,6 +1,6 @@
 # Step 10a.2: the rest of the contract (2026-09-17)
 
-> On top of commit `cddb19b`. Plan: [plan.md](../plan.md) row 10a.2, brainstorm:
+> On top of commit `cddb19b`. Plan: [plan.md](../../plan.md) row 10a.2, brainstorm:
 > [10-brainstorm.md](10-brainstorm.md) section 5 (items A4-A6) and section 8 (LBR).
 > Re-run: `uv run uno target TOY`, `uv run uno target TOY_FULL 1000 1000 0`,
 > `uv run uno shaping TOY|TOY_FULL|TOY2|TOY2_SKIP`,

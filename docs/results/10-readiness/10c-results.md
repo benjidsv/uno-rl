@@ -1,17 +1,17 @@
 # Step 10C: memory rulebots and frozen league (2026-09-18)
 
 > On top of commit `6ffe6f5`. Reproduce the final figures and tables with
-> `uv run uno rulebots 4000 docs/results/figures 500 eval` (EVAL block 03).
+> `uv run uno rulebots 4000 docs/generated/rulebots 500 eval` (EVAL block 03).
 > Reproduce the preceding selection diagnostic with
-> `uv run uno rulebots 2000 <out_dir> 500 dev`.
+> `uv run uno rulebots 2000 <output_root> 500 dev`.
 > Reproduce the bounded toy-only parameter selection with
-> `uv run uno rulebots select docs/results/figures`.
+> `uv run uno rulebots select docs/generated/rulebots`.
 > Parameters and membership were frozen before EVAL block 03 was read.
 
 ## What was built
 
 `uno/agents/rulebot.py` adds four cheap, symmetric, position-only policies. The
-normative policy and metric contracts are in [spec section 33](../spec.md).
+normative policy and metric contracts are in [spec section 33](../../spec.md).
 
 1. `heuristic_memory`: the existing Heuristic, with public draw-derived void
    evidence used only to break an otherwise equal colour-support tie. With no
@@ -169,13 +169,13 @@ and the Heuristic/memory-ablation distance is 0.0311.
 
 ## Generated artifacts and checks
 
-- [`09-rulebot-toy-transfer.svg`](figures/09-rulebot-toy-transfer.svg): exact toy profiles.
-- [`10-rulebot-strength.svg`](figures/10-rulebot-strength.svg): full-UNO EVAL strength and cost.
-- [`11-rulebot-behavior.svg`](figures/11-rulebot-behavior.svg): conditional rates and per-game counts.
-- [`12-rulebot-diversity.svg`](figures/12-rulebot-diversity.svg): common-state policy distance.
+- [`rulebot-toy-transfer.svg`](../../generated/rulebots/figures/rulebot-toy-transfer.svg): exact toy profiles.
+- [`rulebot-strength.svg`](../../generated/rulebots/figures/rulebot-strength.svg): full-UNO EVAL strength and cost.
+- [`rulebot-behavior.svg`](../../generated/rulebots/figures/rulebot-behavior.svg): conditional rates and per-game counts.
+- [`rulebot-diversity.svg`](../../generated/rulebots/figures/rulebot-diversity.svg): common-state policy distance.
 - `rulebot-toy-scores.csv`, `rulebot-scores.csv`, `rulebot-behavior.csv`, and
   `rulebot-policy-distance.csv`: generated source tables, including denominators
-  and score SEs.
+  and score SEs, under `docs/generated/rulebots/data/`.
 - `rulebot-deltas.csv`: per-seat paired differences and SEs versus the Heuristic.
 - `rulebot-transfer-selection.csv`: every candidate and all eight exact cells in
   the bounded toy-only coordinate sweep; the command asserts that the recorded

@@ -15,7 +15,7 @@ checkpoint and runs every instrument on it.
 - **normalised skill**, 0 = Random at that seat against that column, 1 = BR L1 against
   it. An affine rescaling per cell, so a difference in scale units is *not* score
   points: both are printed, always, and nothing is ever *selected* on the normalised
-  number (docs/results/10-brainstorm.md section 3);
+  number (docs/results/10-readiness/10-brainstorm.md section 3);
 - `br_gap` against each column (`uno.compiled.edge`): the D4 fixed-opponent metric,
   the row's gap to the best response to its own training column;
 - **exploitability** per seat and NashConv: the one luck-free quality measure, and the

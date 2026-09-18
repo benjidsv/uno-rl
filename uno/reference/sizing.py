@@ -15,7 +15,7 @@ positions, of which there are far fewer than histories.
 Two policies are tracked: UniformLegal (what `census` reports, the
 cross-check) and PlayFirstRandom (the ladder's Random row, whose random-vs-
 random seat-0 score is the seat-parity readout of the census rounds in
-docs/results/03-census.md). Their end masses are exact, not sampled.
+docs/results/03-08-foundations/03-census.md). Their end masses are exact, not sampled.
 
 What this cannot count: L1 / L2 information sets (they depend on the
 history). Those come out of `compile_tree` once a candidate is chosen.

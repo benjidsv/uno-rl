@@ -9,7 +9,7 @@ this page has the current value.
 
 - **score**: P(win) of the named player with draws worth 1/2, i.e. `(return + 1) / 2`.
 - **seat 0 / seat 1**: where the named player sits; seat 0 moves first. Every
-  matchup is reported per seat ([step 3](03-census.md), rule 1).
+  matchup is reported per seat ([step 3](03-08-foundations/03-census.md), rule 1).
 - **seat gap**: the score of a profile at seat 0 minus its score at seat 1, in
   points. **Edge**: the seat-0 score minus 1/2 (half the gap for self-play).
 - **BR Lx**: the score of a best responder at information level x against the
@@ -19,27 +19,27 @@ this page has the current value.
 - **BR L1(random) as a row** is undetermined at the information sets Random
   never reaches. Its exploitability is shown as solved (first action orbit
   there), in brackets with those sets filled with the Nash strategy
-  ([step 8.8](08.8-review.md)), and in square brackets with the least
-  exploitable fill-in (CFR with the reached sets fixed, [step 9](09-results.md);
+  ([step 8.8](03-08-foundations/08.8-review.md)), and in square brackets with the least
+  exploitable fill-in (CFR with the reached sets fixed, [step 9](09-evaluation/09-results.md);
   an upper bound, tied reached sets are not freed).
 - Seat gaps, exploitability and voluntary-draw numbers are under the exhaustion
   rule (fewer cards wins). Scoring exhaustion as a draw or as a loss for the stuck
   player moves them by up to 13 points on the forced toys and distorts free play
-  ([step 9](09-results.md)).
+  ([step 9](09-evaluation/09-results.md)).
 - **Nash**: the CFR average strategy on the quotient tree; its NashConv (score
   points) goes with every number that uses it.
-- The **Heuristic** is the symmetric one of [step 8.6](08.6-symmetry.md). Steps
+- The **Heuristic** is the symmetric one of [step 8.6](03-08-foundations/08.6-symmetry.md). Steps
   3-8.5 used an earlier version (ties on the lowest type id).
 
 ## Sizes
 
 | ruleset | deck / pile | forced play | quotient histories | L1 sets | full tree | step |
 |---------|-------------|-------------|--------------------|---------|-----------|------|
-| `TOY` | 9 / 2 | yes | 33,646 | 12,036 | 1,252,040 histories, 558,656 L1 sets | [3](03-census.md), [8.6](08.6-symmetry.md) |
-| `TOY_FULL` | 9 / 2 | no | 774,007 | 138,876 | | [8.6](08.6-symmetry.md) |
-| `TOY2` | 10 / 3 | yes | 311,819 | 129,428 | | [8.7](08.7-toy2.md) |
-| `TOY2_SKIP` | 10 / 3 | yes | 922,744 | 439,268 | | [8.7](08.7-toy2.md) |
-| `TOY2_FULL` | 10 / 3 | no | 28,057,516 | 3,753,530 | | [8.7](08.7-toy2.md) |
+| `TOY` | 9 / 2 | yes | 33,646 | 12,036 | 1,252,040 histories, 558,656 L1 sets | [3](03-08-foundations/03-census.md), [8.6](03-08-foundations/08.6-symmetry.md) |
+| `TOY_FULL` | 9 / 2 | no | 774,007 | 138,876 | | [8.6](03-08-foundations/08.6-symmetry.md) |
+| `TOY2` | 10 / 3 | yes | 311,819 | 129,428 | | [8.7](03-08-foundations/08.7-toy2.md) |
+| `TOY2_SKIP` | 10 / 3 | yes | 922,744 | 439,268 | | [8.7](03-08-foundations/08.7-toy2.md) |
+| `TOY2_FULL` | 10 / 3 | no | 28,057,516 | 3,753,530 | | [8.7](03-08-foundations/08.7-toy2.md) |
 
 ## Nash value and seat gaps
 
@@ -52,7 +52,7 @@ this page has the current value.
 | `TOY2_FULL` | 0.5564 | DCFR 150, 0.005 pts | 17.5 | 27.7 | 13.2 | 11.3 |
 | `FULL_UNO` (sampled) | | | 0.0 ± 3.1 | 0.9 ± 3.1 | | |
 
-`FULL_UNO`: 4000 held-out pairs per matchup (`uv run uno transfer`, [step 8.5](08.5-transfer.md); re-run in [step 8.9](08.9-fixes.md) with the step 8.6 Heuristic and action rng); random self-play seat 0 scores 0.5002 ± 0.0155, Heuristic self-play 0.5045 ± 0.0155.
+`FULL_UNO`: 4000 held-out pairs per matchup (`uv run uno transfer`, [step 8.5](03-08-foundations/08.5-transfer.md); re-run in [step 8.9](03-08-foundations/08.9-fixes.md) with the step 8.6 Heuristic and action rng); random self-play seat 0 scores 0.5002 ± 0.0155, Heuristic self-play 0.5045 ± 0.0155.
 
 ## Best-response columns (score of the responder)
 
@@ -81,7 +81,7 @@ this page has the current value.
 | | nash | 0 | 0.5565 | 0.6952 | 0.7640 | +13.9 | +6.9 |
 | | nash | 1 | 0.4436 | 0.5528 | 0.6271 | +10.9 | +7.4 |
 
-Against the Nash agent on `TOY` (the quotient CFR+ strategy, `uv run uno cfr TOY`): 0.6196 / 0.6624 / 0.6761 from seat 0, 0.3804 / 0.4239 / 0.4311 from seat 1. The full-tree strategy of [step 8](08-cfr.md) is another Nash strategy with the same L1 value and slightly different L2 / L3 columns (0.6630 / 0.6764, 0.4240 / 0.4311).
+Against the Nash agent on `TOY` (the quotient CFR+ strategy, `uv run uno cfr TOY`): 0.6196 / 0.6624 / 0.6761 from seat 0, 0.3804 / 0.4239 / 0.4311 from seat 1. The full-tree strategy of [step 8](03-08-foundations/08-cfr.md) is another Nash strategy with the same L1 value and slightly different L2 / L3 columns (0.6630 / 0.6764, 0.4240 / 0.4311).
 
 ## Exploitability of the row agents (points, row at seat 0 / seat 1)
 
@@ -93,13 +93,13 @@ Against the Nash agent on `TOY` (the quotient CFR+ strategy, `uv run uno cfr TOY
 | `TOY2_SKIP` | 16.7 / 16.8 | 11.0 / 11.9 | 1.3 / 1.7 (1.1 / 1.1) [1.0 / 1.0] |
 | `TOY2_FULL` | 17.3 / 19.1 | 9.4 / 15.5 | 6.3 / 4.9 (3.4 / 3.3) [3.1 / 2.6] |
 
-`uv run uno symmetry`, `uno toy2` and `uno validate` print both rows ([step 8.8](08.8-review.md)).
+`uv run uno symmetry`, `uno toy2` and `uno validate` print both rows ([step 8.8](03-08-foundations/08.8-review.md)).
 
-**Corrected in [step 10a](10a-results.md):** the Heuristic's `TOY2` seat-1 exploitability read
+**Corrected in [step 10a](10-readiness/10a-results.md):** the Heuristic's `TOY2` seat-1 exploitability read
 **11.8** here until the report card recomputed it as **11.7480**. The old figure was the difference
 of two *rounded* values (BR L1 0.6959 minus Nash 0.5784 = 0.1175 exactly, which rounds up), where
 the underlying doubles give 0.69587054 - 0.57839081. Only this cell was affected -- it is the one
-that lands on a rounding boundary. [08.7](08.7-toy2.md) keeps its number as measured then, per the
+that lands on a rounding boundary. [08.7](03-08-foundations/08.7-toy2.md) keeps its number as measured then, per the
 convention above.
 
 ## Nash row and column (exact, score of the first-named, seat 0 / seat 1)
@@ -127,13 +127,13 @@ game by exhaustion).
 
 | ruleset | corr(seat 0, seat 1) | var ratio mirrored / raw | paired Heuristic - Random, var ratio | step |
 |---------|----------------------|--------------------------|---------------------------------------|------|
-| `TOY` | -0.30 exact | 0.70 exact | 0.47 / 0.49 | [7](07-mirror.md), re-sampled in [8.9](08.9-fixes.md) |
-| `TOY2` | -0.31 exact | 0.69 exact | 0.42 / 0.45 | [8.7](08.7-toy2.md) |
-| `FULL_UNO` | -0.10 sampled | 0.90 sampled | 0.89 / 0.89 | [8.5](08.5-transfer.md), re-sampled in [8.9](08.9-fixes.md) |
+| `TOY` | -0.30 exact | 0.70 exact | 0.47 / 0.49 | [7](03-08-foundations/07-mirror.md), re-sampled in [8.9](03-08-foundations/08.9-fixes.md) |
+| `TOY2` | -0.31 exact | 0.69 exact | 0.42 / 0.45 | [8.7](03-08-foundations/08.7-toy2.md) |
+| `FULL_UNO` | -0.10 sampled | 0.90 sampled | 0.89 / 0.89 | [8.5](03-08-foundations/08.5-transfer.md), re-sampled in [8.9](03-08-foundations/08.9-fixes.md) |
 
-Near-identical policies on `FULL_UNO` ([step 9](09-results.md), `uv run uno pairing`, 4000 held-out seeds): the Heuristic minus a variant on the Heuristic's action-rng stream (5 % Random mixed in, or the opponent "low" at 1 card), against the same column, keeps 15-23 % of the unpaired variance with pile draws (1,250-1,800 deals for 3 points at 3 sigma with 80 % power, against ~8,000 unpaired) and 12-20 % with ticket draws; the same mixture on its own stream keeps 49-72 %.
+Near-identical policies on `FULL_UNO` ([step 9](09-evaluation/09-results.md), `uv run uno pairing`, 4000 held-out seeds): the Heuristic minus a variant on the Heuristic's action-rng stream (5 % Random mixed in, or the opponent "low" at 1 card), against the same column, keeps 15-23 % of the unpaired variance with pile draws (1,250-1,800 deals for 3 points at 3 sigma with 80 % power, against ~8,000 unpaired) and 12-20 % with ticket draws; the same mixture on its own stream keeps 49-72 %.
 
-## AIVAT ([step 9.5b](09.5b-results.md), [step 9.5c](09.5c-results.md))
+## AIVAT ([step 9.5b](09-evaluation/09.5b-results.md), [step 9.5c](09-evaluation/09.5c-results.md))
 
 Variance ratio AIVAT / raw on the same games, score of the row, seat 0 / seat 1.
 
@@ -157,7 +157,7 @@ Variance ratio AIVAT / raw on the same games, score of the row, seat 0 / seat 1.
 Deal model through AIVAT's deal term, 5,000,000 seeds per profile: every pooled |z| < 1 on `TOY`,
 `TOY2`, `TOY2_SKIP` and `DUPS` (3σ ≈ 0.04-0.05 score points).
 
-The **deal floor** ([step 9.5c](09.5c-results.md), `uv run uno pimc_value floor`): the share of the
+The **deal floor** ([step 9.5c](09-evaluation/09.5c-results.md), `uv run uno pimc_value floor`): the share of the
 outcome variance fixed by the dealt hands, which is the ratio AIVAT reaches with the exact L2 values
 and every correction but the deal's. Heuristic vs Random, 2,000 EVAL deals x 32 pile determinizations,
 seat 0 / seat 1: `TOY` 0.42 / 0.47, `TOY2` 0.38 / 0.40, `TOY2_SKIP` 0.46 / 0.40, `MID_12` 0.25 / 0.26,
@@ -165,7 +165,7 @@ seat 0 / seat 1: `TOY` 0.42 / 0.47, `TOY2` 0.38 / 0.40, `TOY2_SKIP` 0.46 / 0.40,
 (`FULL_UNO` 0.17). The toy values match the exact ratios. So on full UNO an exact L2 value function
 would need ~350 deals where raw needs ~3,900, and the fitted network reaches ~1,800.
 
-## PIMC as an agent ([step 9.5d](09.5d-results.md))
+## PIMC as an agent ([step 9.5d](09-evaluation/09.5d-results.md))
 
 **Exact PIMC-infinity on the toy world trees** (`uv run uno pimc exact`), gap to BR L1 in score
 points, over 64 solves with 0 failed checks. The continuation rule matters far more than the belief:
@@ -205,7 +205,7 @@ is identically zero, so the gain comes from chance and the opponent only. This i
 pays in: per game on one core a w = 32 search costs ~722 ms against the Heuristic's ~1.3 ms, so the
 corrections are 4-11 % of the cost rather than several times it.
 
-**The continuation rule** ([step 9.5e](09.5e-results.md), `uv run uno pimc sweep 3000 "" "s32x2r,s32x2,heu,s32x3r,s32x4r"`):
+**The continuation rule** ([step 9.5e](09-evaluation/09.5e-results.md), `uv run uno pimc sweep 3000 "" "s32x2r,s32x2,heu,s32x3r,s32x4r"`):
 solving each determinized world as a best response to the column's known policy, instead of
 two-sided minimax, is worth **+9.73 +- 1.04 points at seat 0 (z +9.3) and +4.57 +- 1.06 at seat 1
 (z +4.3)** against Random at 32 worlds and depth 2, over 3,000 EVAL deals -- established at both
@@ -226,7 +226,7 @@ step 9.5d's row lost seat 1. The seat asymmetry of that step is gone. AIVAT on t
 ratio 0.60-0.68 against the Heuristic row's 0.44-0.49, with the row correction identically zero
 (a deterministic agent), and 0 failed checks. The row is **opponent-specific** -- it uses the
 column's exact policy, so it is a ladder instrument, not a general player. Inference (a posterior
-belief rather than a uniform determinization) was built in [step 9.5f](09.5f-results.md) -- though
+belief rather than a uniform determinization) was built in [step 9.5f](09-evaluation/09.5f-results.md) -- though
 **not** as the particle filter of the original design, which collapses; see the belief ladder
 below, worth +2.83 / +4.40 points at both seats.
 
@@ -239,12 +239,12 @@ odd-even-artefact worry. At equal compute worlds beat depth: w = 128 d = 2 (530 
 0.7677 / 0.7403 against w = 32 d = 4 (1766 ms/game) at 0.7427 / 0.7170. Because this held after the
 continuation rule and the seat networks were both fixed, the flattening is **not** an artefact of
 those approximations, as 9.5d supposed. Step 9.5e concluded the binding constraint is therefore the
-off-profile leaf value network (outcome R^2 0.07-0.25 on these games); [step 9.5f](09.5f-results.md)
+off-profile leaf value network (outcome R^2 0.07-0.25 on these games); [step 9.5f](09-evaluation/09.5f-results.md)
 supplied a **competing explanation not ruled out by that grid** -- 79.9 % of the worlds being
 sampled were impossible, so w = 32 was effectively ~6 real worlds, well inside the steep part of
 this very ladder.
 
-**That ladder has since been re-run with `voids` on** ([09.5f](09.5f-results.md) section 7.2, 3,000
+**That ladder has since been re-run with `voids` on** ([09.5f](09-evaluation/09.5f-results.md) section 7.2, 3,000
 EVAL deals, unpaired), and the answer is neither of the two things the question expected. The
 belief is a **level shift of ~+3.5 points at every world count, not a change of slope**: both
 ladders climb hard to w = 32 and flatten after (`voids` 32 -> 64 is +1.20 / +0.77, z ~ 1). So
@@ -277,7 +277,7 @@ nearly seat-symmetric. The control row (the search itself) sits at -3.3 / -2.5 a
 Heuristic's +21, which is what licenses reading the split. Not a value decomposition: the shares are
 the finding, not the totals.
 
-**The opponent-hand belief** ([step 9.5f](09.5f-results.md), `uv run uno pimc belief 3000 32 2`):
+**The opponent-hand belief** ([step 9.5f](09-evaluation/09.5f-results.md), `uv run uno pimc belief 3000 32 2`):
 3,000 EVAL deals against Random, w = 32, d = 2, response continuation, paired on the same deals.
 Until this step the agent split the unseen cards **uniformly** (`uno.compiled.pimc`'s `prior`), i.e.
 it did no opponent modelling at all.
@@ -305,7 +305,7 @@ if it holds the played card, ~7/98 -- and the built version scored *worse than t
 worlds, so **w = 64 was effectively w = 10**, with the opponent's true hand violating it 0 times in
 2,487 decisions.
 
-**The belief against the Heuristic column** ([09.5f](09.5f-results.md) section 7.3,
+**The belief against the Heuristic column** ([09.5f](09-evaluation/09.5f-results.md) section 7.3,
 `uv run uno pimc belief 4000 32 2 "" heuristic`): 4,000 EVAL deals, w = 32, d = 2, paired. Against
 Random the column is nearly uniform, so its *play* choices say little and only its draws inform;
 the exact toys put the belief axis at 0.0-0.6 points there but up to **2.6 against the Heuristic**,
@@ -337,12 +337,12 @@ column and stays available as a ladder instrument, but it is unestablished at se
 and reads the opponent's policy -- so like the `response` continuation it makes the row
 opponent-specific, which rules it out of a general player whatever the score says.
 
-**The belief closed against the exact toys** ([09.5f](09.5f-results.md) sections 8.1 and 9.2,
+**The belief closed against the exact toys** ([09.5f](09-evaluation/09.5f-results.md) sections 8.1 and 9.2,
 `uv run uno pimc closure TOY 20 4000 3 [rulebot|passer]`): total variation to the exact posterior
 on the full (non-symmetric) `TOY` world tree, 20 constrained sets per seat, 4,000 draws, seat 0 /
 seat 1. The **column is the opponent whose posterior is the target**, and it decides the ordering,
 because `voids` encodes an assumption about that opponent -- that a playable drawn card is played
-at once ([09.5f](09.5f-results.md) section 8.2). `passer0.5` is `uno.agents.baseline.KeepsDrawn`,
+at once ([09.5f](09-evaluation/09.5f-results.md) section 8.2). `passer0.5` is `uno.agents.baseline.KeepsDrawn`,
 a `PlayFirstRandom` that keeps a playable drawn card half the time.
 
 | belief | vs `rulebot` (assumption holds) | vs `passer0.5` (assumption false) |
@@ -359,7 +359,7 @@ enforced -- is the better belief there and never puts zero on the truth. **`void
 ladder default** (every ladder column is honest, and 8.3 shows it never contradicts them);
 **`soft` is the rung for a column that may not be.**
 
-**How much the two rungs actually differ** ([09.5f](09.5f-results.md) section 9.1,
+**How much the two rungs actually differ** ([09.5f](09-evaluation/09.5f-results.md) section 9.1,
 `uv run uno pimc divergence 300 32 2`): at w = 32 over 300 DEV deals `soft(0.1)` chooses a
 different action from `voids` at **19.5 %** of decisions against Random and **21.5 %** against the
 Heuristic -- against a **control** of 18.4 % / 20.6 %, which is what re-seeding the world sampler
@@ -368,7 +368,7 @@ The belief moves about one decision in a hundred, which is why no affordable sco
 the rungs against an honest column: the 2,400-deal DEV sweep of 8.8 was not under-powered, there
 is almost nothing there to separate.
 
-**The decay balance point** ([09.5f](09.5f-results.md) section 9.4, `uv run uno pimc decay TOY 20
+**The decay balance point** ([09.5f](09-evaluation/09.5f-results.md) section 9.4, `uv run uno pimc decay TOY 20
 4000 3`): `soft`'s decay swept against **both** columns' exact posteriors, mean over seats, as the
 share of the uniform split's distance closed. `decay = 0` is `voids` and `decay = 1` is the prior,
 and the sweep reproduces both endpoints (a check of the section).
@@ -388,16 +388,17 @@ compromising (`voids` at 89.7 % against an honest one); 0.1 is the answer to "on
 unknown", which is what step 11 needs when an RL agent may or may not have learned to hold a
 playable drawn card.
 
-## Figures ([step 10B](10b-results.md))
+## Figures ([step 10B](10-readiness/10b-results.md))
 
-`uv run uno figures` writes five SVGs to [`figures/`](figures/): the range, values of
+`uv run uno figures` writes five SVGs to the
+[`report-card` figure directory](../generated/report-card/figures/): the range, values of
 information, the budget picture, edge by decision, and the full-UNO lever ladder. Every
 cheaply-exact number on this page that the figures also draw is recomputed live and
 checked to the digit by that command (0 failed checks); the full-UNO-sampled figures read
 the numbers already published above rather than re-measuring them. Scope and provenance:
-[10b-results.md](10b-results.md).
+[10b-results.md](10-readiness/10b-results.md).
 
-## Corrected coarse-memory evidence ([step 10a.3A](10a3a-results.md))
+## Corrected coarse-memory evidence ([step 10a.3A](10-readiness/10a3a-results.md))
 
 The step 9.5a quotient policy retained discarded L1 history through its color/rank coordinate
 frame. The repaired construction canonicalizes each coarse key and its actions together. The
@@ -422,13 +423,13 @@ not evidence that K1 is sufficient on full UNO or that the local solver found th
 
 ## Learner observation contract (step 10a.3B)
 
-Defined in [`docs/observation-contract.md`](observation-contract.md). Specifies the
+Defined in [`docs/observation-contract.md`](../observation-contract.md). Specifies the
 three comparison arms that Step 11 will implement and compare (K1 feed-forward,
 K1+structured evidence, and recurrent public/private history), with explicit
 field lists, legality masks, equivariance requirements, and evaluator
 compatibility invariants. Tests verify the contract's field extractions.
 
-## The report card and the seed registry ([step 10a](10a-results.md))
+## The report card and the seed registry ([step 10a](10-readiness/10a-results.md))
 
 `uv run uno report [ruleset] [agent]` prints one agent's card -- score, normalised skill and
 `br_gap` per column and seat, exploitability and NashConv, edge by decision -- and **checks every
@@ -444,10 +445,10 @@ rescaling per cell, so those are not score points and nothing is ever selected o
 **`EVAL_SEEDS` (1,000,000-1,003,999) is spent**: steps 9.5d-9.5f chose the full-UNO working set on
 it, so it is block 00 of `uno.eval.seeds`, marked spent, and a new reported number claims a fresh
 block from `EVAL_POOL` `[10^6, 2 * 10^6)` instead. Every number on this page predates that and
-stands. **Block 01** (1,004,000-1,007,999) is claimed by [step 10a.2](10a2-results.md) for the
+stands. **Block 01** (1,004,000-1,007,999) is claimed by [step 10a.2](10-readiness/10a2-results.md) for the
 column-free PIMC row.
 
-## The training target and the exact policy gradient ([step 10a.2](10a2-results.md))
+## The training target and the exact policy gradient ([step 10a.2](10-readiness/10a2-results.md))
 
 `uno.eval.target.TRAINING` = **chance + opponent + deal, never the agent's own decisions**. The
 exclusion is measured, not argued: on a compiled tree the exact policy gradient and the exact
@@ -470,7 +471,7 @@ row-at-a-time features (4.1 vectorised) and 4.5 the forward pass. So the correct
 the step's own value calls with the features vectorised, and 73 % of that floor is not the
 network. The deal correction alone is one row a game.
 
-## Shaping potentials and the deal floor by level ([step 10a.2](10a2-results.md))
+## Shaping potentials and the deal floor by level ([step 10a.2](10-readiness/10a2-results.md))
 
 `Phi(s0) - E Phi` variance as a share of the raw outcome variance, heuristic vs random, seat 0 /
 seat 1. With no discount and `Phi(terminal) = 0` a game's shaping terms telescope to `-Phi(s0)`,
@@ -489,7 +490,7 @@ next). Under **Nash self-play** the L2 floor is 0.67-0.71 and the L3 floor **0.8
 equals almost the whole outcome is the deal. `TOY_FULL` matches `TOY` because neither rulebot
 ever draws voluntarily, so the two rulesets play out identically under that profile.
 
-## Exploitability of the belief rungs ([step 10a.2](10a2-results.md))
+## Exploitability of the belief rungs ([step 10a.2](10-readiness/10a2-results.md))
 
 `TOY`, full world tree, response continuation, exploitability in score points (row at seat 0 /
 seat 1). On the full tree PIMC takes a *pure* per-set action rather than an orbit played
@@ -507,7 +508,7 @@ seat moves 1.35 -> 1.50); **full opponent-fitting costs 8.2 points of NashConv**
 Heuristic column. The rungs change the choice at 1,396-3,276 information sets while moving the
 score by at most 0.05 points.
 
-## A column-free full-UNO row ([step 10a.2](10a2-results.md))
+## A column-free full-UNO row ([step 10a.2](10-readiness/10a2-results.md))
 
 The first full-UNO row whose continuation and belief read **nothing** of the column's real
 policy: the continuation best-responds to a *fixed surrogate* (the Heuristic) and the belief is
@@ -535,7 +536,7 @@ opponent. Assuming a clairvoyant opponent instead costs 3.6-6.7 points (z 3.9-7.
 block 00 where it scored 0.7813 / 0.7603 against Random. On the fresh block 01 it gives 0.7860 ±
 0.0065 / 0.7685 ± 0.0067 -- consistent, so that selection did not materially inflate it.
 
-## The attack instrument: NashConv lower bounds ([step 10a.3C](10a3c-results.md))
+## The attack instrument: NashConv lower bounds ([step 10a.3C](10-readiness/10a3c-results.md))
 
 An attack's **achieved score in real games** lower-bounds the best-response score against a frozen
 target. With `b0` the attacker's score at seat 0 against the target's seat-1 policy and `b1` the
@@ -595,7 +596,7 @@ behavioural average. Only the `response` continuation reads the target, so only 
 position-only targets: a tabulated target answers "first legal action" at **79.5 %** of
 fabricated-history queries instead of raising.
 
-## Step 10C rulebot package and frozen league ([results](10c-results.md))
+## Step 10C rulebot package and frozen league ([results](10-readiness/10c-results.md))
 
 Four cheap position-only policies are implemented: a minimal public-memory
 ablation, an exact-toy-selected tactical bot, a separately named full-UNO DEV
@@ -634,4 +635,5 @@ entropy versus 8.1% for its deterministic parent. It therefore violates the
 hard `voids` assumptions observably. It is weaker head-to-head but remains a
 competent opponent: against Random it beats the same-seat Random baseline by
 9.9 / 8.8 points and lies within 0.8 points of the Heuristic's seat-mean score.
-Four generated SVGs and their CSV sources live in `docs/results/figures/`.
+The four generated SVGs live in `docs/generated/rulebots/figures/`; their small
+source tables live separately in `docs/generated/rulebots/data/`.

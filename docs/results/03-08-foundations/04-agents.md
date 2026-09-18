@@ -1,6 +1,6 @@
 # Step 4 results: agents and runner
 
-> Commits `fbca563` (step 4) and `30a1e1a` (step 4.5), 2026-09-14. Sampled with `uno.eval.play.match` (the `census` experiment prints the same matchups). The Heuristic of this step broke ties on the lowest type id; since [step 8.6](08.6-symmetry.md) it is symmetric and its numbers changed, current values in [index](index.md).
+> Commits `fbca563` (step 4) and `30a1e1a` (step 4.5), 2026-09-14. Sampled with `uno.eval.play.match` (the `census` experiment prints the same matchups). The Heuristic of this step broke ties on the lowest type id; since [step 8.6](08.6-symmetry.md) it is symmetric and its numbers changed, current values in [index](../index.md).
 
 `uno/agents/baseline.py`: `UniformLegal` (sanity), `PlayFirstRandom` (the ladder's
 Random row), `Heuristic` (deterministic). Agents return distributions.
@@ -32,6 +32,6 @@ exhaustion endings).
 - The stable-hash test asserted `x == constant or True`; pinned the constant.
 - Observation "leak" at non-decision nodes: not fixable and not a problem. The
   leak is the timing (opponent still to move after their own draw event =>
-  the drawn card was playable), not a field. Documented in [spec section 10](../spec.md):
+  the drawn card was playable), not a field. Documented in [spec section 10](../../spec.md):
   L1/L2 observations are only meaningful at the observer's own decisions.
 - Pass after a playable draw stays legal under forced play (intended).

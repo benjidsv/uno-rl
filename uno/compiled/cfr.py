@@ -20,7 +20,7 @@ alternating: player 1 sees player 0's updated strategy):
 Vanilla CFR converges as O(1 / sqrt(T)); CFR+ (regret matching+, alternating
 updates, linear averaging) has the same bound and is far faster in practice.
 
-Two accelerations on the same passes (step 8.7, docs/results/08.7-toy2.md):
+Two accelerations on the same passes (step 8.7, docs/results/03-08-foundations/08.7-toy2.md):
 
 - **Discounting** (DCFR, Brown & Sandholm 2019): after iteration t the
   accumulated positive regrets are multiplied by t^a / (t^a + 1), the

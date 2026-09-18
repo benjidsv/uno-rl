@@ -1,6 +1,6 @@
 """Census of the lazy-chance tree (`uno.game.chance`): walk every history and count.
 
-See docs/results/03-census.md and docs/spec.md section 19 (the position DP that replaced it for sizing).
+See docs/results/03-08-foundations/03-census.md and docs/spec.md section 19 (the position DP that replaced it for sizing).
 """
 
 from __future__ import annotations

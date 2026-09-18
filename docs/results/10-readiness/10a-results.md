@@ -1,6 +1,6 @@
 # Step 10a: the contract (2026-09-17)
 
-> On top of commit `29bccad`. Plan: [plan.md](../plan.md) row 10, brainstorm:
+> On top of commit `29bccad`. Plan: [plan.md](../../plan.md) row 10, brainstorm:
 > [10-brainstorm.md](10-brainstorm.md) section 5.
 > Re-run: `uv run uno report TOY heuristic`, `uv run uno report TOY random`,
 > `uv run uno report TOY2 heuristic`, `uv run uno report TOY2_SKIP heuristic`; tests
@@ -181,7 +181,7 @@ exact
 ```
 
 **The checks.** Every printed number for the two pinned agents must reproduce
-[index.md](index.md) to the digit -- the 9.5f device. Heuristic on `TOY`: 0.7416 /
+[index.md](../index.md) to the digit -- the 9.5f device. Heuristic on `TOY`: 0.7416 /
 0.4147, 0.6934 / 0.3066, exploitability 5.6 / 11.8. Random: 0.6493 / 0.3507,
 exploitability 17.1 / 17.4. **0 failed checks** on both.
 
@@ -224,7 +224,7 @@ rather than re-spending block 00.
 ### 3.1 The card's first run against a new ruleset found a published number wrong
 
 `report TOY2 heuristic` failed its own check: seat-1 exploitability **11.7480**, against
-the **11.8** on [index.md](index.md) and in `context.md` 6.4. The card is right and the
+the **11.8** on [index.md](../index.md) and in `context.md` 6.4. The card is right and the
 published figure is a **double rounding**:
 
     published:  BR L1 0.6959    - Nash 0.5784    = 0.117500 -> 11.8
@@ -237,7 +237,7 @@ displays correctly (`TOY2` random 14.775 / 15.209, `TOY2_SKIP` 11.03 / 11.93, `T
 5.57 / 11.82 and 17.09 / 17.38): this is the only one that lands on a boundary.
 
 `index.md` and `context.md` 6.4 are corrected to 11.7;
-[08.7](08.7-toy2.md) keeps its number as measured then, per that page's own convention.
+[08.7](../03-08-foundations/08.7-toy2.md) keeps its number as measured then, per that page's own convention.
 
 **This is the instrument working.** A3 was specified as "run it on `Heuristic` and
 `PlayFirstRandom` and require the pinned values" -- the 9.5f reproduces-to-the-digit

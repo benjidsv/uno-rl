@@ -1,13 +1,13 @@
 # Steps 5-6 results: exact best responses on `TOY` (2026-09-14, `uno/reference/solve.py`, `uno ladder`)
 
-> Commit `30a1e1a`, re-run at `0ab8e8d` (2026-09-14). Rerun: `uv run uno ladder TOY` (reference solvers, minutes). The Heuristic columns are the step 4 Heuristic; the step 8.6 values are in [step 8.6](08.6-symmetry.md) and [index](index.md). *Step 8.8: the on-seeds check here compares against the total-variance CI, which is conservative ([step 8.8](08.8-review.md)).*
+> Commit `30a1e1a`, re-run at `0ab8e8d` (2026-09-14). Rerun: `uv run uno ladder TOY` (reference solvers, minutes). The Heuristic columns are the step 4 Heuristic; the step 8.6 values are in [step 8.6](08.6-symmetry.md) and [index](../index.md). *Step 8.8: the on-seeds check here compares against the total-variance CI, which is conservative ([step 8.8](08.8-review.md)).*
 
 One best-response routine, three information-set keys (L1 `info_state`, L2 =
 L1 + opponent's initial hand + opponent's draws in order, L3 = full state with
 pile order). L1/L2 walk the lazy tree; L3 enumerates *worlds* (deal x pile
 order) and walks the bare engine. (The first version keyed L2 on the
 opponent's *current* hand to keep its memory out of L2; that partition has
-imperfect recall, see "Information sets and recall" in [the plan](../plan.md). Same values on
+imperfect recall, see "Information sets and recall" in [the plan](../../plan.md). Same values on
 Random and Heuristic to 4 decimals.)
 
 Cost on `TOY`: 12-16 s and ~1 GB per L1/L2 solve against Random (0.94M

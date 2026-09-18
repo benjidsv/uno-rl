@@ -286,9 +286,9 @@ in brackets where it was compiled); why each was chosen is in the results.
 
 | name | cards | hand | forced play | deck / pile | histories | L1 sets | status |
 |------|-------|------|-------------|-------------|-----------|---------|--------|
-| `TOY` | 4 colors x ranks `(1, 1)`, 1 wild | 3 | yes | 9 / 2 | 33,646 (1,252,040) | 12,036 (558,656) | solved, [step 3](results/03-census.md) |
-| `TOY_FULL` | as `TOY` | 3 | no | 9 / 2 | 774,007 | 138,876 | solved, [step 8.6](results/08.6-symmetry.md) |
-| `TOY2` | 3 colors x ranks `(1, 1, 1)`, 1 wild | 3 | yes | 10 / 3 | 311,819 | 129,428 | solved, [step 8.7](results/08.7-toy2.md) |
+| `TOY` | 4 colors x ranks `(1, 1)`, 1 wild | 3 | yes | 9 / 2 | 33,646 (1,252,040) | 12,036 (558,656) | solved, [step 3](results/03-08-foundations/03-census.md) |
+| `TOY_FULL` | as `TOY` | 3 | no | 9 / 2 | 774,007 | 138,876 | solved, [step 8.6](results/03-08-foundations/08.6-symmetry.md) |
+| `TOY2` | 3 colors x ranks `(1, 1, 1)`, 1 wild | 3 | yes | 10 / 3 | 311,819 | 129,428 | solved, [step 8.7](results/03-08-foundations/08.7-toy2.md) |
 | `TOY2_FULL` | as `TOY2` | 3 | no | 10 / 3 | 28,057,516 | 3,753,530 | solved (Nash by DCFR), step 8.7 |
 | `TOY2_SKIP` | 3 colors x ranks `(1, 1)`, 1 skip per color, 1 wild | 3 | yes | 10 / 3 | 922,744 | 439,268 | solved, step 8.7 |
 | `TOY_CANDIDATE` | 2 colors x ranks `(2, 2, 2)`, 1 wild | 2 | no | 13 / 8 | > 4e7 (full, census capped) | | rejected, step 3 |
@@ -333,7 +333,7 @@ the same random numbers in the same information state, which `compare` wants;
   then a number card; what still ties is played uniformly at random. Wilds are
   held unless no other card plays; a wild takes the color held most (the
   current color on ties, then uniform). After a draw, always play the drawn
-  card. (Before [step 8.6](results/08.6-symmetry.md) ties went to the lowest type id, which is not symmetric.)
+  card. (Before [step 8.6](results/03-08-foundations/08.6-symmetry.md) ties went to the lowest type id, which is not symmetric.)
 
 ## 14. Exact solvers (`uno/reference/solve.py`)
 
@@ -636,7 +636,7 @@ its equilibrium is a symmetric Nash equilibrium of the full game.
 `alternating` (CFR+) updates player 0, recomputes the passes, then updates
 player 1; vanilla updates both from one pass.
 
-**Variants** (step 8.7, [step 8.7](results/08.7-toy2.md)), same passes, `cfr(variant=...)`:
+**Variants** (step 8.7, [step 8.7](results/03-08-foundations/08.7-toy2.md)), same passes, `cfr(variant=...)`:
 
 - discounting (DCFR, Brown & Sandholm 2019): after iteration `t` the
   accumulated positive regrets are multiplied by `t^a / (t^a + 1)`, the

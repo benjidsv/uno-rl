@@ -1,9 +1,10 @@
 # Step 10B: reproducible figures (2026-09-18)
 
-> On top of commit `9a30e80`. Rerun: `uv run uno figures [out_dir=docs/results/figures]`.
+> On top of commit `9a30e80`. Rerun:
+> `uv run uno figures [output_root=docs/generated/report-card]`.
 > New code: `uno/experiments/figures.py`. New dependency: `matplotlib` (Agg/SVG backend
-> only). Design: [`docs/results/10-brainstorm.md`](10-brainstorm.md) section 6,
-> [`docs/10-to-11-plan.md`](../10-to-11-plan.md).
+> only). Design: [`docs/results/10-readiness/10-brainstorm.md`](10-brainstorm.md) section 6,
+> [`docs/10-to-11-plan.md`](../../10-to-11-plan.md).
 
 ## What this is for
 
@@ -38,24 +39,25 @@ helper and convention the report card already uses. This run: **0 failed checks*
 
 ## The five figures
 
-All in `docs/results/figures/`, written as SVG (matplotlib, Agg backend). "Live" means
+All in `docs/generated/report-card/figures/`, written as SVG (matplotlib, Agg
+backend). "Live" means
 recomputed from `.cache/` by this run and checked to the digit; "historical" means a
 sampled full-UNO number that cannot be cheaply re-derived here and is read from the
 `HISTORICAL` dict in `uno/experiments/figures.py`, each entry commented with its source.
 
-1. **`01-range.svg`** -- Random / Heuristic / Nash / BR L1(random), per ruleset and seat,
+1. **`range.svg`** -- Random / Heuristic / Nash / BR L1(random), per ruleset and seat,
    against the fixed Random column, with the achievable range (0 = Random, 1 = BR
    L1(random)) as a grey bar underneath. All five rulesets, fully live. Reading it: Nash
    is not trained against Random and both can and does fall outside the Random-Heuristic
    range at seat 0 for several toys (it isn't optimizing this column at all), which is
    the visual case for why "beats Random" and "is not exploitable" are different claims
    (the project's running theme, see `index.md`'s exploitability table).
-2. **`02-values-of-information.svg`** -- the L2-L1 (opponent hand) and L3-L2 (pile order)
+2. **`values-of-information.svg`** -- the L2-L1 (opponent hand) and L3-L2 (pile order)
    best-response gaps, min-max range and mean over {random, heuristic} x {seat 0, seat 1},
    per ruleset. Live for TOY, TOY_FULL, TOY2, TOY2_SKIP; `TOY2_FULL` is drawn hollow
    (scope cut 1). Reproduces the brainstorm's own summary of this figure ("2.5-4.4 points
    on TOY to 7-14 on TOY2_FULL") as the visible growth of the range across rulesets.
-3. **`03-budget.svg`** -- AIVAT variance ratio (raw = 1.0) by estimator, TOY next to
+3. **`budget.svg`** -- AIVAT variance ratio (raw = 1.0) by estimator, TOY next to
    FULL_UNO, seat 0 / seat 1, with the one known deal-count reduction (3,860 -> 1,776
    deals at seat 0, 3,956 -> 1,854 at seat 1, fitted network, for a 3-point claim)
    annotated. Entirely historical (09.5b/c, 10a2): a literal "deals for 3 points" count
@@ -64,14 +66,14 @@ sampled full-UNO number that cannot be cheaply re-derived here and is read from 
    experiment), so this is the variance-ratio proxy for the brainstorm's "budget" figure,
    not a rerun of it, and the results file says so rather than fabricating toy deal
    counts that were never measured.
-4. **`04-edge-by-decision.svg`** -- the Heuristic's gap to BR L1(random) on TOY, live, by
+4. **`edge-by-decision.svg`** -- the Heuristic's gap to BR L1(random) on TOY, live, by
    `uno.eval.decisions.node_kind` (wild 35%, color 34%, drawn 28%, other/single 2%/0%),
    next to the full-UNO D2 finding (action-card timing ~70%, wild handling ~27%),
    historical. These are two different taxonomies over two different reference points
    (BR L1 vs. a w=32 search) -- the figure places them side by side rather than
    stacking them against shared categories, which would misrepresent them as the same
    breakdown.
-5. **`05-lever-ladder.svg`** -- the full-UNO lever waterfall: continuation (+9.73/+4.57),
+5. **`lever-ladder.svg`** -- the full-UNO lever waterfall: continuation (+9.73/+4.57),
    belief (+2.83/+4.40), worlds 8->32 at d=2 (+5.57/+3.33), depth (~0, "every difference
    within 1.5 sigma of zero"). Entirely historical (09.5e, 09.5f section 7.2) -- this is
    specifically about full-UNO PIMC behaviour and has no toy analogue.

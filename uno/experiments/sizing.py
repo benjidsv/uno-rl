@@ -1,4 +1,4 @@
-"""Step 8.7: size the TOY2 candidates exactly (uno/reference/sizing.py, docs/results/08.7-toy2.md).
+"""Step 8.7: size the TOY2 candidates exactly (uno/reference/sizing.py, docs/results/03-08-foundations/08.7-toy2.md).
 
     uv run uno sizing [position_cap=4000000]
 

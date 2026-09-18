@@ -174,7 +174,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"   {seat:<4d} {l1:7.4f} {l2:7.4f} {l3:7.4f} {100 * (l2 - l1):7.1f} {100 * (l3 - l2):7.1f}   {keeps:.4f} (so seat {seat} gains {100 * (l1 - (1 - keeps)):.2f} / {100 * (l2 - (1 - keeps)):.2f} / {100 * (l3 - (1 - keeps)):.2f} pts at L1 / L2 / L3)")
 
     # steps 5-6 columns, replayed on the compiled tree for the record
-    print("\n== steps 5-6 best-response columns on the compiled trees (should reproduce docs/results/05-06-best-response.md)")
+    print("\n== steps 5-6 best-response columns on the compiled trees (should reproduce docs/results/03-08-foundations/05-06-best-response.md)")
     print(f"   {'opponent':10s} {'seat':4s} {'BR L1':>7s} {'BR L2':>7s} {'BR L3':>7s}")
     for opp in (rnd, heu):
         for seat in (0, 1):
