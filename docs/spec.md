@@ -2070,3 +2070,77 @@ needs this); the bound never exceeds the exact NashConv; the two seatings are no
 played attack matches `scores_on_seeds` -- the exact value **on the same deals**, which is the
 calibrated scale, since the whole-game value differs from it by ~1-2 points of pure deal luck.
 
+## 33. Step 10C rulebots and behavioral fingerprints
+
+`uno/agents/rulebot.py` defines cheap L1 policies for the frozen Step 11 training
+league. All are functions of the current observation and legal-action tuple:
+they hold no mutable episode state, read no opponent-private cards or pile
+order, and return their complete action distribution without sampling. Public
+memory is reconstructed from `Observation.public`, so these policies remain
+position-only targets for section 32's `response` attack. Every selection rule
+must be equivariant under the color/rank symmetries of section 18; exact ties
+are uniform over the tied action orbit.
+
+**Public-memory feature.** `_denial(card, colour, evidence)` compares the
+playable-card set on the candidate resulting board with each live public void
+from section 26.2. Overlap is weighted by physical card multiplicity,
+normalized by candidate playable mass, discounted by `1 / (1 + cards drawn
+since)`, and maximized over evidence. It is a cheap score feature, not a
+posterior probability and not a hard hand constraint.
+
+The four frozen policies are:
+
+- `heuristic_memory`: section 13's Heuristic exactly when no live evidence
+  exists. Evidence may break a tie between colors with equal majority support;
+  it may not overrule the Heuristic's majority-color choice.
+- `rulebot_transfer_toy_v1`: a linear tactical scorer selected only by exact
+  values on `TOY` and `TOY2_SKIP`. Its `RuleWeights` differ from the base preset
+  at `denial=2.0`, `singleton=0.0`.
+- `rulebot_full_dev_v1`: separately selected on full-UNO DEV, never described
+  as toy transfer. Its changes from the base preset are `denial=0.5`,
+  `singleton=0.5`.
+- `rulebot_unpredictable_t0.15_m0.2_d0.02_k0.04_kw0.1`: the full-UNO scorer,
+  softmaxed at temperature 0.15 over plays within 0.20 of the best score. At a
+  turn start with a legal play it assigns exactly 0.02 to Draw. After drawing a
+  playable card it assigns exactly 0.04 to Pass, or 0.10 when that card is a
+  wild. Remaining mass follows the soft play distribution. A configured zero
+  probability is omitted rather than returned as a zero-mass action.
+
+The tactical score may use only: card kind; remaining-hand color support;
+current-color retention; whether the played rank/action trait is unique;
+non-wild color pivot; `_denial`; whether an action card leaves a follow-up;
+penalty-card count; opponent hand pressure; and wild retention. Emptying the
+hand dominates every nonterminal feature. `FROZEN_RULEBOT_LEAGUE` fixes the
+four names in the order above and `FROZEN_RULEBOT_WEIGHTS` fixes an equal 0.25
+mixture; their lengths, name match, and unit sum are regressions.
+
+**Behavioral fingerprints (`uno/eval/behavior.py`).** Conditional choice rates
+accumulate the probability mass reported by the policy at each qualifying
+on-policy observation, not just the sampled action. Their denominators are:
+
+| metric | qualifying opportunity | numerator |
+|---|---|---|
+| voluntary draw | turn start, both Draw and a play legal | mass on Draw |
+| draw with wild | voluntary-draw opportunity with a wild in hand | mass on Draw |
+| keep drawn / keep drawn wild | after a playable draw, respectively any / wild | mass on Pass |
+| wild / +4 hoard | a colored play and that wild kind are both legal | one minus mass on that wild kind |
+| +2 use | a +2 and a different play are legal | mass on +2 |
+| skip/reverse use | skip/reverse and a different play are legal | mass on skip/reverse |
+| sustainable action | expected mass placed on +2, +4, skip or reverse | fraction whose resulting board leaves a playable card in hand |
+| target void | live evidence and plays with unequal positive denial scores | mass on the maximum-denial plays |
+| normalized entropy / deterministic | any decision with two or more legal actions | entropy divided by `log(len(legal))` / indicator max mass is one |
+
++2 and skip/reverse remain separate even though both grant tempo in two-player
+UNO. Realized counts (decisions, voluntary and forced draws, penalty cards
+received, terminal wilds) are reported per game and are not substituted for
+the conditional policy rates. Stats are mergeable and traces are reduced one
+game at a time. Common-state diversity is mean total-variation distance on a
+bounded Heuristic-vs-Random DEV probe bank, averaging each represented
+`node_kind` equally so agents cannot look diverse only by steering into
+different states.
+
+`uv run uno rulebots select` reproduces and asserts the exact toy sweep winner.
+`uv run uno rulebots ... dev` is selection/diagnostic only; explicit `eval`
+uses frozen EVAL block 03 and emits per-cell raw SEs plus per-deal paired
+differences against the Heuristic. No parameter or membership may be changed
+after reading that block without a new policy name and a new confirmatory block.

@@ -594,3 +594,44 @@ uncertainty of 0.1-0.8 points, and its mean over seeds matches `uno.compiled.pim
 behavioural average. Only the `response` continuation reads the target, so only it is restricted to
 position-only targets: a tabulated target answers "first legal action" at **79.5 %** of
 fabricated-history queries instead of raising.
+
+## Step 10C rulebot package and frozen league ([results](10c-results.md))
+
+Four cheap position-only policies are implemented: a minimal public-memory
+ablation, an exact-toy-selected tactical bot, a separately named full-UNO DEV
+bot, and a stochastic “unpredictable but still good” variant. The behavioral
+profiler reports opportunity-normalized probability mass, including separate
+rates for **+2** and **skip/reverse**, plus draw, keep-drawn, wild hoarding,
+void targeting, entropy, and streamed per-game counts.
+
+The exact toy selection objective (mean over Random/Heuristic, both seats, on
+`TOY` and `TOY2_SKIP`) improved from 0.545569 to **0.547769**, versus 0.534791
+for the Heuristic. The transfer result is null on full UNO: its held-out
+four-cell mean is 0.5502 versus 0.5506 for the Heuristic. The frozen training
+league contains all four new policies at equal weight.
+
+**EVAL block 03** (`[1,012,000, 1,016,000)`, 4,000 deals per cell, both seats),
+claimed only after toy/DEV selection and league freeze:
+
+| row | vs Random, seat 0 / 1 | vs Heuristic, seat 0 / 1 | ms/game |
+|---|---:|---:|---:|
+| Heuristic | 0.6078 / 0.5948 | 0.5185 / 0.4815 | 1.63 |
+| memory ablation | **0.6258 / 0.6078** | **0.5327 / 0.4875** | 1.97 |
+| toy-transfer bot | 0.6180 / 0.5990 | 0.5060 / 0.4778 | 2.37 |
+| full-UNO DEV bot | **0.6332 / 0.6032** | 0.5010 / 0.4893 | 2.00 |
+| unpredictable bot | 0.6162 / 0.5710 | 0.4860 / 0.4515 | 2.14 |
+
+Raw cell SEs are 0.00762-0.00791. Paired against the Heuristic, the minimal
+memory ablation's four per-seat/column deltas are all positive (+0.60 to +1.80
+points) but only reach `z=0.72-1.99`; the larger DEV bot's one `|z| > 2` gain is
++2.55 ± 0.99 points against Random at seat 0. No candidate establishes an
+improvement across both seats and columns, so cheap memory helps at most
+modestly and does not close most of the PIMC gap.
+
+The stochastic bot draws voluntarily 2%, keeps
+a playable drawn card 5.3% overall (10% for wilds), and has 21.4% normalized
+entropy versus 8.1% for its deterministic parent. It therefore violates the
+hard `voids` assumptions observably. It is weaker head-to-head but remains a
+competent opponent: against Random it beats the same-seat Random baseline by
+9.9 / 8.8 points and lies within 0.8 points of the Heuristic's seat-mean score.
+Four generated SVGs and their CSV sources live in `docs/results/figures/`.

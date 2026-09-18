@@ -1,12 +1,14 @@
 # Steps 10–11: revised execution plan
 
-Agreed direction, 2026-09-17; **10a.3 and 10B complete as of 2026-09-18**, 10C next. Based on the
+Agreed direction, 2026-09-17; **10a.3, 10B and 10C complete as of 2026-09-18**.
+10C froze its four-agent equal-weight league and confirmed it on fresh EVAL
+block 03 after exact toy and full-UNO DEV selection. Based on the
 [Step 10 review](results/10-review.md) and Benji's request to retain the existing
 10B → 10C → 11 sequence.
 
 ## Placement and scope
 
-**10a.3A (done) → 10a.3B (done) → 10a.3C (done) → 10B (done) → 10C → 11.**
+**10a.3A (done) → 10a.3B (done) → 10a.3C (done) → 10B (done) → 10C (done) → 11.**
 
 This preserves milestone order and purpose. It adds work before 10B, so it is
 not a promise of unchanged elapsed time. Keep 10a.3 bounded: no RL training,

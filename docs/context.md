@@ -1,11 +1,16 @@
 # UNO RL v5: project context
 
-**Status update, 2026-09-18:** all of **10a.3** is complete. The coarse-memory
+**Status update, 2026-09-18:** all of **10a.3, 10B and 10C** are complete. Step
+10C froze four cheap policies as an equal-weight league after an exact toy
+transfer study and full-UNO DEV selection, then confirmed their scores and
+behavior on fresh EVAL block 03 ([results](results/10c-results.md)). The minimal
+memory ablation has the best held-out aggregate, but no variant establishes an
+improvement over the Heuristic across both seats and columns. The coarse-memory
 evidence has been repaired and refreshed (10a.3A); the learner observation
 contract is defined with three comparison arms (10a.3B,
 [docs/observation-contract.md](observation-contract.md)); and the **LBR attack
 instrument** is built and calibrated (10a.3C, [spec section 32](spec.md),
-[results](results/10a3c-results.md)). **10B → 10C → Step 11** follow. See
+[results](results/10a3c-results.md)). **Step 11** follows. See
 [the execution plan](10-to-11-plan.md), [the review](results/10-review.md), and
 [the repair results](results/10a3a-results.md). Older memory-sufficiency claims
 below must be read with this update. A side diagnostic of the same day, **9.5g**
@@ -21,11 +26,11 @@ calibrated on the toys at 77-97 % of each target's *exact* NashConv. It is a
 A self-contained briefing on the project: the goal, the method, why each
 technique was chosen, what it bought, what went wrong, and what the numbers say.
 Written to be pasted into a fresh conversation (brainstorming, review, planning)
-with no access to the repo. State as of **step 10a.3C, 2026-09-18** (on top of
-commit `b00c2f7`): the seed, reporting, training-target, shaping, belief,
-column-free-player, corrected toy-memory contracts, the learner observation
-contract, and the calibrated attack instrument are complete. Next is 10B figures,
-then 10C's distilled rulebot.
+with no access to the repo. State as of **step 10C completion, 2026-09-18** (on
+top of commit `6ffe6f5`): the seed, reporting,
+training-target, shaping, belief, column-free-player, corrected toy-memory
+contracts, learner observation contract, calibrated attack instrument, 10B
+figures, and frozen 10C rulebot league are built. Next is Step 11.
 
 The repo's detailed sources, if you have them: `docs/plan.md` (build order,
 motivation), `docs/spec.md` (the rules and every algorithm; it wins over the

@@ -97,6 +97,16 @@ REGISTRY: dict[str, Block] = {
             "deals, so one block takes it to ~0.9; the column-free PIMC target is not on this "
             "block, since at 8.11 s/game it would need ~1,340 deals for a 5-point bound",
         ),
+        Block(
+            "03",
+            1_012_000,
+            1_016_000,
+            "10C",
+            "confirmatory full-UNO scores and behavioral fingerprints for the frozen four-agent "
+            "rulebot league against Random and the Heuristic, both seats. Transfer weights were "
+            "selected exactly on TOY/TOY2_SKIP; the full-UNO and stochastic variants were selected "
+            "on DEV before this block was claimed",
+        ),
     )
 }
 

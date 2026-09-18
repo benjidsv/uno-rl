@@ -1,0 +1,25 @@
+sample,agent,opponent,seat,score,se,games
+EVAL block 03,random,random,0,0.51725,0.007901975682063312,4000
+EVAL block 03,random,random,1,0.48275,0.007901975682063312,4000
+EVAL block 03,random,heuristic,0,0.40525,0.007763419159382099,4000
+EVAL block 03,random,heuristic,1,0.39225,0.007720905871195943,4000
+EVAL block 03,heuristic,random,0,0.60775,0.007720905871195943,4000
+EVAL block 03,heuristic,random,1,0.59475,0.007763419159382099,4000
+EVAL block 03,heuristic,heuristic,0,0.5185,0.0079012685697458,4000
+EVAL block 03,heuristic,heuristic,1,0.4815,0.007901268569745799,4000
+EVAL block 03,heuristic_memory,random,0,0.62575,0.007652540409477082,4000
+EVAL block 03,heuristic_memory,random,1,0.60775,0.007720905871195944,4000
+EVAL block 03,heuristic_memory,heuristic,0,0.53275,0.007889703494448164,4000
+EVAL block 03,heuristic_memory,heuristic,1,0.4875,0.007904211323032793,4000
+EVAL block 03,rulebot_transfer_toy_v1,random,0,0.618,0.007683342920865235,4000
+EVAL block 03,rulebot_transfer_toy_v1,random,1,0.599,0.007750146204527235,4000
+EVAL block 03,rulebot_transfer_toy_v1,heuristic,0,0.506,0.007906113245879049,4000
+EVAL block 03,rulebot_transfer_toy_v1,heuristic,1,0.47775,0.007898850063970278,4000
+EVAL block 03,rulebot_full_dev_v1,random,0,0.63325,0.007620736728300653,4000
+EVAL block 03,rulebot_full_dev_v1,random,1,0.60325,0.007736266659730494,4000
+EVAL block 03,rulebot_full_dev_v1,heuristic,0,0.501,0.007906666734137159,4000
+EVAL block 03,rulebot_full_dev_v1,heuristic,1,0.48925,0.007904854904282839,4000
+EVAL block 03,rulebot_unpredictable_t0.15_m0.2_d0.02_k0.04_kw0.1,random,0,0.61625,0.0076900109520149935,4000
+EVAL block 03,rulebot_unpredictable_t0.15_m0.2_d0.02_k0.04_kw0.1,random,1,0.571,0.007826561426702119,4000
+EVAL block 03,rulebot_unpredictable_t0.15_m0.2_d0.02_k0.04_kw0.1,heuristic,0,0.486,0.007903582520234957,4000
+EVAL block 03,rulebot_unpredictable_t0.15_m0.2_d0.02_k0.04_kw0.1,heuristic,1,0.4515,0.007869397648793632,4000
