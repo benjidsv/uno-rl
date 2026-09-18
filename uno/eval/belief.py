@@ -106,11 +106,29 @@ class Void:
 
 
 def _is_penalty(rs: Ruleset, public: tuple, i: int) -> bool:
-    """A `("draw", p, n)` forced by the *other* player's +2 / +4 rather than chosen."""
-    prev = public[i - 1] if i else None
-    if not (prev and prev[0] == "play" and prev[1] != public[i][1]):
+    """A `("draw", p, n)` forced by the *other* player's +2 / +4 rather than chosen.
+
+    A **reshuffle may sit between the play and the penalty it caused**: if the pile
+    runs out part-way through a penalty draw, `uno.game.engine._Work.draw` appends
+    `("reshuffle",)` and then the single `("draw", p, n)` for the whole penalty, so
+    the history reads `play, reshuffle, draw`. The scan therefore skips reshuffle
+    events, exactly as `uno.game.observe._voluntary` does; reading only
+    `public[i - 1]` classified that draw as voluntary, which `voids` would turn
+    into a constraint the opponent never demonstrated.
+
+    Measured before the scan was widened: 488 of 125,216 draw events over 400
+    uniform-random `FULL_UNO` games were classified differently. **None** of them
+    reached `voids`, which only inserts on a one-card draw event, and the four
+    frozen rulebots played identically either way over 2,400 games -- so this
+    corrects a latent error rather than changing any measured behavior (see
+    docs/rl/results/stage5-toy-gates.md).
+    """
+    j = i - 1
+    while j >= 0 and public[j][0] == "reshuffle":
+        j -= 1
+    if j < 0 or public[j][0] != "play" or public[j][1] == public[i][1]:
         return False
-    return rs.card_types[prev[2]].kind in (Kind.DRAW_TWO, Kind.WILD_DRAW_FOUR)
+    return rs.card_types[public[j][2]].kind in (Kind.DRAW_TWO, Kind.WILD_DRAW_FOUR)
 
 
 def voids(rs: Ruleset, public: tuple, opp: int) -> list[Void]:

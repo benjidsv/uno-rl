@@ -355,3 +355,44 @@ def test_the_constraint_memo_follows_the_decision_it_was_derived_from():
             assert bel.hand(obs, list(unseen), random.Random(3)) == fresh.hand(obs, list(unseen), random.Random(3))
         n += 1
     assert n > 20 and len(seen) > 5, "the decisions did not have differing histories, so staleness could not show"
+
+
+def test_a_penalty_draw_after_a_reshuffle_is_not_read_as_a_voluntary_draw():
+    """The engine writes `play, reshuffle, draw` when a penalty exhausts the pile.
+
+    `_Work.draw` appends `("reshuffle",)` mid-penalty and the single draw event for
+    the whole penalty afterwards, so a scan that only reads `public[i - 1]` sees a
+    reshuffle, calls the draw voluntary, and `voids` records a constraint the
+    opponent never demonstrated. This history is the smallest one with that shape.
+
+    Non-vacuous by construction: remove the reshuffle skip in
+    `uno.eval.belief._is_penalty` and the first assertion fails.
+    """
+    from tests.helpers import tid
+    from uno.eval.belief import _is_penalty
+
+    rs = rules.FULL_UNO
+    public = (
+        ("setup", tid(rs, "c0r1"), ()),
+        ("play", 0, tid(rs, "c0+2"), 0),
+        ("reshuffle",),
+        ("draw", 1, 1),  # one card: the only shape `voids` acts on
+    )
+    assert _is_penalty(rs, public, 3), "a penalty draw separated from its play by a reshuffle"
+    assert voids(rs, public, 1) == [], "a forced draw is not evidence of a void"
+
+    # the same history without the reshuffle must still be a penalty, and a genuine
+    # voluntary draw must still be one
+    assert _is_penalty(rs, (public[0], public[1], ("draw", 1, 2)), 2)
+    assert not _is_penalty(rs, (public[0], ("draw", 1, 1)), 1)
+    assert len(voids(rs, (public[0], ("draw", 1, 1)), 1)) == 1
+
+
+def test_a_penalty_the_drawer_caused_themselves_is_still_not_a_penalty_for_them():
+    """`_is_penalty` is about the *other* player's +2/+4, reshuffle or not."""
+    from tests.helpers import tid
+    from uno.eval.belief import _is_penalty
+
+    rs = rules.FULL_UNO
+    own = (("setup", tid(rs, "c0r1"), ()), ("play", 1, tid(rs, "c0+2"), 0), ("reshuffle",), ("draw", 1, 1))
+    assert not _is_penalty(rs, own, 3)

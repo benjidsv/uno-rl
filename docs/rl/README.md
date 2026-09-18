@@ -1,24 +1,32 @@
 # RL project
 
-**Status, 2026-09-18:** direction agreed; no RL learner implemented yet. First
-maximize frozen-league score with PPO from scratch. Adaptability and robustness
-are distant follow-up objectives. B is the first practical actor, A its memory
-ablation, and C the subsequent recurrent comparison.
+**Status, 2026-09-18:** the learner exists. Pipeline-plan stages 1-5 are
+implemented in `uno/rl/` and their acceptance checks pass; the exact-toy gates are
+measured in [stage5-toy-gates.md](results/stage5-toy-gates.md). No full-UNO
+learning result exists yet. First maximize frozen-league score with PPO from
+scratch. Adaptability and robustness are distant follow-up objectives. B is the
+first practical actor, A its memory ablation, and C the subsequent recurrent
+comparison.
 
 ## Next work
 
-Implement and validate the shared actor encoder/distribution against the revised
-contract, then the fixed-opponent toy learner and exact-gradient comparison.
-Complete toy learning gates before full-UNO learning; a bounded throughput smoke
-run may inform the open compute budget. PIMC compression is secondary, with known
-correctness issues to repair before interpreting its gap. A distilled warm start
-is an option only if from-scratch RL later disappoints.
+Stage 6, the per-machine systems pilot of [pipeline-plan.md](pipeline-plan.md)
+section 7: worker count, live games per worker and update device, measured end to
+end, before a full-UNO run's budget is frozen. Stages 7-10 (full-UNO B, the A
+ablation, the recurrent C comparison and the frozen report card) follow it.
+PIMC compression is secondary, with known correctness issues to repair before
+interpreting its gap. A distilled warm start is an option only if from-scratch RL
+later disappoints.
+
+Commands: `uv run uno rl shapes|smoke|train|resume` for the learner,
+`uv run uno rl_toy gradient|tabular|neural|all` for the exact-toy gates.
 
 ## Read next
 
 | Task | Document |
 |---|---|
 | agreed objective, pipeline, phase gates, and open choices | [plan.md](plan.md) |
+| execution plan the learner implements: topology, iteration, PPO, gates | [pipeline-plan.md](pipeline-plan.md) |
 | actor fields, symmetry, memory, critic/attacker boundaries | [observation-contract.md](observation-contract.md) |
 | rough updates/epochs, conditional time estimates, pilot measurements | [compute-budget.md](compute-budget.md) |
 | reproduced readiness defects and review checks | [readiness-review.md](readiness-review.md) |

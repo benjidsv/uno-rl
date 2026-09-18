@@ -1506,6 +1506,13 @@ their hand held nothing playable. If they have drawn `k` cards since, at most `k
 hand **now** may be playable against that board -- a necessary condition, exact, and checkable
 against a current hand with no propagation at all (`Void(top, colour, since)`, `voids`,
 `satisfies`). Penalty draws from a +2 / +4 are excluded: they are not decisions.
+Recognising one means scanning **past any reshuffle event**: when a penalty empties
+the pile, `_Work.draw` (section 8) writes `("reshuffle",)` between the play and the
+single draw event it caused, so the history reads `play, reshuffle, draw`. Reading
+only the immediately preceding event calls that draw voluntary and invents a void.
+`uno.eval.belief._is_penalty` and `uno.game.observe._voluntary` both skip reshuffles;
+the former did not until this was found, with no measured effect on any result
+(docs/rl/results/stage5-toy-gates.md).
 
 On a **forced-play** ruleset the *pre-draw* half of the statement is a fact of the rules rather
 than an inference about policy: `legal_actions` (section 6) offers `Draw` only when nothing is

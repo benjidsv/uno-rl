@@ -165,6 +165,7 @@ Python >=3.14, `uv`, NumPy, and PyTorch; `pyproject.toml` is the dependency sour
 | `uno/reference/` | slow trusted exact walkers and sizing |
 | `uno/compiled/` | array trees, exact evaluation/BR/CFR, gradients, diagnostics |
 | `uno/eval/` | runners, estimators, seeds, search, beliefs, critics, targets, attacks |
+| `uno/rl/` | learner features, models, rollouts, collection, PPO, checkpoints, tracking |
 | `uno/experiments/` | reproducible experiments dispatched by `uno/cli.py` |
 | `uno/store.py` | versioned tree, strategy, and tabulation cache |
 | `tests/` | mirrored package structure; pinned values in `tests/known.py` |
