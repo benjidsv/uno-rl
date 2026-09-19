@@ -317,6 +317,7 @@ def cmd_experiment(arm: str = ARM_A, seed: int = 0) -> None:
             "actor_grad_norm": 10.0,
             # gradients are scaled by decisions/games, so roughly x15-20. default is 0.6 but that destroys the learning
             "actor_epochs": 100,
+            "actor_lr": 1e-3,
         },
     )
 
