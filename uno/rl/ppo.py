@@ -32,6 +32,7 @@ only: critic fitting always completes.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -44,6 +45,13 @@ from uno.rl.rollout import Rollout
 from uno.rl.streams import MINIBATCH, generator
 
 FORWARD_CHUNK = 1024  # rows per no-grad forward pass; a memory setting, not an algorithmic one
+
+
+def _synchronize_device(device: str) -> None:
+    if device == "mps":
+        torch.mps.synchronize()
+    elif device.startswith("cuda"):
+        torch.cuda.synchronize(torch.device(device))
 
 
 @dataclass
@@ -70,6 +78,9 @@ class UpdateStats:
     return_std: float = 0.0
     early_stopped: bool = False
     kl_per_epoch: list[float] = field(default_factory=list)
+    critic_value_seconds: float = 0.0
+    actor_update_seconds: float = 0.0
+    critic_update_seconds: float = 0.0
 
     def __str__(self) -> str:
         ev = "n/a" if self.explained_variance is None else f"{self.explained_variance:.3f}"
@@ -214,7 +225,9 @@ def update(
     t, g = rollout.n_decisions, rollout.n_games
     if t == 0:
         return stats
+    started = time.perf_counter()
     values = critic_values(critic, rollout.critic, device)
+    stats.critic_value_seconds = time.perf_counter() - started
     adv = advantages(rollout, values)
     rets = rollout.returns_per_decision.astype(np.float64)
     stats.advantage_mean, stats.advantage_std = float(adv.mean()), float(adv.std())
@@ -227,6 +240,7 @@ def update(
     size = min(optim.minibatch, t)
     scale = t / g
 
+    started = time.perf_counter()
     actor.train()
     for epoch in range(optim.actor_epochs):
         rng = generator(training_seed, MINIBATCH, "actor", update_index, epoch)
@@ -251,8 +265,11 @@ def update(
     if stats.actor_steps:
         stats.actor_grad_norm /= stats.actor_steps
         stats.actor_clipped_fraction /= stats.actor_steps
+    _synchronize_device(device)
+    stats.actor_update_seconds = time.perf_counter() - started
 
     # The critic is fitted to completion even when the actor stopped early.
+    started = time.perf_counter()
     critic.train()
     targets = torch.from_numpy(rets.astype(np.float32)).to(device)
     for epoch in range(optim.critic_epochs):
@@ -272,6 +289,8 @@ def update(
         stats.critic_mse = total / seen if seen else math.nan
     if stats.critic_steps:
         stats.critic_grad_norm /= stats.critic_steps
+    _synchronize_device(device)
+    stats.critic_update_seconds = time.perf_counter() - started
     actor.eval()
     critic.eval()
     return stats

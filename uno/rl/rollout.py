@@ -122,6 +122,7 @@ class Builder:
         self.actor_spec, self.critic_spec, self.behavior_version = actor_spec, critic_spec, behavior_version
         self._rows: dict[int, list[tuple]] = {}
         self._episodes: dict[int, dict] = {}
+        self._payloads: list[dict] = []
 
     def add_decision(self, episode_id: int, decision_index: int, actor: Features, critic: Features, mask: np.ndarray, action: int, old_logp: float, set_id: int = -1) -> None:
         self._rows.setdefault(episode_id, []).append((decision_index, actor, critic, mask, action, old_logp, set_id))
@@ -133,7 +134,30 @@ class Builder:
             "episode": episode, "terminal_return": terminal_return, "end_reason": end_reason, "engine_decisions": engine_decisions,
         }  # fmt: skip
 
+    def add_payload(self, payload: dict, episodes: dict[int, object]) -> None:
+        """Ingest one complete parallel-worker payload without per-row views.
+
+        The payload remains one compact group of arrays until final assembly.
+        This avoids retaining a Python tuple plus feature/mask views for every
+        decision received from a worker; completion order is still discarded.
+        """
+        if self._rows:
+            raise ValueError("cannot mix row-wise and bulk rollout ingestion")
+        for i, eid in enumerate(payload["episode_id"].tolist()):
+            eid = int(eid)
+            if eid not in episodes:
+                raise ValueError(f"worker returned unassigned episode {eid}")
+            self.finish_episode(
+                episodes[eid],
+                float(payload["terminal_return"][i]),
+                payload["end_reason"][i],
+                int(payload["engine_decisions"][i]),
+            )
+        self._payloads.append(payload)
+
     def finish(self, expected: int | None = None) -> Rollout:
+        if self._payloads:
+            return self._finish_payloads(expected)
         ids = sorted(self._episodes)
         if expected is not None and len(ids) != expected:
             raise ValueError(f"{len(ids)} episodes completed, {expected} were assigned")
@@ -181,6 +205,73 @@ class Builder:
             engine_decisions=np.asarray([m["engine_decisions"] for m in meta], dtype=np.int32),
             learner_decisions=np.asarray(counts, dtype=np.int32),
             offset=np.asarray(offsets, dtype=np.int64),
+        )
+        out.validate()
+        return out
+
+    def _finish_payloads(self, expected: int | None) -> Rollout:
+        """Assemble bulk worker arrays once, in logical episode order."""
+        ids = sorted(self._episodes)
+        if expected is not None and len(ids) != expected:
+            raise ValueError(f"{len(ids)} episodes completed, {expected} were assigned")
+        locations: dict[int, tuple[dict, int]] = {}
+        for payload in self._payloads:
+            for i, eid in enumerate(payload["episode_id"].tolist()):
+                eid = int(eid)
+                if eid in locations:
+                    raise ValueError(f"episode {eid} was returned in two payloads")
+                locations[eid] = payload, i
+        if set(locations) != set(ids):
+            raise ValueError("bulk payload episodes do not match completed episodes")
+
+        counts = [int(locations[eid][0]["learner_decisions"][locations[eid][1]]) for eid in ids]
+        pieces: dict[str, list[np.ndarray]] = {
+            name: [] for name in (
+                "tok", "col", "glob", "ctok", "ccol", "cglob", "masks",
+                "actions", "old_logp", "decision_index", "set_id",
+            )
+        }
+        for eid in ids:
+            payload, i = locations[eid]
+            start, n = int(payload["offset"][i]), int(payload["learner_decisions"][i])
+            sl = slice(start, start + n)
+            for name in pieces:
+                pieces[name].append(payload[name][sl])
+
+        def joined(name: str, empty: np.ndarray) -> np.ndarray:
+            return np.concatenate(pieces[name], axis=0) if pieces[name] else empty
+
+        lay = self.actor_spec.layout
+        actor = Features(
+            joined("tok", np.zeros((0, lay.n_tokens, self.actor_spec.tok_width), np.float32)),
+            joined("col", np.zeros((0, lay.colors, self.actor_spec.col_width), np.float32)),
+            joined("glob", np.zeros((0, self.actor_spec.glob_width), np.float32)),
+        )
+        critic = Features(
+            joined("ctok", np.zeros((0, lay.n_tokens, self.critic_spec.tok_width), np.float32)),
+            joined("ccol", np.zeros((0, lay.colors, self.critic_spec.col_width), np.float32)),
+            joined("cglob", np.zeros((0, self.critic_spec.glob_width), np.float32)),
+        )
+        meta = [self._episodes[eid] for eid in ids]
+        out = Rollout(
+            actor_spec=self.actor_spec, critic_spec=self.critic_spec, behavior_version=self.behavior_version,
+            actor=actor, critic=critic,
+            masks=joined("masks", np.zeros((0, self.actor_spec.rs.num_actions), bool)),
+            actions=joined("actions", np.zeros(0, np.int32)),
+            old_logp=joined("old_logp", np.zeros(0, np.float32)),
+            episode=np.repeat(np.arange(len(ids), dtype=np.int32), counts) if ids else np.zeros(0, np.int32),
+            decision_index=joined("decision_index", np.zeros(0, np.int32)),
+            set_id=joined("set_id", np.zeros(0, np.int64)),
+            episode_id=np.asarray(ids, dtype=np.int64),
+            deal_seed=np.asarray([m["episode"].deal_seed for m in meta], dtype=np.int64),
+            opponent=tuple(m["episode"].opponent for m in meta),
+            seat=np.asarray([m["episode"].seat for m in meta], dtype=np.int8),
+            cycle=np.asarray([m["episode"].cycle for m in meta], dtype=np.int32),
+            terminal_return=np.asarray([m["terminal_return"] for m in meta], dtype=np.float32),
+            end_reason=tuple(m["end_reason"] for m in meta),
+            engine_decisions=np.asarray([m["engine_decisions"] for m in meta], dtype=np.int32),
+            learner_decisions=np.asarray(counts, dtype=np.int32),
+            offset=np.cumsum(np.asarray([0, *counts[:-1]], dtype=np.int64)),
         )
         out.validate()
         return out

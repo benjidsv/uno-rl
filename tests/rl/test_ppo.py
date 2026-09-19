@@ -206,6 +206,9 @@ def test_update_reports_steps_epochs_and_kl_and_fits_the_critic_to_completion():
     assert stats.critic_epochs == 4, "critic fitting must complete even if actor epochs stop"
     assert stats.actor_steps > 0 and stats.critic_steps > 0
     assert stats.kl_per_epoch and stats.approx_kl >= 0.0
+    assert stats.critic_value_seconds > 0
+    assert stats.actor_update_seconds > 0
+    assert stats.critic_update_seconds > 0
 
 
 def test_update_is_reproducible_given_the_same_streams():

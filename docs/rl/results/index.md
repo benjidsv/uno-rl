@@ -1,7 +1,7 @@
 # RL results index
 
-**Status, 2026-09-18:** no UNO v5 learner results yet. Phase 1 exact-toy validation
-is next.
+**Status, 2026-09-19:** exact-toy gates and the corrected M1 systems pilot are
+complete. There is no interpreted full-UNO learner-strength result yet.
 
 This file is the canonical headline ledger for learned-policy measurements. The
 Steps 1-10 baselines and foundation measurements remain in the
@@ -22,3 +22,15 @@ large tables here.
 
 Each entry should state the question, headline result, decision, and link to the
 semantic experiment file containing configuration and provenance.
+
+## Systems
+
+- [Stage 6 M1 systems pilot](stage6-m1-systems.md) — selected one-process,
+  64-live-game/one-thread collection followed by four-thread CPU PPO; conservative
+  planning rate 140 learner decisions/s, not a strength claim.
+
+## Preregistered diagnostics
+
+- [Stage 7 PPO minibatch calibration](stage7-minibatch-calibration.md) — pending
+  frozen-policy compute sweep and, only for a qualifying candidate, a matched
+  five-seed short learning check at equal wall time and equal fresh data.

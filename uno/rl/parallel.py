@@ -14,9 +14,11 @@ streams (`uno.rl.streams`), the coordinator reassembles in logical ID order, and
 `tests/rl/test_parallel.py` asserts that 1 worker and N workers produce the same
 rollout. Worker count is an execution setting, not a data-allocation setting.
 
-Transfers are plain contiguous arrays, one chunk per bundle, bounded by the bundle
-size. A shared-memory buffer pool is a later optimization to make only if a
-measured transfer cost justifies it; no such measurement exists yet.
+Transfers are explicit serialized array payloads, one chunk per bundle. The
+result queue is bounded to one pending payload per worker, and the coordinator
+records serialization, backpressure, waiting, deserialization, byte volume and
+assembly separately. A shared-memory buffer pool remains a measured optimization,
+not an assumed requirement.
 
 **Failure handling.** A bundle whose worker died is retried -- in the coordinator,
 with the same logical streams, so the retry produces the same episodes. Duplicate
@@ -28,6 +30,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
+import pickle
 import queue
 import time
 from dataclasses import dataclass
@@ -36,7 +39,7 @@ import torch
 
 from uno.game.rules import NAMED
 from uno.rl.collect import Stats, collect
-from uno.rl.features import Features, spec
+from uno.rl.features import spec
 from uno.rl.manifest import Manifest
 from uno.rl.model import Actor
 from uno.rl.opponents import league
@@ -53,7 +56,7 @@ def _payload(rollout: Rollout) -> dict:
         "tok": rollout.actor.tok, "col": rollout.actor.col, "glob": rollout.actor.glob,
         "ctok": rollout.critic.tok, "ccol": rollout.critic.col, "cglob": rollout.critic.glob,
         "masks": rollout.masks, "actions": rollout.actions, "old_logp": rollout.old_logp,
-        "decision_index": rollout.decision_index, "episode": rollout.episode,
+        "decision_index": rollout.decision_index, "episode": rollout.episode, "set_id": rollout.set_id,
         "episode_id": rollout.episode_id, "terminal_return": rollout.terminal_return,
         "end_reason": rollout.end_reason, "engine_decisions": rollout.engine_decisions,
         "learner_decisions": rollout.learner_decisions, "offset": rollout.offset,
@@ -61,14 +64,8 @@ def _payload(rollout: Rollout) -> dict:
 
 
 def _merge(builder: Builder, payload: dict, episodes: dict) -> None:
-    """Add a bundle's rows and episodes to the coordinator's builder."""
-    for i, eid in enumerate(payload["episode_id"].tolist()):
-        start, n = int(payload["offset"][i]), int(payload["learner_decisions"][i])
-        for j in range(start, start + n):
-            actor = Features(payload["tok"][j : j + 1], payload["col"][j : j + 1], payload["glob"][j : j + 1])
-            critic = Features(payload["ctok"][j : j + 1], payload["ccol"][j : j + 1], payload["cglob"][j : j + 1])
-            builder.add_decision(eid, int(payload["decision_index"][j]), actor, critic, payload["masks"][j], int(payload["actions"][j]), float(payload["old_logp"][j]))
-        builder.finish_episode(episodes[eid], float(payload["terminal_return"][i]), payload["end_reason"][i], int(payload["engine_decisions"][i]))
+    """Add a whole bundle without retaining one set of views per decision."""
+    builder.add_payload(payload, episodes)
 
 
 @dataclass(frozen=True)
@@ -99,15 +96,22 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
         _, version, state = message
         actor.load_state_dict(state)
         actor.eval()
+        queue_put_seconds = 0.0
         while True:
             item = tasks.get()
             if item is None:
-                results.put(("done", version, None, None))
+                results.put(("done", version, None, queue_put_seconds))
                 break
             bundle_id, episodes = item
             sub = Manifest(-1, tuple(episodes), (), 0)
             rollout, stats = collect(sub, policy, critic_spec, opponents, cfg.training_seed, version, cfg.live_games)
-            results.put(("bundle", bundle_id, _payload(rollout), stats))
+            started = time.perf_counter()
+            payload = pickle.dumps(_payload(rollout), protocol=pickle.HIGHEST_PROTOCOL)
+            stats.serialization_seconds = time.perf_counter() - started
+            started = time.perf_counter()
+            results.put(("bundle", bundle_id, payload, stats))
+            queue_put_seconds += time.perf_counter() - started
+            del rollout, payload
 
 
 class ParallelCollector:
@@ -117,7 +121,10 @@ class ParallelCollector:
         self.cfg, self.workers, self.bundle = cfg, workers, bundle
         self._ctx = mp.get_context("spawn")
         self._tasks = self._ctx.Queue()
-        self._results = self._ctx.Queue()
+        # One queued payload per worker bounds the coordinator-side backlog. A
+        # worker that outruns ingestion blocks here instead of allowing rollout
+        # arrays and multiprocessing serialization buffers to grow without limit.
+        self._results = self._ctx.Queue(maxsize=max(1, workers))
         self._ctl = [self._ctx.Queue() for _ in range(workers)]
         self._procs = [self._ctx.Process(target=_worker, args=(cfg, self._tasks, self._results, self._ctl[i]), daemon=True) for i in range(workers)]
         for p in self._procs:
@@ -160,17 +167,27 @@ class ParallelCollector:
         finished_workers = 0
         deadline = time.perf_counter() + timeout
         while finished_workers < len(self._procs):
+            wait_started = time.perf_counter()
             try:
                 kind, a, payload, worker_stats = self._results.get(timeout=1.0)
             except queue.Empty:
+                stats.result_queue_wait_seconds += time.perf_counter() - wait_started
                 # A dead pool would otherwise be waited on for the whole timeout.
                 if not any(p.is_alive() for p in self._procs) or time.perf_counter() > deadline:
                     break
                 continue
+            stats.result_queue_wait_seconds += time.perf_counter() - wait_started
             if kind == "done":
                 finished_workers += 1
+                stats.result_queue_put_seconds += float(worker_stats)
                 continue
-            _merge(builder, payload, by_id)
+            stats.transfer_bytes += len(payload)
+            started = time.perf_counter()
+            decoded = pickle.loads(payload)
+            stats.deserialization_seconds += time.perf_counter() - started
+            started = time.perf_counter()
+            _merge(builder, decoded, by_id)
+            stats.merge_seconds += time.perf_counter() - started
             outstanding.discard(a)
             _accumulate(stats, worker_stats)
 
@@ -186,7 +203,10 @@ class ParallelCollector:
                 _accumulate(stats, worker_stats)
         stats.seconds = time.perf_counter() - t0
         stats.retried_bundles = len(retried)
-        return builder.finish(expected=len(manifest)), stats
+        started = time.perf_counter()
+        rollout = builder.finish(expected=len(manifest))
+        stats.merge_seconds += time.perf_counter() - started
+        return rollout, stats
 
 
 def _accumulate(total: Stats, part: Stats) -> None:
@@ -197,7 +217,12 @@ def _accumulate(total: Stats, part: Stats) -> None:
     total.inference_rows += part.inference_rows
     total.batch_sizes += part.batch_sizes
     total.drain_seconds = max(total.drain_seconds, part.drain_seconds)
+    total.simulation_seconds += part.simulation_seconds
+    total.feature_seconds += part.feature_seconds
+    total.inference_seconds += part.inference_seconds
+    total.assembly_seconds += part.assembly_seconds
     total.worker_seconds += part.seconds
+    total.serialization_seconds += part.serialization_seconds
     for k, v in part.ends.items():
         total.ends[k] = total.ends.get(k, 0) + v
 

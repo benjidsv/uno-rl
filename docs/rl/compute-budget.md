@@ -1,12 +1,14 @@
-# Compute budget — open planning estimates
+# Compute budget — measured M1 pilot and planning estimates
 
-**Status, 2026-09-18:** a simulation/inference hardware pilot is measured on the
-Mac M1 Pro (below); no PPO update, real feature extraction, or the actual
-structured/GRU encoder exists yet, so there is still no end-to-end learner rate.
-These remain workload calculations, not promised training times or required
-epochs. Useful data volume and all budget caps remain open. Measure a bounded
-pilot on any other candidate machine the same way before committing to the
-multi-seed runs in the [plan](plan.md).
+**Status, 2026-09-19:** the corrected Stage 6 pass selected the single-process
+collector with 64 live games and one collection Torch thread, followed by CPU PPO
+with four Torch threads and the unchanged minibatch 512. CPU-4, CPU-6 and
+synchronized MPS were within 5% end to end, so the tie went to CPU-4. The
+conservative planning rate remains about 140 learner decisions/s before
+production-scale evaluation; see the
+[systems result](results/stage6-m1-systems.md). This freezes an execution setting,
+not a data requirement, learning claim, PPO hyperparameter optimum, or recurrent/C
+budget.
 
 ## Units and candidate PPO workload
 
@@ -60,6 +62,16 @@ Measure collection and update time separately as well. For example, if collectio
 runs at `Rc` learner decisions/s and an update takes `Tu` seconds, then
 `time = N/Rc + ceil(N/8192)*Tu`, plus evaluation and startup. Do not double-count
 update cost when using an already end-to-end rate.
+
+## Measured M1 conversion for B
+
+At the conservative selected-setting rate of 140 learner decisions/s, excluding a
+production-sized evaluation budget, 100k decisions cost about 11.9 minutes, 1M
+about 1.98 hours, and 10M about 19.8 hours per seed. The approximately
+ten-minute integrated health run achieved 80,485 decisions in 527.6 active
+seconds, but its small DEV panel and short duration do not justify replacing the
+conservative planning rate. These are resource conversions, not convergence
+forecasts; Stage 7 still needs its explicit data/time budget.
 
 ## Measured pilot: Mac M1 Pro, 2026-09-18
 
@@ -159,9 +171,9 @@ predeclare extension/stop rules. Plateauing DEV score triggers diagnosis before
 allocating ten times more data. There is currently no defensible estimate of
 "epochs until strong UNO": data requirements are one of the first measurements.
 
-The pilot above covers simulation and a synthetic network proxy on one machine.
-Still open: real feature-tensor construction cost and memory, the actual
-structured/GRU encoder's throughput (versus the plain-MLP proxy), true update
-time inside a PPO loop, checkpoint size/load time, recurrent replay/burn-in
-cost, teacher queries/s, and the same measurements on any other candidate
-machine.
+The historical hardware pilot above covers simulation and a synthetic network
+proxy on one machine. The first real-pipeline systems pass separately established
+that the structured actor/critic and PPO update are much heavier. Still open are
+the corrected parallel scaling and memory measurements, checkpoint size/load
+time, recurrent replay/burn-in cost, teacher queries/s, and the same measurements
+on any other candidate machine.

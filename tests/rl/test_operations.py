@@ -22,7 +22,7 @@ from uno.rl import checkpoint as ckpt
 from uno.rl import evaluate as ev
 from uno.rl import features as F
 from uno.rl import manifest as mf
-from uno.rl.config import Config, Optim
+from uno.rl.config import Collection, Config, Evaluation, Optim
 from uno.rl.opponents import league, league_hash
 from uno.rl.policy import ActorPolicy
 from uno.rl.track import Tracker
@@ -75,6 +75,42 @@ def test_checkpoint_refuses_a_different_schema_or_configuration(tmp_path):
     retuned = make_run(tmp_path / "lr", optim=Optim(actor_lr=1e-2))
     with pytest.raises(ValueError, match="configuration"):
         ckpt.restore(payload, retuned.config, retuned.actor, retuned.critic)
+
+
+def test_completed_stage6_configuration_hash_remains_resume_compatible():
+    """Runtime queue chunking must not silently invalidate existing checkpoints."""
+    cfg = Config(
+        ruleset="FULL_UNO",
+        arm=F.ARM_B,
+        training_seed=0,
+        data_cap=80_000,
+        device="cpu",
+        collection=Collection(
+            games_per_cell=64, live_games_per_worker=64, workers=1
+        ),
+        evaluation=Evaluation(deals_per_cell=16),
+    )
+    assert cfg.hash == "564a372b249cbd0a"
+
+
+def test_iteration_uses_and_restores_runtime_thread_budgets(tmp_path):
+    previous = torch.get_num_threads()
+    run = make_run(
+        tmp_path,
+        collection=Collection(games_per_cell=1, live_games_per_worker=4),
+    )
+    run.execution = {"collection_torch_threads": 1, "update_torch_threads": 2}
+    stats, timings = iteration(run)
+    assert timings["collection_torch_threads"] == 1
+    assert timings["update_torch_threads"] == 2
+    assert timings["update_fresh_decisions_per_s"] > 0
+    assert timings["actor_presentations"] == run.progress.learner_decisions * stats.actor_epochs
+    assert timings["critic_presentations"] == run.progress.learner_decisions * stats.critic_epochs
+    assert timings["actor_presentations_per_s"] > 0
+    assert timings["critic_presentations_per_s"] > 0
+    assert timings["actor_steps"] == stats.actor_steps
+    assert timings["critic_steps"] == stats.critic_steps
+    assert torch.get_num_threads() == previous
 
 
 def test_actor_export_excludes_the_critic_and_replays_the_same_policy(tmp_path):

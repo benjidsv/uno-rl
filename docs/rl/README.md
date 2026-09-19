@@ -10,15 +10,20 @@ comparison.
 
 ## Next work
 
-Stage 6, the per-machine systems pilot of [pipeline-plan.md](pipeline-plan.md)
-section 7: worker count, live games per worker and update device, measured end to
-end, before a full-UNO run's budget is frozen. Stages 7-10 (full-UNO B, the A
-ablation, the recurrent C comparison and the frozen report card) follow it.
+Stage 6 is complete for the M1: use the single-process collector with 64 live
+games and one collection Torch thread, then CPU PPO with four Torch threads at
+the unchanged 512-decision minibatch. The corrected sweep found CPU-4, CPU-6,
+and synchronized MPS within 5% end to end; the tie goes to CPU-4. On the longer
+integrated run, even free collection could not meet the plan's 10% parallel-
+scaling threshold. See the [Stage 6 result](results/stage6-m1-systems.md). Next is
+the preregistered [Stage 7 minibatch calibration](results/stage7-minibatch-calibration.md),
+then Stage 7's explicitly budgeted full-UNO B diagnostic. Stages 8-10 (the A ablation,
+recurrent C comparison and frozen report card) follow it.
 PIMC compression is secondary, with known correctness issues to repair before
 interpreting its gap. A distilled warm start is an option only if from-scratch RL
 later disappoints.
 
-Commands: `uv run uno rl shapes|smoke|train|resume` for the learner,
+Commands: `uv run uno rl shapes|smoke|systems|train|resume` for the learner,
 `uv run uno rl_toy gradient|tabular|neural|all` for the exact-toy gates.
 
 ## Read next

@@ -64,27 +64,59 @@ class Run:
     schedule: mf.DealSchedule = None
     eval_history: list[tuple[int, float]] = field(default_factory=list)
     lineage: dict = field(default_factory=dict)
+    execution: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         cfg = self.config
         rs = cfg.rs
         self.directory = Path(self.directory)
         torch.manual_seed(torch_seed(cfg.training_seed, INIT))
-        self.actor = self.actor or Actor(spec(rs, cfg.arm), cfg.width, cfg.blocks).to(cfg.device)
-        self.critic = self.critic or Critic(spec(rs, "CRITIC"), cfg.width, cfg.blocks).to(cfg.device)
+        self.actor = self.actor or Actor(spec(rs, cfg.arm), cfg.width, cfg.blocks).to(
+            cfg.device
+        )
+        self.critic = self.critic or Critic(
+            spec(rs, "CRITIC"), cfg.width, cfg.blocks
+        ).to(cfg.device)
         o = cfg.optim
-        self.actor_opt = self.actor_opt or torch.optim.Adam(self.actor.parameters(), lr=o.actor_lr, betas=o.betas, eps=o.eps, weight_decay=o.weight_decay)
-        self.critic_opt = self.critic_opt or torch.optim.Adam(self.critic.parameters(), lr=o.critic_lr, betas=o.betas, eps=o.eps, weight_decay=o.weight_decay)
+        self.actor_opt = self.actor_opt or torch.optim.Adam(
+            self.actor.parameters(),
+            lr=o.actor_lr,
+            betas=o.betas,
+            eps=o.eps,
+            weight_decay=o.weight_decay,
+        )
+        self.critic_opt = self.critic_opt or torch.optim.Adam(
+            self.critic.parameters(),
+            lr=o.critic_lr,
+            betas=o.betas,
+            eps=o.eps,
+            weight_decay=o.weight_decay,
+        )
         self.schedule = self.schedule or mf.DealSchedule(cfg.training_seed)
         self.opponents = league(rs, self.league_name)
-        self.panel = mf.panel(list(self.opponents), cfg.evaluation.deals_per_cell, cfg.evaluation.panel_start)
+        self.panel = mf.panel(
+            list(self.opponents),
+            cfg.evaluation.deals_per_cell,
+            cfg.evaluation.panel_start,
+        )
 
     @property
     def policy(self) -> ActorPolicy:
-        return ActorPolicy(spec(self.config.rs, self.config.arm), self.actor, self.config.optim.temperature)
+        return ActorPolicy(
+            spec(self.config.rs, self.config.arm),
+            self.actor,
+            self.config.optim.temperature,
+            self.config.device,
+        )
 
 
-def start_tracker(run: Run, study_id: str = "pilot", phase: str = "diagnostic", kind: str = "train", store_root=None) -> Tracker:
+def start_tracker(
+    run: Run,
+    study_id: str = "pilot",
+    phase: str = "diagnostic",
+    kind: str = "train",
+    store_root=None,
+) -> Tracker:
     cfg = run.config
     tags = {
         "study_id": study_id, "arm": cfg.arm, "phase": phase, "seed": cfg.training_seed,
@@ -95,10 +127,17 @@ def start_tracker(run: Run, study_id: str = "pilot", phase: str = "diagnostic", 
         "league_hash": league_hash(cfg.rs, run.league_name), "actor_schema": spec(cfg.rs, cfg.arm).hash,
         "critic_schema": spec(cfg.rs, "CRITIC").hash, "shapes": str(shapes(spec(cfg.rs, cfg.arm), spec(cfg.rs, "CRITIC"), cfg.width, cfg.blocks)),
         **provenance(cfg.hash),
+        **{f"execution_{k}": v for k, v in run.execution.items()},
     }  # fmt: skip
     if run.lineage:  # a resumed lineage records where it came from and what it replays
         params.update({f"lineage_{k}": v for k, v in run.lineage.items()})
-    tracker = Tracker(run.directory / "tracking", run_name=f"{cfg.arm}-seed{cfg.training_seed}", tags=tags, params=params, store_root=store_root)
+    tracker = Tracker(
+        run.directory / "tracking",
+        run_name=f"{cfg.arm}-seed{cfg.training_seed}",
+        tags=tags,
+        params=params,
+        store_root=store_root,
+    )
     _write_run_manifest(run, tracker)
     return tracker
 
@@ -114,10 +153,20 @@ def _write_run_manifest(run: Run, tracker: Tracker) -> None:
         "league": run.league_name,
         "league_members": list(run.opponents),
         "league_hash": league_hash(cfg.rs, run.league_name),
-        "partitions": {"train": [mf.TRAIN_DEALS.start, mf.TRAIN_DEALS.stop], "panel": [mf.PANEL_DEALS.start, mf.PANEL_DEALS.stop], "diagnostic": [mf.DIAGNOSTIC_DEALS.start, mf.DIAGNOSTIC_DEALS.stop]},
-        "panel": {"cells": [list(c) for c in run.panel.cells], "deals_per_cell": run.panel.games_per_cell, "first_deal": panel_deals[0], "last_deal": panel_deals[-1]},
+        "partitions": {
+            "train": [mf.TRAIN_DEALS.start, mf.TRAIN_DEALS.stop],
+            "panel": [mf.PANEL_DEALS.start, mf.PANEL_DEALS.stop],
+            "diagnostic": [mf.DIAGNOSTIC_DEALS.start, mf.DIAGNOSTIC_DEALS.stop],
+        },
+        "panel": {
+            "cells": [list(c) for c in run.panel.cells],
+            "deals_per_cell": run.panel.games_per_cell,
+            "first_deal": panel_deals[0],
+            "last_deal": panel_deals[-1],
+        },
         "deal_schedule": run.schedule.state,
         "lineage": run.lineage,
+        "execution": run.execution,
         "provenance": provenance(cfg.hash),
     }
     path = run.directory / "run_manifest.json"
@@ -126,22 +175,115 @@ def _write_run_manifest(run: Run, tracker: Tracker) -> None:
     tracker.artifact(path)
 
 
-def iteration(run: Run, collector=None) -> tuple[ppo.UpdateStats, dict]:
+def iteration(
+    run: Run,
+    collector=None,
+    collection_threads: int | None = None,
+    update_threads: int | None = None,
+) -> tuple[ppo.UpdateStats, dict]:
+    """One iteration with optional runtime-only CPU thread budgets."""
+    if collection_threads is None:
+        collection_threads = run.execution.get("collection_torch_threads")
+    if update_threads is None:
+        update_threads = run.execution.get("update_torch_threads")
+    previous_threads = torch.get_num_threads()
+    try:
+        if collection_threads is not None:
+            torch.set_num_threads(collection_threads)
+        return _iteration(run, collector, update_threads)
+    finally:
+        if torch.get_num_threads() != previous_threads:
+            torch.set_num_threads(previous_threads)
+
+
+def _synchronize_device(device: str) -> None:
+    """Make accelerator stage timings include queued device work."""
+    if device == "mps":
+        torch.mps.synchronize()
+    elif device.startswith("cuda"):
+        torch.cuda.synchronize(torch.device(device))
+
+
+def _iteration(run: Run, collector, update_threads: int | None) -> tuple[ppo.UpdateStats, dict]:
     """One complete synchronous iteration. Returns its update stats and timings."""
     cfg = run.config
     rs = cfg.rs
     critic_spec = spec(rs, "CRITIC")
     t0 = time.perf_counter()
 
-    manifest, next_id = mf.build(run.progress.update, list(run.opponents), run.schedule, cfg.collection.games_per_cell, run.progress.next_episode_id)
+    manifest, next_id = mf.build(
+        run.progress.update,
+        list(run.opponents),
+        run.schedule,
+        cfg.collection.games_per_cell,
+        run.progress.next_episode_id,
+    )
     if collector is None:
-        rollout, cstats = collect(manifest, run.policy, critic_spec, run.opponents, cfg.training_seed, run.progress.update, cfg.collection.live_games_per_worker)
+        # Collection is deliberately CPU-local even when the coordinator updates
+        # on MPS/CUDA.  Do not let ActorPolicy move the optimizer's model back to
+        # CPU: that makes the subsequent device update invalid.  The parallel
+        # collector already receives this equivalent CPU replica via state_dict.
+        if cfg.device == "cpu":
+            policy = run.policy
+        else:
+            actor_cpu = Actor(spec(rs, cfg.arm), cfg.width, cfg.blocks)
+            actor_cpu.load_state_dict({
+                k: v.detach().cpu() for k, v in run.actor.state_dict().items()
+            })
+            policy = ActorPolicy(
+                spec(rs, cfg.arm), actor_cpu, cfg.optim.temperature, "cpu"
+            )
+        rollout, cstats = collect(
+            manifest,
+            policy,
+            critic_spec,
+            run.opponents,
+            cfg.training_seed,
+            run.progress.update,
+            cfg.collection.live_games_per_worker,
+        )
     else:
-        rollout, cstats = collector.collect(manifest, run.actor, critic_spec, run.progress.update)
+        rollout, cstats = collector.collect(
+            manifest, run.actor, critic_spec, run.progress.update
+        )
+    _synchronize_device(cfg.device)
     collected = time.perf_counter()
 
-    stats = ppo.update(run.actor, run.critic, run.actor_opt, run.critic_opt, rollout, cfg.optim, cfg.training_seed, run.progress.update, cfg.device)
+    collection_threads_used = torch.get_num_threads()
+    if update_threads is not None:
+        torch.set_num_threads(update_threads)
+    update_threads_used = torch.get_num_threads()
+    stats = ppo.update(
+        run.actor,
+        run.critic,
+        run.actor_opt,
+        run.critic_opt,
+        rollout,
+        cfg.optim,
+        cfg.training_seed,
+        run.progress.update,
+        cfg.device,
+    )
+    _synchronize_device(cfg.device)
     updated = time.perf_counter()
+
+    if cstats.batch_sizes:
+        batch_sizes = np.asarray(cstats.batch_sizes)
+        batch_distribution = {
+            "inference_batch_calls": len(batch_sizes),
+            "inference_batch_min": int(batch_sizes.min()),
+            "inference_batch_p50": float(np.quantile(batch_sizes, 0.50)),
+            "inference_batch_p90": float(np.quantile(batch_sizes, 0.90)),
+            "inference_batch_max": int(batch_sizes.max()),
+        }
+    else:
+        batch_distribution = {
+            "inference_batch_calls": 0,
+            "inference_batch_min": 0,
+            "inference_batch_p50": 0.0,
+            "inference_batch_p90": 0.0,
+            "inference_batch_max": 0,
+        }
 
     run.progress.update += 1
     run.progress.next_episode_id = next_id
@@ -150,13 +292,37 @@ def iteration(run: Run, collector=None) -> tuple[ppo.UpdateStats, dict]:
     run.progress.engine_decisions += int(rollout.engine_decisions.sum())
     run.progress.optimizer_steps += stats.actor_steps + stats.critic_steps
     run.progress.deal_schedule = run.schedule.state
+    update_seconds = updated - collected
+    actor_presentations = rollout.n_decisions * stats.actor_epochs
+    critic_presentations = rollout.n_decisions * stats.critic_epochs
     timings = {
-        "collect_s": collected - t0, "update_s": updated - collected, "iteration_s": updated - t0,
+        "collect_s": collected - t0, "update_s": update_seconds, "iteration_s": updated - t0,
+        "update_fresh_decisions_per_s": rollout.n_decisions / update_seconds if update_seconds else 0.0,
+        "actor_presentations": actor_presentations, "critic_presentations": critic_presentations,
+        "actor_presentations_per_s": actor_presentations / stats.actor_update_seconds if stats.actor_update_seconds else 0.0,
+        "critic_presentations_per_s": critic_presentations / stats.critic_update_seconds if stats.critic_update_seconds else 0.0,
+        "actor_steps": stats.actor_steps, "critic_steps": stats.critic_steps,
         "collect_decisions_per_s": cstats.decisions_per_second, "mean_inference_batch": cstats.mean_batch,
         "drain_s": cstats.drain_seconds, "rollout_bytes": rollout.nbytes, "retried_bundles": cstats.retried_bundles,
+        "worker_s": cstats.worker_seconds, "simulation_s": cstats.simulation_seconds,
+        "feature_s": cstats.feature_seconds, "actor_inference_s": cstats.inference_seconds,
+        "worker_assembly_s": cstats.assembly_seconds, "serialization_s": cstats.serialization_seconds,
+        "result_queue_put_s": cstats.result_queue_put_seconds,
+        "result_queue_wait_s": cstats.result_queue_wait_seconds,
+        "deserialization_s": cstats.deserialization_seconds, "coordinator_assembly_s": cstats.merge_seconds,
+        "transfer_bytes": cstats.transfer_bytes,
+        "critic_values_s": stats.critic_value_seconds, "actor_update_s": stats.actor_update_seconds,
+        "critic_update_s": stats.critic_update_seconds,
+        "collection_torch_threads": collection_threads_used,
+        "update_torch_threads": update_threads_used,
+        **batch_distribution,
     }  # fmt: skip
     per_cell = _cell_scores(rollout)
-    return stats, {**timings, **per_cell, **{f"end_{k}": v for k, v in cstats.ends.items()}}
+    return stats, {
+        **timings,
+        **per_cell,
+        **{f"end_{k}": v for k, v in cstats.ends.items()},
+    }
 
 
 def _cell_scores(rollout) -> dict:
@@ -165,10 +331,16 @@ def _cell_scores(rollout) -> dict:
     scores = (rollout.terminal_return + 1.0) / 2.0
     for name in sorted(set(rollout.opponent)):
         for seat in (0, 1):
-            m = np.asarray([o == name for o in rollout.opponent]) & (rollout.seat == seat)
+            m = np.asarray([o == name for o in rollout.opponent]) & (
+                rollout.seat == seat
+            )
             if m.any():
                 out[f"train_score_{name}_s{seat}"] = float(scores[m].mean())
-    out["train_score"] = float(np.mean([v for k, v in out.items() if k.startswith("train_score_")])) if out else 0.0
+    out["train_score"] = (
+        float(np.mean([v for k, v in out.items() if k.startswith("train_score_")]))
+        if out
+        else 0.0
+    )
     return out
 
 
@@ -177,7 +349,9 @@ def evaluate_now(run: Run) -> ev.PanelResult:
     return ev.play_panel(run.panel, run.policy, run.opponents, run.config.training_seed)
 
 
-def train(run: Run, tracker: Tracker | None = None, collector=None, verbose: bool = True) -> dict:
+def train(
+    run: Run, tracker: Tracker | None = None, collector=None, verbose: bool = True
+) -> dict:
     """Run to the declared data or time cap, evaluating and checkpointing on schedule."""
     cfg = run.config
     tracker = tracker or run.tracker
@@ -188,7 +362,7 @@ def train(run: Run, tracker: Tracker | None = None, collector=None, verbose: boo
         run.progress.next_eval_at = eval_every
         first = evaluate_now(run)  # the initial policy is a scheduled evaluation point
         run.eval_history.append((0, first.mean))
-        _log_eval(run, tracker, first, 0)
+        _log_eval(run, tracker, first, 0, time.perf_counter() - started)
     overrun = 0.0
     iterations = []
     stop_reason = "data_cap"
@@ -207,6 +381,7 @@ def train(run: Run, tracker: Tracker | None = None, collector=None, verbose: boo
         metrics = {
             "update": run.progress.update, "games": run.progress.games, "engine_decisions": run.progress.engine_decisions,
             "optimizer_steps": run.progress.optimizer_steps, "active_seconds": run.progress.active_seconds,
+            "run_wall_seconds": time.perf_counter() - started,
             "surrogate": stats.surrogate, "critic_mse": stats.critic_mse, "explained_variance": stats.explained_variance,
             "entropy": stats.entropy, "approx_kl": stats.approx_kl, "clip_fraction": stats.clip_fraction,
             "max_abs_log_ratio": stats.max_abs_log_ratio, "actor_grad_norm": stats.actor_grad_norm,
@@ -219,13 +394,21 @@ def train(run: Run, tracker: Tracker | None = None, collector=None, verbose: boo
         if tracker:
             tracker.log(metrics, step=run.progress.learner_decisions)
         if verbose:
-            print(f"   update {run.progress.update:4d}  {run.progress.learner_decisions:>9,} dec  {stats}  train {extra.get('train_score', float('nan')):.3f}")
+            print(
+                f"   update {run.progress.update:4d}  {run.progress.learner_decisions:>9,} dec  {stats}  train {extra.get('train_score', float('nan')):.3f}"
+            )
 
         if run.progress.learner_decisions >= run.progress.next_eval_at:
             result = evaluate_now(run)
             run.eval_history.append((run.progress.update, result.mean))
-            _log_eval(run, tracker, result, run.progress.learner_decisions)
-            if run.progress.best_score is None or result.mean > run.progress.best_score + 1e-6:
+            _log_eval(
+                run, tracker, result, run.progress.learner_decisions,
+                time.perf_counter() - started,
+            )
+            if (
+                run.progress.best_score is None
+                or result.mean > run.progress.best_score + 1e-6
+            ):
                 run.progress.best_score = result.mean
                 run.progress.best_checkpoint = f"update{run.progress.update}"
                 _save(run, "best")
@@ -237,12 +420,16 @@ def train(run: Run, tracker: Tracker | None = None, collector=None, verbose: boo
             _save(run, "latest")
             last_save = time.perf_counter()
 
-    if cfg.time_cap_s is not None and time.perf_counter() - started > cfg.time_cap_s:
-        overrun = time.perf_counter() - started - cfg.time_cap_s
     final = evaluate_now(run)
     run.eval_history.append((run.progress.update, final.mean))
-    _log_eval(run, tracker, final, run.progress.learner_decisions)
+    _log_eval(
+        run, tracker, final, run.progress.learner_decisions,
+        time.perf_counter() - started,
+    )
     _save(run, "final")
+    wall_seconds = time.perf_counter() - started
+    if cfg.time_cap_s is not None:
+        overrun = max(0.0, wall_seconds - cfg.time_cap_s)
     best_update, best_score = ev.select(run.eval_history)
     summary = {
         "stop_reason": stop_reason,
@@ -252,24 +439,37 @@ def train(run: Run, tracker: Tracker | None = None, collector=None, verbose: boo
         "games": run.progress.games,
         "engine_decisions": run.progress.engine_decisions,
         "active_seconds": run.progress.active_seconds,
+        "wall_seconds": wall_seconds,
         "selected_update": best_update,
         "selected_score": best_score,
         "final_score": final.mean,
         "final_ci95": final.ci95,
         "behavior": final.behavior.as_dict(),
+        "execution": run.execution,
         "cells": {f"{n}_s{s}": v for (n, s), v in final.cell_means.items()},
     }
-    (run.directory / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
+    (run.directory / "summary.json").write_text(
+        json.dumps(summary, indent=2, default=str)
+    )
     if tracker:
         tracker.artifact(run.directory / "summary.json")
         tracker.finish()
     return summary
 
 
-def _log_eval(run: Run, tracker: Tracker | None, result: ev.PanelResult, step: int) -> None:
+def _log_eval(
+    run: Run, tracker: Tracker | None, result: ev.PanelResult, step: int,
+    run_wall_seconds: float,
+) -> None:
     if tracker is None:
         return
-    metrics = {"dev_league_mean": result.mean, "dev_se": result.standard_error, "dev_deals": len(result.deals)}
+    metrics = {
+        "dev_league_mean": result.mean,
+        "dev_se": result.standard_error,
+        "dev_deals": len(result.deals),
+        "active_seconds": run.progress.active_seconds,
+        "run_wall_seconds": run_wall_seconds,
+    }
     metrics.update({f"dev_{n}_s{s}": v for (n, s), v in result.cell_means.items()})
     metrics.update({f"dev_{k}": v for k, v in result.behavior.as_dict().items()})
     tracker.log(metrics, step=step)
@@ -277,13 +477,39 @@ def _log_eval(run: Run, tracker: Tracker | None, result: ev.PanelResult, step: i
 
 def _save(run: Run, label: str) -> dict:
     path = run.directory / "checkpoints" / f"{label}.pt"
-    lineage = {**run.lineage, "league": run.league_name, "label": label, "run_id": getattr(run.tracker, "run_id", None)}
-    manifest = ckpt.save(path, run.config, run.actor, run.critic, run.actor_opt, run.critic_opt, run.progress, lineage)
-    ckpt.export_actor(run.directory / "checkpoints" / f"{label}_actor.pt", run.config, run.actor, f"rl_{run.config.arm}_seed{run.config.training_seed}_{label}", run.progress)
+    lineage = {
+        **run.lineage,
+        "league": run.league_name,
+        "label": label,
+        "run_id": getattr(run.tracker, "run_id", None),
+    }
+    manifest = ckpt.save(
+        path,
+        run.config,
+        run.actor,
+        run.critic,
+        run.actor_opt,
+        run.critic_opt,
+        run.progress,
+        lineage,
+    )
+    ckpt.export_actor(
+        run.directory / "checkpoints" / f"{label}_actor.pt",
+        run.config,
+        run.actor,
+        f"rl_{run.config.arm}_seed{run.config.training_seed}_{label}",
+        run.progress,
+    )
     return manifest
 
 
-def resume(path: str | Path, config: Config, directory: str | Path, league_name: str = "rulebot", device: str | None = None) -> Run:
+def resume(
+    path: str | Path,
+    config: Config,
+    directory: str | Path,
+    league_name: str = "rulebot",
+    device: str | None = None,
+) -> Run:
     """Continue a lineage from a checkpoint, possibly on another machine.
 
     Device, worker count and artifact paths may change; anything that changes the
@@ -294,11 +520,29 @@ def resume(path: str | Path, config: Config, directory: str | Path, league_name:
     payload = ckpt.load(path)
     cfg = config if device is None else config.with_(device=device)
     run = Run(cfg, Path(directory), league_name)
-    progress = ckpt.restore(payload, cfg, run.actor, run.critic, run.actor_opt, run.critic_opt, cfg.device)
+    progress = ckpt.restore(
+        payload, cfg, run.actor, run.critic, run.actor_opt, run.critic_opt, cfg.device
+    )
     run.progress = progress
-    run.schedule = mf.DealSchedule.from_state(cfg.training_seed, progress.deal_schedule) if progress.deal_schedule else mf.DealSchedule(cfg.training_seed)
-    run.lineage = {"parent_run_id": payload.get("lineage", {}).get("run_id"), "parent_checkpoint": str(path), "resumed_at": time.time()}
+    run.schedule = (
+        mf.DealSchedule.from_state(cfg.training_seed, progress.deal_schedule)
+        if progress.deal_schedule
+        else mf.DealSchedule(cfg.training_seed)
+    )
+    run.lineage = {
+        "parent_run_id": payload.get("lineage", {}).get("run_id"),
+        "parent_checkpoint": str(path),
+        "resumed_at": time.time(),
+    }
     return run
 
 
-__all__ = ["CHECKPOINT_INTERVAL_S", "Run", "evaluate_now", "iteration", "resume", "start_tracker", "train"]
+__all__ = [
+    "CHECKPOINT_INTERVAL_S",
+    "Run",
+    "evaluate_now",
+    "iteration",
+    "resume",
+    "start_tracker",
+    "train",
+]

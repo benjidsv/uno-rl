@@ -38,6 +38,10 @@ def test_parallel_collection_equals_the_single_worker_reference():
         parallel, stats = pool.collect(manifest, actor, spc, behavior_version=7, timeout=120)
 
     assert stats.retried_bundles == 0
+    assert stats.transfer_bytes > parallel.nbytes
+    assert stats.serialization_seconds >= 0
+    assert stats.deserialization_seconds >= 0
+    assert stats.merge_seconds >= 0
     assert np.array_equal(reference.episode_id, parallel.episode_id)
     assert np.array_equal(reference.terminal_return, parallel.terminal_return)
     assert np.array_equal(reference.actions, parallel.actions)
