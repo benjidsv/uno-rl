@@ -313,6 +313,7 @@ def cmd_experiment(arm: str = ARM_A, seed: int = 0) -> None:
         optim_overrides={
             # EXPERIMENT - THOSE ARE NOT DEFAULTS AND MAY HAVE BEEN CHANGED OR BE CHANGED
             "entropy_coef": 0.01,
+            "normalize_advantages": True,
         },
     )
 
