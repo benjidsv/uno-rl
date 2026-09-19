@@ -22,9 +22,12 @@ for coarse quarter-budget monitoring. The trained final actor's 8,192-deal
 validation clearly established a 0.0593 paired deficit to Heuristic but narrowly
 missed the strict 0.005 half-width target; the sizing rule requests a final nested
 extension to 9,984 deals/cell. The one-hour B pilot and its diagnostic
-logging/resume follow-up are complete. Finish that precision extension if strict
-closure of the sizing protocol is still useful, then choose the next training
-intervention. The
+logging/resume follow-up are complete. The 9,984-deal extension is optional
+precision closure rather than an architecture gate. In the frozen
+[Stage 8 A/B ablation](results/stage8-a-ablation.md), A seed 0 was 0.01276 ahead
+of B on the direct paired diagnostic panel, but its interval crossed the
+predeclared one-point practical boundary. Complete matched seeds 1–4 before
+choosing an arm. The direct comparison panel is frozen at 5,248 deals/cell. The
 [minibatch calibration](results/stage7-minibatch-calibration.md) retained
 CPU-4/minibatch-512 without a learning follow-up. Stages 8-10 (the A ablation,
 recurrent C comparison and frozen report card) follow Stage 7.
@@ -32,7 +35,7 @@ PIMC compression is secondary, with known correctness issues to repair before
 interpreting its gap. A distilled warm start is an option only if from-scratch RL
 later disappoints.
 
-Commands: `uv run uno rl shapes|smoke|systems|devsize|pilot|train|resume` for the learner,
+Commands: `uv run uno rl shapes|smoke|systems|devsize|pilot|ablation|train|resume` for the learner,
 `uv run uno rl_toy gradient|tabular|neural|all` for the exact-toy gates.
 
 ## Read next
@@ -42,10 +45,11 @@ Commands: `uv run uno rl shapes|smoke|systems|devsize|pilot|train|resume` for th
 | agreed objective, pipeline, phase gates, and open choices | [plan.md](plan.md) |
 | execution plan the learner implements: topology, iteration, PPO, gates | [pipeline-plan.md](pipeline-plan.md) |
 | actor fields, symmetry, memory, critic/attacker boundaries | [observation-contract.md](observation-contract.md) |
+| metric names, units, weighting, aggregation, and uncertainty | [metrics_contract.md](metrics_contract.md) |
 | rough updates/epochs, conditional time estimates, pilot measurements | [compute-budget.md](compute-budget.md) |
 | reproduced readiness defects and review checks | [readiness-review.md](readiness-review.md) |
 | foundation handoff and established evidence | [starting-point.md](starting-point.md) |
-| learner measurements (none yet) | [results/index.md](results/index.md) |
+| learner measurements | [results/index.md](results/index.md) |
 | foundation maintenance | [foundation README](../foundations/README.md) |
 
 ## Active boundaries

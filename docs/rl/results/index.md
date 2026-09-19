@@ -48,3 +48,9 @@ semantic experiment file containing configuration and provenance.
   despite nearly universal actor gradient-norm clipping. Corrected counters show
   the former approximately 30% Draw metric was almost entirely forced drawing,
   not avoidable optional draws.
+- [Stage 8 A/B ablation](stage8-a-ablation.md) — A seed 0 completed 506,946
+  decisions and scored 0.45473 against B's 0.44197 on 8,192 directly paired
+  diagnostic deals/cell: `A - B = +0.01276`, nominal 95% CI
+  `[+0.00879, +0.01672]`. This excludes zero but crosses the predeclared
+  one-point practical boundary and contains no training-seed uncertainty. The
+  direct A/B panel is frozen at 5,248 deals/cell; matched seeds 1–4 remain.

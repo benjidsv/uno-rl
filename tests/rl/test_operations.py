@@ -296,8 +296,8 @@ def test_diagnostic_panel_stream_ids_do_not_change_when_it_is_extended():
 def test_panel_sizing_prefixes_concentrate_near_the_requested_maximum():
     from uno.experiments.rl import _panel_sizes
 
-    assert _panel_sizes(5_760) == (4_608, 5_184, 5_760)
-    assert _panel_sizes(256) == (205, 230, 256)
+    assert _panel_sizes(5_760) == (4_032, 4_896, 5_760)
+    assert _panel_sizes(256) == (179, 218, 256)
 
 
 def test_paired_difference_groups_the_cells_of_a_deal(tmp_path):
@@ -376,6 +376,29 @@ def test_pilot_command_freezes_the_one_hour_preset(monkeypatch):
         "minibatch": 512, "time_cap_s": 3_600, "evaluation_fraction": 0.25,
         "tracking_study_id": "stage7-full-uno-b-pilot", "tracking_kind": "pilot",
     }
+
+
+def test_ablation_command_freezes_the_equal_data_preset(monkeypatch):
+    from uno.experiments import rl as experiment
+
+    captured = {}
+    monkeypatch.setattr(experiment, "cmd_train", lambda **kwargs: captured.update(kwargs))
+    experiment.cmd_ablation(arm=F.ARM_A, seed=3)
+    assert captured == {
+        "ruleset": "FULL_UNO", "arm": F.ARM_A, "seed": 3, "cap": 500_000,
+        "workers": 1, "games_per_cell": 64, "deals_per_cell": 256,
+        "device": "cpu", "collection_threads": 1, "update_threads": 4,
+        "minibatch": 512, "time_cap_s": 7_200, "evaluation_fraction": 0.25,
+        "tracking_study_id": "stage8-a-b-ablation",
+        "tracking_kind": "ablation-data",
+    }
+
+
+def test_ablation_command_refuses_non_feed_forward_arms():
+    from uno.experiments import rl as experiment
+
+    with pytest.raises(SystemExit, match="must be A or B"):
+        experiment.cmd_ablation(arm=F.ARM_CRITIC, seed=0)
 
 
 def test_training_reuses_a_boundary_evaluation_as_the_final_result(tmp_path):

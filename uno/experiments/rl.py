@@ -7,6 +7,7 @@
 `uv run uno rl systems [RULESET] [ARM] [WORKERS] [LIVE] [DEVICE] [GAMES/CELL] [SAMPLES] [MINIBATCH] [COLLECTION_THREADS] [UPDATE_THREADS]`
 `uv run uno rl devsize [RULESET] [ARM] [SEED] [MAX_DEALS/CELL] [TARGET_95_HALFWIDTH] [TORCH_THREADS] [ACTOR_EXPORT]`
 `uv run uno rl pilot [SEED]`                     one-hour full-UNO B pilot preset
+`uv run uno rl ablation [ARM] [SEED]`            Stage 8 equal-data A/B preset
 
 `train` is a **diagnostic** command. It runs the synchronous loop of pipeline plan
 section 3 to a declared learner-decision cap, evaluating on the fixed DEV panel at
@@ -253,6 +254,34 @@ def cmd_pilot(seed: int = 0) -> None:
         evaluation_fraction=0.25,
         tracking_study_id="stage7-full-uno-b-pilot",
         tracking_kind="pilot",
+    )
+
+
+def cmd_ablation(arm: str = ARM_A, seed: int = 0) -> None:
+    """The frozen Stage 8 equal-data A/B representation comparison.
+
+    The two-hour wall cap is a safety bound, not the comparison budget. A valid
+    run reaches the 500,000-decision soft cap; a run stopped by time is incomplete
+    and must not be treated as equal-data evidence.
+    """
+    if arm not in (ARM_A, ARM_B):
+        raise SystemExit("the Stage 8 ablation arm must be A or B")
+    cmd_train(
+        ruleset="FULL_UNO",
+        arm=arm,
+        seed=seed,
+        cap=500_000,
+        workers=1,
+        games_per_cell=64,
+        deals_per_cell=256,
+        device="cpu",
+        collection_threads=1,
+        update_threads=4,
+        minibatch=512,
+        time_cap_s=7_200,
+        evaluation_fraction=0.25,
+        tracking_study_id="stage8-a-b-ablation",
+        tracking_kind="ablation-data",
     )
 
 
@@ -579,7 +608,7 @@ def cmd_systems(
 def _panel_sizes(max_deals: int) -> tuple[int, ...]:
     """Nested prefixes concentrated near an explicitly requested maximum.
 
-    Once a target panel size has been selected, nearby 80% and 90% prefixes are
+    Once a target panel size has been selected, nearby 70% and 85% prefixes are
     more useful for checking its precision boundary than the old quarter/half
     prefixes. Small panels may collapse duplicate rounded sizes, which is fine.
     """
@@ -933,6 +962,8 @@ def main(argv: list[str]) -> None:
             )
         case "pilot":
             cmd_pilot(*(f(x) for f, x in zip((int,), rest)))
+        case "ablation":
+            cmd_ablation(*(f(x) for f, x in zip((str, int), rest)))
         case "resume":
             cmd_resume(
                 rest[0],
@@ -959,5 +990,5 @@ def main(argv: list[str]) -> None:
             )
         case _:
             raise SystemExit(
-                f"unknown subcommand {what!r}; expected shapes, smoke, pilot, train, resume, systems or devsize"
+                f"unknown subcommand {what!r}; expected shapes, smoke, pilot, ablation, train, resume, systems or devsize"
             )

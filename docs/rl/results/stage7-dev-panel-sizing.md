@@ -37,10 +37,11 @@ scheduled-selection panel.
 uv run uno rl devsize FULL_UNO B 0 256 0.005 1
 ```
 
-The command evaluates the 256-deal maximum only once for each policy and derives
-the smaller nested rows from prefixes. `tqdm` reports completed actor and
-Heuristic games. It saves a semantic JSON result and the per-deal/per-cell actor
-and reference scores under its printed `logs/rl/devsize_*` directory.
+The command evaluates the requested maximum only once for each policy and derives
+70% and 85% nested-prefix rows from the same samples. `tqdm` reports completed
+actor and Heuristic games. It saves a semantic JSON result and the
+per-deal/per-cell actor and reference scores under its printed `logs/rl/devsize_*`
+directory.
 
 ## Required report and limitation
 
