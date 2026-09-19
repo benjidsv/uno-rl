@@ -312,8 +312,10 @@ def cmd_experiment(arm: str = ARM_A, seed: int = 0) -> None:
         tracking_kind="experiment-data",
         optim_overrides={
             # EXPERIMENT - THOSE ARE NOT DEFAULTS AND MAY HAVE BEEN CHANGED OR BE CHANGED
-            "entropy_coef": 0.01,
+            # "entropy_coef": 0.01,
             "normalize_advantages": True,
+            "actor_grad_norm": 10.0,
+            # gradients are scaled by decisions/games, so roughly x15-20. default is 0.6 but that destroys the learning
         },
     )
 
