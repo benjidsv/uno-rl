@@ -81,12 +81,16 @@ def _config(
     live_games: int = 64,
     minibatch: int = 512,
     evaluation_fraction: float = 0.1,
+    optim_overrides: dict[str, object] | None = None,
 ) -> Config:
+    optim = replace(Optim(), minibatch=minibatch)
+    if optim_overrides:
+        optim = replace(optim, **optim_overrides)
     return Config(
         ruleset=ruleset, arm=arm, training_seed=seed, data_cap=cap, device=device,
         collection=Collection(games_per_cell=games_per_cell, live_games_per_worker=live_games, workers=workers),
         evaluation=Evaluation(deals_per_cell=deals_per_cell, every_fraction=evaluation_fraction),
-        optim=replace(Optim(), minibatch=minibatch),
+        optim=optim,
     )  # fmt: skip
 
 
@@ -153,6 +157,7 @@ def cmd_train(
     *,
     tracking_study_id: str = "pilot",
     tracking_kind: str = "train",
+    optim_overrides: dict[str, object] | None = None,
 ) -> None:
     if collection_threads < 0 or update_threads < 0:
         raise SystemExit(
@@ -178,6 +183,7 @@ def cmd_train(
         device,
         minibatch=minibatch,
         evaluation_fraction=evaluation_fraction,
+        optim_overrides=optim_overrides,
     )
     if time_cap_s:
         cfg = cfg.with_(time_cap_s=time_cap_s)
@@ -282,6 +288,32 @@ def cmd_ablation(arm: str = ARM_A, seed: int = 0) -> None:
         evaluation_fraction=0.25,
         tracking_study_id="stage8-a-b-ablation",
         tracking_kind="ablation-data",
+    )
+
+
+def cmd_experiment(arm: str = ARM_A, seed: int = 0) -> None:
+    if arm not in (ARM_A, ARM_B):
+        raise SystemExit("the Stage 8 ablation arm must be A or B")
+    cmd_train(
+        ruleset="FULL_UNO",
+        arm=arm,
+        seed=seed,
+        cap=250_000,
+        workers=1,
+        games_per_cell=64,
+        deals_per_cell=256,
+        device="cpu",
+        collection_threads=1,
+        update_threads=6,
+        minibatch=512,
+        time_cap_s=7_500,
+        evaluation_fraction=1.0,
+        tracking_study_id="entropy-experiment",
+        tracking_kind="experiment-data",
+        optim_overrides={
+            # EXPERIMENT - THOSE ARE NOT DEFAULTS AND MAY HAVE BEEN CHANGED OR BE CHANGED
+            "entropy_coef": 0.01,
+        },
     )
 
 
@@ -964,6 +996,8 @@ def main(argv: list[str]) -> None:
             cmd_pilot(*(f(x) for f, x in zip((int,), rest)))
         case "ablation":
             cmd_ablation(*(f(x) for f, x in zip((str, int), rest)))
+        case "experiment":
+            cmd_experiment(*(f(x) for f, x in zip((str, int), rest)))
         case "resume":
             cmd_resume(
                 rest[0],

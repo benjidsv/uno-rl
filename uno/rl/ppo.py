@@ -19,9 +19,11 @@ lengths and a final partial minibatch.
 
 The critic is **frozen before the batch is fitted**: advantages are computed once
 from `V_old`, detached, and reused for every PPO epoch. They are not recomputed
-with the newly fitted critic, and the critic's own loss is a separate
-decision-mean MSE against the same undiscounted terminal returns -- no TD, no
-GAE, no bootstrapping (contract section 3).
+with the newly fitted critic. By default (`gamma = 1`) the critic's loss is a
+separate decision-mean MSE against the same undiscounted terminal returns -- no
+TD, no GAE, no bootstrapping (contract section 3). A non-unit gamma applies
+decision-step discounting to the terminal return, and `value_clip` optionally
+uses PPO's clipped value loss around the frozen pre-update values.
 
 The KL number reported here is the sampled, nonnegative estimate
 `mean((r - 1) - log r)` over the collection policy's own actions. It is a
@@ -116,6 +118,31 @@ def advantages(rollout: Rollout, values: np.ndarray) -> np.ndarray:
     return (rollout.returns_per_decision - values).astype(np.float64)
 
 
+def normalize_advantages(adv: np.ndarray) -> np.ndarray:
+    """Normalize one complete rollout's advantages before minibatch shuffling."""
+    return (adv - adv.mean()) / (adv.std() + 1e-8)
+
+
+def discounted_returns(rollout: Rollout, gamma: float) -> np.ndarray:
+    """Return one (possibly discounted) terminal target for every decision.
+
+    The exponent counts remaining learner decisions after the current action.
+    Thus the existing `gamma=1` configuration is exactly the undiscounted
+    terminal-return objective, while `gamma<1` values earlier decisions less.
+    """
+    if not np.isfinite(gamma) or not 0.0 <= gamma <= 1.0:
+        raise ValueError("gamma must be finite and in [0, 1]")
+    terminal = rollout.returns_per_decision.astype(np.float64)
+    if gamma == 1.0 or rollout.n_decisions == 0:
+        return terminal
+    remaining = (
+        rollout.learner_decisions[rollout.episode]
+        - rollout.decision_index
+        - 1
+    )
+    return terminal * np.power(gamma, remaining)
+
+
 # -- the objective ---------------------------------------------------------------
 
 
@@ -152,13 +179,11 @@ def actor_loss(
     logp, entropy = new_log_probs(actor, feats, rollout.masks[index], rollout.actions[index], optim.temperature, device, set_ids)
     old = torch.from_numpy(rollout.old_logp[index].astype(np.float32)).to(device)
     a = torch.from_numpy(adv[index].astype(np.float32)).to(device)
-    if optim.normalize_advantages:
-        a = (a - a.mean()) / (a.std(unbiased=False) + 1e-8)
     log_ratio = logp - old
     obj = surrogate(log_ratio, a, optim.clip, scale)
     loss = -obj
     if optim.entropy_coef:
-        loss = loss - optim.entropy_coef * entropy.mean()
+        loss = loss - scale * optim.entropy_coef * entropy.mean()
     with torch.no_grad():
         r = torch.exp(log_ratio)
         diag = {
@@ -201,6 +226,7 @@ def rollout_actor_diagnostics(
     adv: np.ndarray | None = None,
     device: str = "cpu",
     chunk: int = FORWARD_CHUNK,
+    advantages_normalized: bool = False,
 ) -> dict[str, float]:
     """Final-policy diagnostics over every decision in the rollout.
 
@@ -216,10 +242,8 @@ def rollout_actor_diagnostics(
     diagnostic_adv = None
     if adv is not None:
         diagnostic_adv = adv.astype(np.float32, copy=False)
-        if optim.normalize_advantages:
-            diagnostic_adv = (
-                diagnostic_adv - diagnostic_adv.mean()
-            ) / (diagnostic_adv.std() + 1e-8)
+        if optim.normalize_advantages and not advantages_normalized:
+            diagnostic_adv = normalize_advantages(diagnostic_adv)
     surrogate_total = entropy_total = kl_total = clip_total = 0.0
     legal_actions_total = max_entropy_total = normalized_entropy_total = effective_actions_total = 0.0
     max_abs_log_ratio = 0.0
@@ -278,6 +302,26 @@ def _minibatches(rng, n: int, size: int) -> list[np.ndarray]:
     return [perm[i : i + size] for i in range(0, n, size)]
 
 
+def critic_loss(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    old_prediction: torch.Tensor,
+    value_clip: float | None,
+) -> torch.Tensor:
+    """PPO value loss, optionally clipped around the pre-update prediction."""
+    if value_clip is None:
+        return ((prediction - target) ** 2).mean()
+    if not np.isfinite(value_clip) or value_clip < 0.0:
+        raise ValueError("value_clip must be None or a finite nonnegative number")
+    clipped = old_prediction + torch.clamp(
+        prediction - old_prediction, -value_clip, value_clip
+    )
+    return torch.maximum(
+        (prediction - target) ** 2,
+        (clipped - target) ** 2,
+    ).mean()
+
+
 def update(
     actor: Actor,
     critic: Critic,
@@ -303,8 +347,10 @@ def update(
     values = critic_values(critic, rollout.critic, device)
     stats.critic_value_seconds = time.perf_counter() - started
     adv = advantages(rollout, values)
-    rets = rollout.returns_per_decision.astype(np.float64)
+    rets = discounted_returns(rollout, optim.gamma)
     stats.advantage_mean, stats.advantage_std = float(adv.mean()), float(adv.std())
+    if optim.normalize_advantages:
+        adv = normalize_advantages(adv)
     stats.return_mean, stats.return_std = float(rets.mean()), float(rets.std())
     # An explained variance with zero return variance is undefined; log it as
     # unavailable rather than inventing a value (pipeline plan section 10).
@@ -327,7 +373,9 @@ def update(
             stats.actor_grad_norm += norm
             stats.actor_clipped_fraction += float(norm > optim.actor_grad_norm)
         stats.actor_epochs = epoch + 1
-        diagnostic = rollout_actor_diagnostics(actor, rollout, optim, adv, device)
+        diagnostic = rollout_actor_diagnostics(
+            actor, rollout, optim, adv, device, advantages_normalized=optim.normalize_advantages
+        )
         stats.surrogate = diagnostic["surrogate"]
         stats.entropy = diagnostic["entropy"]
         stats.legal_actions = diagnostic["legal_actions"]
@@ -356,7 +404,14 @@ def update(
         total, seen = 0.0, 0
         for index in _minibatches(rng, t, size):
             pred = critic(*to_tensors(rollout.critic[index], device))
-            loss = ((pred - targets[torch.from_numpy(index.astype(np.int64)).to(device)]) ** 2).mean()
+            rows = torch.from_numpy(index.astype(np.int64)).to(device)
+            old = torch.from_numpy(values[index].astype(np.float32)).to(device)
+            loss = critic_loss(
+                pred,
+                targets[rows],
+                old,
+                optim.value_clip,
+            )
             critic_opt.zero_grad(set_to_none=True)
             loss.backward()
             norm = float(torch.nn.utils.clip_grad_norm_(critic.parameters(), optim.critic_grad_norm))
@@ -381,6 +436,7 @@ def update(
 
 
 __all__ = [
-    "UpdateStats", "actor_loss", "advantages", "critic_values", "new_log_probs",
+    "UpdateStats", "actor_loss", "advantages", "critic_loss", "critic_values", "normalize_advantages",
+    "discounted_returns", "new_log_probs",
     "rollout_actor_diagnostics", "rollout_kl", "surrogate", "update", "weighted_gradient",
 ]  # fmt: skip

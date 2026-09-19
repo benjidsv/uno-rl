@@ -164,6 +164,50 @@ def test_advantage_is_the_terminal_return_minus_the_frozen_baseline():
         assert np.all(rollout.returns_per_decision[rows] == rollout.terminal_return[i])
 
 
+def test_advantage_normalization_is_global_and_actor_loss_does_not_re_normalize_minibatches():
+    actor, critic, rollout, _, _ = setup(rs=TOY2_SKIP, games_per_cell=5)
+    raw = _adv(critic, rollout)
+    global_adv = ppo.normalize_advantages(raw)
+    assert global_adv.mean() == pytest.approx(0.0, abs=1e-6)
+    assert global_adv.std() == pytest.approx(1.0, abs=1e-6)
+    index = np.arange(min(7, rollout.n_decisions))
+    normalized = Optim(normalize_advantages=True)
+    plain = Optim(normalize_advantages=False)
+    loss_normalized, _ = ppo.actor_loss(actor, rollout, index, global_adv, 1.0, normalized)
+    loss_plain, _ = ppo.actor_loss(actor, rollout, index, global_adv, 1.0, plain)
+    assert loss_normalized == loss_plain
+
+
+def test_entropy_bonus_has_the_same_game_average_scale_as_the_surrogate():
+    actor, critic, rollout, _, _ = setup(rs=TOY2_SKIP, games_per_cell=5)
+    adv = _adv(critic, rollout)
+    optim = Optim(entropy_coef=0.1, normalize_advantages=False)
+    index = np.arange(min(11, rollout.n_decisions))
+    loss_one, _ = ppo.actor_loss(actor, rollout, index, adv, 1.0, optim)
+    loss_two, _ = ppo.actor_loss(actor, rollout, index, adv, 2.0, optim)
+    assert float(loss_two.detach()) == pytest.approx(2.0 * float(loss_one.detach()))
+
+
+def test_gamma_discounts_terminal_returns_by_remaining_learner_decisions():
+    _, _, rollout, _, _ = setup(rs=TOY2_SKIP, games_per_cell=5)
+    got = ppo.discounted_returns(rollout, 0.5)
+    remaining = rollout.learner_decisions[rollout.episode] - rollout.decision_index - 1
+    expected = rollout.terminal_return[rollout.episode] * np.power(0.5, remaining)
+    assert np.allclose(got, expected)
+    assert np.array_equal(ppo.discounted_returns(rollout, 1.0), rollout.returns_per_decision)
+
+
+def test_value_clip_uses_the_more_conservative_value_loss():
+    prediction = torch.tensor([2.0, -2.0])
+    target = torch.tensor([0.0, 0.0])
+    old = torch.tensor([0.0, 0.0])
+    unclipped = ppo.critic_loss(prediction, target, old, None)
+    clipped = ppo.critic_loss(prediction, target, old, 0.5)
+    assert unclipped.item() == pytest.approx(4.0)
+    assert clipped.item() == pytest.approx(4.0)
+    assert ppo.critic_loss(torch.tensor([0.25]), torch.tensor([1.0]), torch.tensor([0.0]), 0.1).item() == pytest.approx(0.81)
+
+
 def test_minibatch_gradient_sums_to_the_full_batch_gradient():
     """Pipeline plan section 6, including a final partial minibatch."""
     actor, critic, rollout, _, _ = setup(rs=TOY2_SKIP, games_per_cell=5)

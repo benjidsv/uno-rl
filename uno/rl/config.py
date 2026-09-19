@@ -44,7 +44,7 @@ class Optim:
     critic_grad_norm: float = 0.5
     target_kl: float = 0.02  # rollout-mean approximate KL, checked after each epoch
     temperature: float = 1.0
-    value_clip: None = None  # no value clipping and no LR schedule initially
+    value_clip: float | None = None  # no value clipping and no LR schedule initially
 
 
 @dataclass(frozen=True)

@@ -76,7 +76,7 @@ stronger preferences or simply more forced/low-choice decisions.
 | `critic_pre_update_ev` | `1 - Var(R-V_old)/Var(R)` over decisions before fitting. |
 | `critic_post_update_same_rollout_ev` | The same statistic after fitting, on the same rollout; a fit diagnostic, not held-out prediction. |
 | `return_mean`, `return_std` | Population mean/SD of terminal returns broadcast to decisions; long games receive more weight. |
-| `advantage_mean`, `advantage_std` | Population mean/SD of frozen `R_g - V_old`; also decision-weighted. |
+| `advantage_mean`, `advantage_std` | Population mean/SD of frozen unnormalized advantages before optional global rollout normalization; also decision-weighted. |
 
 ## Evaluation behavior
 

@@ -302,7 +302,7 @@ from the unregularized return gradient. Advantage normalization starts disabled.
 | PPO clip | `0.2` |
 | Actor / critic epochs | 4 / 4 |
 | Decision minibatch | 512, or the entire rollout if smaller |
-| Advantage normalization | Off |
+| Advantage normalization | Off initially; if enabled, normalize once globally over the complete rollout before shuffling into minibatches |
 | Entropy coefficient | `0` initially; `0.001` is a conditional exploration diagnostic |
 | Actor / critic gradient norm cap | `0.5` / `0.5`, separately |
 | Precision / temperature | FP32 / 1 |
