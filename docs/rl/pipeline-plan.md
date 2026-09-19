@@ -451,6 +451,13 @@ at evaluation boundaries. Use cumulative learner decisions as the MLflow step an
 also log update index, games, engine decisions, optimizer steps, and cumulative
 active runtime. Preserve a compact local tabular metrics file so results can be
 plotted against both data and time without relying on the UI's step convention.
+In MLflow, use exactly one slash per metric: the prefix selects a single semantic
+folder and the remainder is a flat descriptive name. The folders are `primary`,
+`progress`, `training`, `actor`, `critic`, `batch`, `timing`, `throughput`,
+`collection`, `resources`, and `evaluation`; MLflow does not recursively render
+nested slash components. Keep only DEV/train score, whole-iteration data
+throughput, entropy, approximate KL, and critic explained variance in `primary`.
+The local CSV keeps its compact flat analysis schema.
 
 | Group | Required content |
 |---|---|

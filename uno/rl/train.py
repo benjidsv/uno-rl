@@ -18,13 +18,16 @@ none of those.
 **Caps are soft at iteration boundaries.** Another iteration is not started when
 the estimated remaining time cannot cover collection, the update, a required
 evaluation and saving; an overrun by the final complete iteration is logged rather
-than hidden. A hard interrupt rolls back to the last valid saved boundary -- this
-loop never records a truncation as a terminal result.
+than hidden. The first Ctrl-C requests a graceful stop: finish the current
+iteration, evaluate, save and close tracking. A second Ctrl-C is an immediate hard
+interrupt. This loop never records a truncation as a terminal result.
 """
 
 from __future__ import annotations
 
 import json
+import signal
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +35,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from uno.progress import bar
 from uno.rl import checkpoint as ckpt
 from uno.rl import evaluate as ev
 from uno.rl import manifest as mf
@@ -46,6 +50,135 @@ from uno.rl.streams import INIT, STREAM_VERSION, torch_seed
 from uno.rl.track import Tracker, provenance
 
 CHECKPOINT_INTERVAL_S = 120.0  # at most two minutes between boundary saves
+
+
+_TRAIN_MLFLOW_PATHS = {
+    # Progress counters and clocks.
+    "update": "progress/update",
+    "games": "progress/games",
+    "engine_decisions": "progress/engine_decisions",
+    "optimizer_steps": "progress/optimizer_steps",
+    "active_seconds": "progress/active_seconds",
+    "run_wall_seconds": "progress/wall_seconds",
+    "actor_presentations": "progress/actor_presentations",
+    "critic_presentations": "progress/critic_presentations",
+    # PPO health and optimization statistics.
+    "surrogate": "actor/surrogate",
+    "entropy": "actor/entropy",
+    "approx_kl": "actor/approx_kl",
+    "clip_fraction": "actor/clip_fraction",
+    "max_abs_log_ratio": "actor/max_abs_log_ratio",
+    "actor_grad_norm": "actor/grad_norm",
+    "actor_clipped_fraction": "actor/grad_clipped_fraction",
+    "actor_epochs": "actor/epochs",
+    "actor_steps": "actor/steps",
+    "early_stopped": "actor/early_stopped",
+    "critic_mse": "critic/mse",
+    "explained_variance": "critic/explained_variance",
+    "critic_grad_norm": "critic/grad_norm",
+    "critic_epochs": "critic/epochs",
+    "critic_steps": "critic/steps",
+    "advantage_mean": "batch/advantage_mean",
+    "advantage_std": "batch/advantage_std",
+    "return_mean": "batch/return_mean",
+    "return_std": "batch/return_std",
+    # End-to-end and stage performance.
+    "collect_s": "timing/collection_total_seconds",
+    "update_s": "timing/update_total_seconds",
+    "iteration_s": "timing/iteration_seconds",
+    "worker_s": "timing/collection_worker_sum_seconds",
+    "simulation_s": "timing/collection_simulation_sum_seconds",
+    "feature_s": "timing/collection_features_sum_seconds",
+    "actor_inference_s": "timing/collection_actor_inference_sum_seconds",
+    "worker_assembly_s": "timing/collection_worker_assembly_sum_seconds",
+    "serialization_s": "timing/collection_serialization_sum_seconds",
+    "result_queue_put_s": "timing/collection_result_queue_put_sum_seconds",
+    "result_queue_wait_s": "timing/collection_coordinator_queue_wait_seconds",
+    "deserialization_s": "timing/collection_deserialization_seconds",
+    "coordinator_assembly_s": "timing/collection_coordinator_assembly_seconds",
+    "drain_s": "timing/collection_final_game_drain_seconds",
+    "critic_values_s": "timing/update_critic_values_seconds",
+    "actor_update_s": "timing/update_actor_seconds",
+    "critic_update_s": "timing/update_critic_seconds",
+    "iteration_fresh_decisions_per_s": "throughput/iteration_fresh_decisions_per_second",
+    "collect_decisions_per_s": "throughput/collection_decisions_per_second",
+    "update_fresh_decisions_per_s": "throughput/update_fresh_decisions_per_second",
+    "actor_presentations_per_s": "throughput/actor_presentations_per_second",
+    "critic_presentations_per_s": "throughput/critic_presentations_per_second",
+    # Collection shape, transfer and runtime resources.
+    "mean_inference_batch": "collection/inference_batch_mean",
+    "inference_batch_calls": "collection/inference_batch_calls",
+    "inference_batch_min": "collection/inference_batch_min",
+    "inference_batch_p50": "collection/inference_batch_p50",
+    "inference_batch_p90": "collection/inference_batch_p90",
+    "inference_batch_max": "collection/inference_batch_max",
+    "retried_bundles": "collection/retried_bundles",
+    "rollout_bytes": "resources/rollout_bytes",
+    "transfer_bytes": "resources/transfer_bytes",
+    "collection_torch_threads": "resources/collection_torch_threads",
+    "update_torch_threads": "resources/update_torch_threads",
+}
+
+_PRIMARY_TRAIN_METRICS = {
+    "train_score": "primary/train_score",
+    "iteration_fresh_decisions_per_s": "primary/iteration_decisions_per_second",
+    "entropy": "primary/entropy",
+    "approx_kl": "primary/approx_kl",
+    "explained_variance": "primary/explained_variance",
+}
+
+
+def _training_mlflow_metrics(metrics: dict, run: "Run") -> dict:
+    """Namespaced MLflow view of one update; the CSV keeps the flat keys."""
+    cell_paths = {
+        f"train_score_{opponent}_s{seat}": f"training/score_{opponent}_seat_{seat}"
+        for opponent in run.opponents
+        for seat in (0, 1)
+    }
+    grouped = {}
+    for name, value in metrics.items():
+        if name == "train_score":
+            path = "training/score_league_mean"
+        elif name in cell_paths:
+            path = cell_paths[name]
+        elif name.startswith("end_"):
+            path = f"collection/end_count_{name.removeprefix('end_')}"
+        else:
+            path = _TRAIN_MLFLOW_PATHS.get(name, f"diagnostic/{name}")
+        grouped[path] = value
+    grouped.update(
+        {
+            target: metrics[source]
+            for source, target in _PRIMARY_TRAIN_METRICS.items()
+            if source in metrics
+        }
+    )
+    return grouped
+
+
+def _evaluation_mlflow_metrics(metrics: dict, result: ev.PanelResult) -> dict:
+    """Namespaced MLflow view of a fixed-panel evaluation."""
+    paths = {
+        "dev_league_mean": "evaluation/score_league_mean",
+        "dev_se": "evaluation/score_standard_error",
+        "dev_deals": "evaluation/deals_per_cell",
+        "active_seconds": "progress/active_seconds",
+        "run_wall_seconds": "progress/wall_seconds",
+        **{
+            f"dev_{opponent}_s{seat}": f"evaluation/score_{opponent}_seat_{seat}"
+            for opponent, seat in result.cells
+        },
+        **{
+            f"dev_{name}": f"evaluation/behavior_{name}"
+            for name in result.behavior.as_dict()
+        },
+    }
+    grouped = {
+        paths.get(name, f"diagnostic/{name}"): value
+        for name, value in metrics.items()
+    }
+    grouped["primary/dev_score"] = metrics["dev_league_mean"]
+    return grouped
 
 
 @dataclass
@@ -293,10 +426,12 @@ def _iteration(run: Run, collector, update_threads: int | None) -> tuple[ppo.Upd
     run.progress.optimizer_steps += stats.actor_steps + stats.critic_steps
     run.progress.deal_schedule = run.schedule.state
     update_seconds = updated - collected
+    iteration_seconds = updated - t0
     actor_presentations = rollout.n_decisions * stats.actor_epochs
     critic_presentations = rollout.n_decisions * stats.critic_epochs
     timings = {
-        "collect_s": collected - t0, "update_s": update_seconds, "iteration_s": updated - t0,
+        "collect_s": collected - t0, "update_s": update_seconds, "iteration_s": iteration_seconds,
+        "iteration_fresh_decisions_per_s": rollout.n_decisions / iteration_seconds if iteration_seconds else 0.0,
         "update_fresh_decisions_per_s": rollout.n_decisions / update_seconds if update_seconds else 0.0,
         "actor_presentations": actor_presentations, "critic_presentations": critic_presentations,
         "actor_presentations_per_s": actor_presentations / stats.actor_update_seconds if stats.actor_update_seconds else 0.0,
@@ -346,28 +481,101 @@ def _cell_scores(rollout) -> dict:
 
 def evaluate_now(run: Run) -> ev.PanelResult:
     """Synchronous scheduled DEV evaluation of the current actor on the fixed panel."""
-    return ev.play_panel(run.panel, run.policy, run.opponents, run.config.training_seed)
+    previous_threads = torch.get_num_threads()
+    evaluation_threads = run.execution.get("collection_torch_threads")
+    try:
+        if evaluation_threads is not None:
+            torch.set_num_threads(evaluation_threads)
+        with bar(total=len(run.panel), desc="DEV evaluation", unit="games") as progress:
+            return ev.play_panel(
+                run.panel,
+                run.policy,
+                run.opponents,
+                run.config.training_seed,
+                on_games=progress.update,
+            )
+    finally:
+        if torch.get_num_threads() != previous_threads:
+            torch.set_num_threads(previous_threads)
+
+
+@dataclass
+class _BoundaryStop:
+    """Turn the first SIGINT into a request to stop at a valid run boundary."""
+
+    requested: bool = False
+    _previous: object = None
+    _installed: bool = False
+
+    def __enter__(self):
+        if threading.current_thread() is threading.main_thread():
+            self._previous = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, self._handle)
+            self._installed = True
+        return self
+
+    def _handle(self, signum, frame) -> None:
+        if self.requested:
+            signal.default_int_handler(signum, frame)
+        self.requested = True
+        print(
+            "\n   Ctrl-C received; stopping after the current complete boundary. "
+            "Press Ctrl-C again to abort immediately.",
+            flush=True,
+        )
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        if self._installed:
+            signal.signal(signal.SIGINT, self._previous)
 
 
 def train(
     run: Run, tracker: Tracker | None = None, collector=None, verbose: bool = True
 ) -> dict:
-    """Run to the declared data or time cap, evaluating and checkpointing on schedule."""
+    """Run to a cap; the first Ctrl-C saves and exits at a complete boundary."""
+    with _BoundaryStop() as stop:
+        return _train(run, tracker, collector, verbose, stop)
+
+
+def _train(
+    run: Run,
+    tracker: Tracker | None,
+    collector,
+    verbose: bool,
+    stop: _BoundaryStop,
+) -> dict:
     cfg = run.config
     tracker = tracker or run.tracker
     started = time.perf_counter()
     last_save = started
     eval_every = max(1, int(cfg.data_cap * cfg.evaluation.every_fraction))
+    last_evaluation = None
+    last_evaluation_step = None
+    last_dev_score = None
     if run.progress.next_eval_at == 0:
         run.progress.next_eval_at = eval_every
         first = evaluate_now(run)  # the initial policy is a scheduled evaluation point
         run.eval_history.append((0, first.mean))
         _log_eval(run, tracker, first, 0, time.perf_counter() - started)
+        last_evaluation, last_evaluation_step = first, 0
+        last_dev_score = first.mean
     overrun = 0.0
     iterations = []
     stop_reason = "data_cap"
+    training_progress = (
+        bar(
+            total=max(0, cfg.data_cap - run.progress.learner_decisions),
+            desc="PPO training",
+            unit="decisions",
+        )
+        if verbose
+        else None
+    )
 
     while run.progress.learner_decisions < cfg.data_cap:
+        if stop.requested:
+            stop_reason = "interrupt"
+            break
         if cfg.time_cap_s is not None:
             elapsed = time.perf_counter() - started
             budget = float(np.mean(iterations[-3:])) if iterations else 0.0
@@ -375,7 +583,9 @@ def train(
                 stop_reason = "time_cap"
                 break
         t0 = time.perf_counter()
+        decisions_before = run.progress.learner_decisions
         stats, extra = iteration(run, collector)
+        iteration_decisions = run.progress.learner_decisions - decisions_before
         iterations.append(time.perf_counter() - t0)
         run.progress.active_seconds += iterations[-1]
         metrics = {
@@ -392,8 +602,12 @@ def train(
             **extra,
         }  # fmt: skip
         if tracker:
-            tracker.log(metrics, step=run.progress.learner_decisions)
-        if verbose:
+            tracker.log(
+                metrics,
+                step=run.progress.learner_decisions,
+                mlflow_metrics=_training_mlflow_metrics(metrics, run),
+            )
+        if verbose and training_progress.disable:
             print(
                 f"   update {run.progress.update:4d}  {run.progress.learner_decisions:>9,} dec  {stats}  train {extra.get('train_score', float('nan')):.3f}"
             )
@@ -405,6 +619,9 @@ def train(
                 run, tracker, result, run.progress.learner_decisions,
                 time.perf_counter() - started,
             )
+            last_evaluation = result
+            last_evaluation_step = run.progress.learner_decisions
+            last_dev_score = result.mean
             if (
                 run.progress.best_score is None
                 or result.mean > run.progress.best_score + 1e-6
@@ -420,12 +637,33 @@ def train(
             _save(run, "latest")
             last_save = time.perf_counter()
 
-    final = evaluate_now(run)
-    run.eval_history.append((run.progress.update, final.mean))
-    _log_eval(
-        run, tracker, final, run.progress.learner_decisions,
-        time.perf_counter() - started,
+        if training_progress is not None:
+            training_progress.set_postfix(
+                update=run.progress.update,
+                collect=f"{extra['collect_s']:.1f}s",
+                ppo=f"{extra['update_s']:.1f}s",
+                train=f"{extra.get('train_score', float('nan')):.3f}",
+                dev=("--" if last_dev_score is None else f"{last_dev_score:.3f}"),
+                refresh=False,
+            )
+            training_progress.update(iteration_decisions)
+
+    if training_progress is not None:
+        training_progress.close()
+
+    final_evaluation_reused = (
+        last_evaluation is not None
+        and last_evaluation_step == run.progress.learner_decisions
     )
+    if final_evaluation_reused:
+        final = last_evaluation
+    else:
+        final = evaluate_now(run)
+        run.eval_history.append((run.progress.update, final.mean))
+        _log_eval(
+            run, tracker, final, run.progress.learner_decisions,
+            time.perf_counter() - started,
+        )
     _save(run, "final")
     wall_seconds = time.perf_counter() - started
     if cfg.time_cap_s is not None:
@@ -440,6 +678,8 @@ def train(
         "engine_decisions": run.progress.engine_decisions,
         "active_seconds": run.progress.active_seconds,
         "wall_seconds": wall_seconds,
+        "evaluation_points": len(run.eval_history),
+        "final_evaluation_reused": final_evaluation_reused,
         "selected_update": best_update,
         "selected_score": best_score,
         "final_score": final.mean,
@@ -472,7 +712,11 @@ def _log_eval(
     }
     metrics.update({f"dev_{n}_s{s}": v for (n, s), v in result.cell_means.items()})
     metrics.update({f"dev_{k}": v for k, v in result.behavior.as_dict().items()})
-    tracker.log(metrics, step=step)
+    tracker.log(
+        metrics,
+        step=step,
+        mlflow_metrics=_evaluation_mlflow_metrics(metrics, result),
+    )
 
 
 def _save(run: Run, label: str) -> dict:

@@ -10,6 +10,7 @@ devices produce identical learning curves, which the plan explicitly does not cl
 from __future__ import annotations
 
 import json
+import signal
 
 import numpy as np
 import pytest
@@ -26,7 +27,7 @@ from uno.rl.config import Collection, Config, Evaluation, Optim
 from uno.rl.opponents import league, league_hash
 from uno.rl.policy import ActorPolicy
 from uno.rl.track import Tracker
-from uno.rl.train import Run, iteration
+from uno.rl.train import Run, evaluate_now, iteration
 
 
 def toy_config(**kw) -> Config:
@@ -103,6 +104,7 @@ def test_iteration_uses_and_restores_runtime_thread_budgets(tmp_path):
     stats, timings = iteration(run)
     assert timings["collection_torch_threads"] == 1
     assert timings["update_torch_threads"] == 2
+    assert timings["iteration_fresh_decisions_per_s"] > 0
     assert timings["update_fresh_decisions_per_s"] > 0
     assert timings["actor_presentations"] == run.progress.learner_decisions * stats.actor_epochs
     assert timings["critic_presentations"] == run.progress.learner_decisions * stats.critic_epochs
@@ -110,6 +112,23 @@ def test_iteration_uses_and_restores_runtime_thread_budgets(tmp_path):
     assert timings["critic_presentations_per_s"] > 0
     assert timings["actor_steps"] == stats.actor_steps
     assert timings["critic_steps"] == stats.critic_steps
+    assert torch.get_num_threads() == previous
+
+
+def test_evaluation_uses_and_restores_collection_thread_budget(tmp_path, monkeypatch):
+    previous = torch.get_num_threads()
+    run = make_run(tmp_path)
+    run.execution = {"collection_torch_threads": 1}
+    sentinel = object()
+    seen = []
+
+    def fake_panel(*args, **kwargs):
+        seen.append(torch.get_num_threads())
+        return sentinel
+
+    monkeypatch.setattr(ev, "play_panel", fake_panel)
+    assert evaluate_now(run) is sentinel
+    assert seen == [1]
     assert torch.get_num_threads() == previous
 
 
@@ -202,6 +221,35 @@ def test_panel_refuses_to_run_past_its_partition():
         mf.panel(["a"], 1, start=mf.PANEL_DEALS.stop - 1 + 1)
 
 
+def test_diagnostic_panel_is_coupled_and_separate_from_selection_and_training():
+    names = list(league(TOY, "toy"))
+    panel = mf.diagnostic_panel(names, 8)
+    per_cell = {
+        c: [e.deal_seed for e in panel.episodes if (e.opponent, e.seat) == c]
+        for c in panel.cells
+    }
+    first = next(iter(per_cell.values()))
+    assert all(v == first for v in per_cell.values())
+    assert all(d in mf.DIAGNOSTIC_DEALS for d in first)
+    assert not set(first) & set(mf.PANEL_DEALS)
+    assert not set(first) & set(mf.TRAIN_DEALS)
+    with pytest.raises(ValueError):
+        mf.diagnostic_panel(names, 2, start=mf.DIAGNOSTIC_DEALS.stop - 1)
+
+
+def test_diagnostic_panel_stream_ids_do_not_change_when_it_is_extended():
+    names = list(league(TOY, "toy"))
+    short = mf.diagnostic_panel(names, 8)
+    long = mf.diagnostic_panel(names, 16)
+    short_ids = {
+        (e.opponent, e.seat, e.deal_seed): e.episode_id for e in short.episodes
+    }
+    long_ids = {
+        (e.opponent, e.seat, e.deal_seed): e.episode_id for e in long.episodes
+    }
+    assert all(long_ids[key] == episode_id for key, episode_id in short_ids.items())
+
+
 def test_paired_difference_groups_the_cells_of_a_deal(tmp_path):
     run = make_run(tmp_path, evaluation=__import__("uno.rl.config", fromlist=["Evaluation"]).Evaluation(deals_per_cell=24))
     result = ev.play_panel(run.panel, run.policy, run.opponents, run.config.training_seed)
@@ -215,6 +263,16 @@ def test_paired_difference_groups_the_cells_of_a_deal(tmp_path):
     assert set(result.behavior.as_dict()) >= {"draw_rate", "action_cap_rate", "mean_game_length", "entropy"}
 
 
+def test_panel_progress_callbacks_count_completed_games(tmp_path):
+    run = make_run(tmp_path)
+    panel = mf.diagnostic_panel(list(run.opponents), 4)
+    actor_ticks, reference_ticks = [], []
+    ev.play_panel(panel, run.policy, run.opponents, 0, live_games=3, on_games=actor_ticks.append)
+    ev.baseline_panel(panel, Heuristic(TOY), run.opponents, TOY, 0, on_games=reference_ticks.append)
+    assert sum(actor_ticks) == len(panel)
+    assert sum(reference_ticks) == len(panel)
+
+
 def test_paired_difference_refuses_mismatched_panels(tmp_path):
     run = make_run(tmp_path)
     a = ev.play_panel(mf.panel(list(run.opponents), 4), run.policy, run.opponents, 0)
@@ -226,6 +284,126 @@ def test_paired_difference_refuses_mismatched_panels(tmp_path):
 def test_selection_prefers_the_earlier_checkpoint_on_a_tie():
     assert ev.select([(0, 0.5), (1, 0.5000001), (2, 0.4)]) == (0, 0.5)
     assert ev.select([(0, 0.5), (1, 0.6), (2, 0.6)]) == (1, 0.6)
+
+
+def test_pilot_command_freezes_the_one_hour_preset(monkeypatch):
+    from uno.experiments import rl as experiment
+
+    captured = {}
+    monkeypatch.setattr(experiment, "cmd_train", lambda **kwargs: captured.update(kwargs))
+    experiment.cmd_pilot(seed=3)
+    assert captured == {
+        "ruleset": "FULL_UNO", "arm": F.ARM_B, "seed": 3, "cap": 500_000,
+        "workers": 1, "games_per_cell": 64, "deals_per_cell": 256,
+        "device": "cpu", "collection_threads": 1, "update_threads": 4,
+        "minibatch": 512, "time_cap_s": 3_600, "evaluation_fraction": 0.25,
+        "tracking_study_id": "stage7-full-uno-b-pilot", "tracking_kind": "pilot",
+    }
+
+
+def test_training_reuses_a_boundary_evaluation_as_the_final_result(tmp_path):
+    from uno.rl.train import train
+
+    cfg = toy_config(
+        data_cap=1,
+        collection=Collection(games_per_cell=1, live_games_per_worker=4),
+        evaluation=Evaluation(deals_per_cell=2, every_fraction=1.0),
+    )
+    run = Run(cfg, tmp_path / "deduplicated-final", league_name="toy")
+    summary = train(run, verbose=False)
+    assert summary["evaluation_points"] == 2  # initial and one update boundary
+    assert summary["final_evaluation_reused"] is True
+    assert len(run.eval_history) == 2
+
+
+def test_training_progress_bar_tracks_learner_decisions(tmp_path, monkeypatch):
+    from uno.rl import train as training
+
+    bars = []
+
+    class RecordingBar:
+        def __init__(self, total, desc):
+            self.total = total
+            self.desc = desc
+            self.n = 0
+            self.disable = False
+            self.postfix = None
+            self.closed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.close()
+
+        def update(self, n):
+            self.n += n
+
+        def set_postfix(self, **kwargs):
+            self.postfix = kwargs
+
+        def close(self):
+            self.closed = True
+
+    def recording_bar(*args, total, desc, **kwargs):
+        progress = RecordingBar(total, desc)
+        bars.append(progress)
+        return progress
+
+    monkeypatch.setattr(training, "bar", recording_bar)
+    cfg = toy_config(
+        data_cap=1,
+        collection=Collection(games_per_cell=1, live_games_per_worker=4),
+        evaluation=Evaluation(deals_per_cell=2, every_fraction=1.0),
+    )
+    run = Run(cfg, tmp_path / "progress", league_name="toy")
+    summary = training.train(run, verbose=True)
+
+    progress = next(p for p in bars if p.desc == "PPO training")
+    assert progress.total == 1
+    assert progress.n == summary["learner_decisions"]
+    assert progress.postfix["update"] == summary["updates"]
+    assert {"collect", "ppo", "train", "dev"} <= set(progress.postfix)
+    assert progress.closed
+
+
+def test_first_sigint_stops_after_iteration_and_writes_final_artifacts(
+    tmp_path, monkeypatch
+):
+    from uno.rl import train as training
+
+    cfg = toy_config(
+        data_cap=1_000_000,
+        collection=Collection(games_per_cell=1, live_games_per_worker=4),
+        evaluation=Evaluation(deals_per_cell=2, every_fraction=1.0),
+    )
+    run = Run(cfg, tmp_path / "interrupted", league_name="toy")
+    tracker = Tracker(
+        run.directory / "tracking",
+        run_name="interrupt-test",
+        use_mlflow=False,
+    )
+    real_iteration = training.iteration
+
+    def interrupt_after_iteration(*args, **kwargs):
+        result = real_iteration(*args, **kwargs)
+        signal.raise_signal(signal.SIGINT)
+        return result
+
+    previous = signal.getsignal(signal.SIGINT)
+    monkeypatch.setattr(training, "iteration", interrupt_after_iteration)
+    summary = training.train(run, tracker=tracker, verbose=False)
+
+    assert summary["stop_reason"] == "interrupt"
+    assert summary["updates"] == 1
+    assert summary["evaluation_points"] == 2  # initial plus graceful final
+    assert (run.directory / "checkpoints" / "final.pt").exists()
+    assert (run.directory / "summary.json").exists()
+    tracker_summary = json.loads(
+        (run.directory / "tracking" / "run_summary.json").read_text()
+    )
+    assert tracker_summary["status"] == "FINISHED"
+    assert signal.getsignal(signal.SIGINT) is previous
 
 
 def test_league_hash_is_stable_and_names_the_frozen_members():
@@ -281,8 +459,33 @@ def test_a_real_mlflow_run_records_tags_params_metrics_and_artifacts(tmp_path):
     stored = client.get_run(run_id)
     assert {"study_id", "arm", "phase", "seed", "machine", "kind", "league"} <= set(stored.data.tags)
     assert {"config_hash", "league_hash", "actor_schema", "critic_schema", "stream_version", "base_commit", "mlflow"} <= set(stored.data.params)
-    assert {"surrogate", "critic_mse", "entropy", "approx_kl", "dev_league_mean", "games", "engine_decisions"} <= set(stored.data.metrics)
-    steps = [m.step for m in client.get_metric_history(run_id, "surrogate")]
+    metric_names = set(stored.data.metrics)
+    assert {
+        "primary/dev_score",
+        "primary/train_score",
+        "primary/iteration_decisions_per_second",
+        "primary/entropy",
+        "primary/approx_kl",
+        "primary/explained_variance",
+        "progress/games",
+        "progress/engine_decisions",
+        "actor/surrogate",
+        "critic/mse",
+        "timing/collection_total_seconds",
+        "timing/update_total_seconds",
+        "evaluation/score_league_mean",
+    } <= metric_names
+    assert all(name.count("/") == 1 for name in metric_names)
+    assert not any(name.startswith("diagnostic/") for name in metric_names)
+    assert "surrogate" not in metric_names  # flat names remain CSV-only
+    steps = [
+        m.step
+        for m in client.get_metric_history(
+            run_id, "actor/surrogate"
+        )
+    ]
     assert steps == sorted(steps) and steps[0] > 0  # the step is cumulative learner decisions
+    csv_header = (run.directory / "tracking" / "metrics.csv").read_text().splitlines()[0]
+    assert "surrogate" in csv_header and "actor/surrogate" not in csv_header
     assert {"run_manifest.json", "summary.json"} <= {a.path for a in client.list_artifacts(run_id)}
     assert stored.info.status == "FINISHED"

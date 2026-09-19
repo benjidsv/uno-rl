@@ -158,15 +158,27 @@ class Tracker:
     def available(self) -> bool:
         return self._mlflow is not None
 
-    def log(self, metrics: dict, step: int) -> None:
-        """Batch one update's metrics. `None` values are written as unavailable."""
+    def log(
+        self,
+        metrics: dict,
+        step: int,
+        *,
+        mlflow_metrics: dict | None = None,
+    ) -> None:
+        """Batch metrics, optionally with a namespaced MLflow presentation.
+
+        The compact CSV retains the stable analysis names in ``metrics``. MLflow
+        may instead receive slash-delimited names so its UI groups a large run
+        into semantic folders. ``None`` values are unavailable in either view.
+        """
         row = {"step": step, "wall_time": time.time(), **metrics}
         self._append(row)
         if self._mlflow is None:
             self.pending_uploads += 1
             return
         try:
-            numeric = {k: float(v) for k, v in metrics.items() if isinstance(v, (int, float)) and v is not None}
+            presented = metrics if mlflow_metrics is None else mlflow_metrics
+            numeric = {k: float(v) for k, v in presented.items() if isinstance(v, (int, float)) and v is not None}
             self._mlflow.log_metrics(numeric, step=int(step))
         except Exception as exc:
             self.pending_uploads += 1

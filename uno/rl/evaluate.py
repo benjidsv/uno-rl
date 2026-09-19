@@ -23,6 +23,7 @@ trajectory-sampling noise at all. It requires the learner to be symmetric, which
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -137,7 +138,14 @@ def paired(a: PanelResult, b: PanelResult) -> Paired:
     return Paired(float(d.mean()), se, len(d))
 
 
-def play_panel(manifest: Manifest, actor: ActorPolicy, opponents: dict[str, Agent], training_seed: int, live_games: int = 64) -> PanelResult:
+def play_panel(
+    manifest: Manifest,
+    actor: ActorPolicy,
+    opponents: dict[str, Agent],
+    training_seed: int,
+    live_games: int = 64,
+    on_games: Callable[[int], None] | None = None,
+) -> PanelResult:
     """Play the panel with the stochastic policy, keeping scores and counters only."""
     rs: Ruleset = actor.rs
     spec = actor.spec
@@ -164,6 +172,8 @@ def play_panel(manifest: Manifest, actor: ActorPolicy, opponents: dict[str, Agen
             behavior.draws += value == 0.0
             behavior.cap_games += game.state.end == "cap"
             behavior.total_turns += game.state.turn
+        if done and on_games is not None:
+            on_games(len(done))
         active = ready
         if not active:
             continue
@@ -192,7 +202,14 @@ def play_panel(manifest: Manifest, actor: ActorPolicy, opponents: dict[str, Agen
     return PanelResult(manifest.cells, scores, deals, behavior)
 
 
-def baseline_panel(manifest: Manifest, agent: Agent, opponents: dict[str, Agent], rs: Ruleset, training_seed: int) -> PanelResult:
+def baseline_panel(
+    manifest: Manifest,
+    agent: Agent,
+    opponents: dict[str, Agent],
+    rs: Ruleset,
+    training_seed: int,
+    on_games: Callable[[int], None] | None = None,
+) -> PanelResult:
     """The same panel played by a reference agent, for the paired comparison."""
     by_cell: dict[tuple[str, int], dict[int, float]] = {c: {} for c in manifest.cells}
     behavior = Behavior()
@@ -212,6 +229,8 @@ def baseline_panel(manifest: Manifest, agent: Agent, opponents: dict[str, Agent]
         behavior.draws += value == 0.0
         behavior.cap_games += game.state.end == "cap"
         behavior.total_turns += game.state.turn
+        if on_games is not None:
+            on_games(1)
     deals = np.asarray(sorted({e.deal_seed for e in manifest.episodes}), dtype=np.int64)
     scores = {c: np.asarray([by_cell[c][d] for d in deals], dtype=np.float64) for c in manifest.cells}
     return PanelResult(manifest.cells, scores, deals, behavior)

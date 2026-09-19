@@ -153,7 +153,33 @@ def panel(opponents, deals_per_cell: int, start: int = PANEL_DEALS.start, seats:
     return Manifest(-1, tuple(episodes), cs, deals_per_cell)
 
 
+def diagnostic_panel(
+    opponents,
+    deals_per_cell: int,
+    start: int = DIAGNOSTIC_DEALS.start,
+    seats: tuple[int, ...] = (0, 1),
+) -> Manifest:
+    """A coupled DEV panel reserved for sizing and other bounded diagnostics.
+
+    This deliberately does not consume the fixed scheduled-selection panel.  It
+    has the same opponent/seat/deal coupling, so its paired variance estimates
+    transfer to choosing that panel's size without selecting on its outcomes.
+    """
+    if start < DIAGNOSTIC_DEALS.start or start + deals_per_cell > DIAGNOSTIC_DEALS.stop:
+        raise ValueError("the diagnostic panel would run outside its DEV partition")
+    cs = cells(opponents, seats)
+    episodes = []
+    offset = start - DIAGNOSTIC_DEALS.start
+    for i, (name, seat) in enumerate(cs):
+        for j in range(deals_per_cell):
+            # Independent of the requested width, so extending a sizing panel
+            # preserves every existing policy and opponent random stream.
+            episode_id = i * len(DIAGNOSTIC_DEALS) + offset + j
+            episodes.append(Episode(episode_id, start + j, name, seat, 0))
+    return Manifest(-1, tuple(episodes), cs, deals_per_cell)
+
+
 __all__ = [
     "DIAGNOSTIC_DEALS", "PANEL_DEALS", "TRAIN_DEALS", "DealSchedule", "Episode",
-    "Manifest", "build", "cells", "panel",
+    "Manifest", "build", "cells", "diagnostic_panel", "panel",
 ]  # fmt: skip
