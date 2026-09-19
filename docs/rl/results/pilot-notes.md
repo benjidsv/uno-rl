@@ -118,6 +118,13 @@ contract, adding a test that uses unequal final minibatch sizes, and naming the
 result so it is clear whether it summarizes the final policy, final epoch, or all
 optimization steps. Do not retrofit invented aggregate values into this run.
 
+**Implementation follow-up, 2026-09-19:** subsequent runs now recompute surrogate,
+entropy, ratio-clip fraction, maximum log-ratio and KL over the complete rollout
+under the final policy after each actor epoch. They also distinguish pre-update
+and post-fit same-rollout critic explained variance, report critic gradient-clipped
+fraction, and split forced from optional draws. These changes do not alter or
+retrofit the historical values above.
+
 ## Probe 1 decision and limitations
 
 Continue unchanged. The measured policy is improving substantially, full-rollout
@@ -206,19 +213,44 @@ The pilot is successful as a learning and systems-health diagnostic. Preserve it
 final/best actor at `checkpoints/final_actor.pt` (the final update was also the DEV
 selection winner). Before choosing another training intervention:
 
-1. fix the final-minibatch-only surrogate/entropy/ratio-clip diagnostics recorded
-   above, without inventing replacements for this historical run;
-2. split the misnamed draw-action metric and add post-fit critic diagnostics;
-3. validate the frozen final actor once on the preregistered 5,760-deal diagnostic
-   panel against the same-seat Heuristic reference; and
-4. only then choose a declared follow-up among more data, critic optimization,
-   gradient-cap calibration, or an optional-draw curriculum.
+1. preserve the historical run's defective fields as recorded rather than
+   inventing replacements;
+2. complete the strict diagnostic-panel sizing protocol at 9,984 deals/cell if
+   exact closure of the 0.005 half-width target remains useful; and
+3. choose a declared follow-up among more data, critic optimization, or
+   gradient-cap calibration. The corrected evaluation counters rule out an
+   optional-draw curriculum as a response to this run.
 
 The high-precision DEV command is:
 
 ```sh
-uv run uno rl devsize FULL_UNO B 0 5760 0.005 1 \
+uv run uno rl devsize FULL_UNO B 0 9984 0.005 1 \
   logs/rl/FULL_UNO_B_seed0_mb512_cpu_1789786184/checkpoints/final_actor.pt
 ```
 
 Do not spend a fresh registered EVAL block on this single-seed development choice.
+
+## Trained-checkpoint panel validation
+
+The final actor was subsequently compared with same-seat Heuristic on 8,192 deals
+per opponent/seat cell from the separate diagnostic DEV block. It scored 0.4420
+against 0.5013 for Heuristic. The paired difference was -0.0593 with a nominal 95%
+interval of `[-0.0648, -0.0538]`. All eight opponent/seat cell differences were
+negative. This confirms a meaningful remaining reference gap while remaining a
+single-seed DEV result.
+
+The paired half-width was 0.00550, narrowly above the preregistered 0.005 target;
+stable nested-prefix estimates put the requirement at 9,926 deals/cell. The next
+64-deal boundary is 9,984, so the strict sizing protocol calls for one final nested
+extension at that size. The current result is already precise enough to establish
+the qualitative gap.
+
+This evaluation used the corrected behavior counters. Forced draws accounted for
+29.55% of decisions, while Draw was optional on 59.87% of decisions and was chosen
+on only 0.0056% of those opportunities. The historical approximately 30% metric
+was therefore almost entirely forced drawing. An early optional-Draw penalty does
+not address the observed weakness and should not be the next intervention.
+
+The actor's evaluation entropy was 0.3540 versus 0.1562 for Heuristic, and its
+games averaged 46.58 turns versus 40.13. Those differences are possible leads,
+not causal explanations for the score gap.

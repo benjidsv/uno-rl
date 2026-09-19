@@ -130,6 +130,19 @@ def test_kl_and_ratio_are_zero_at_the_collection_policy():
     assert ppo.rollout_kl(actor, rollout, Optim()) < 1e-9
 
 
+def test_rollout_actor_diagnostics_are_chunk_independent_and_cover_the_final_policy():
+    actor, critic, rollout, _, _ = setup(rs=TOY2_SKIP, games_per_cell=5)
+    adv = _adv(critic, rollout)
+    optim = Optim(minibatch=next(k for k in range(5, rollout.n_decisions) if rollout.n_decisions % k))
+    with torch.no_grad():
+        parameter = actor.score[-1].weight
+        parameter.add_(torch.linspace(0.0, 0.1, parameter.numel()).reshape_as(parameter))
+    whole = ppo.rollout_actor_diagnostics(actor, rollout, optim, adv, chunk=rollout.n_decisions)
+    chunked = ppo.rollout_actor_diagnostics(actor, rollout, optim, adv, chunk=7)
+    assert chunked == pytest.approx(whole, rel=1e-5, abs=1e-6)
+    assert whole["approx_kl"] > 0.0
+
+
 # -- the objective ------------------------------------------------------------------
 
 
@@ -195,17 +208,28 @@ def test_explained_variance_is_unavailable_rather_than_invented():
     actor, critic, rollout, _, _ = setup()
     zeroed = Rollout(**{**rollout.__dict__, "terminal_return": np.zeros_like(rollout.terminal_return)})
     stats = ppo.update(actor, critic, torch.optim.Adam(actor.parameters()), torch.optim.Adam(critic.parameters()), zeroed, Optim(actor_epochs=1, critic_epochs=1), 0, 0)
-    assert stats.explained_variance is None
+    assert stats.critic_pre_update_ev is None
+    assert stats.critic_post_update_same_rollout_ev is None
 
 
 def test_update_reports_steps_epochs_and_kl_and_fits_the_critic_to_completion():
     actor, critic, rollout, _, _ = setup()
     optim = Optim(actor_epochs=4, critic_epochs=4, minibatch=32, target_kl=0.0)  # force an early stop
+    frozen_advantages = _adv(critic, rollout)
     stats = ppo.update(actor, critic, torch.optim.Adam(actor.parameters(), lr=1e-2), torch.optim.Adam(critic.parameters(), lr=1e-2), rollout, optim, 0, 0)
     assert stats.early_stopped and stats.actor_epochs == 1
     assert stats.critic_epochs == 4, "critic fitting must complete even if actor epochs stop"
     assert stats.actor_steps > 0 and stats.critic_steps > 0
     assert stats.kl_per_epoch and stats.approx_kl >= 0.0
+    final = ppo.rollout_actor_diagnostics(actor, rollout, optim, frozen_advantages)
+    assert stats.surrogate == pytest.approx(final["surrogate"])
+    assert stats.entropy == pytest.approx(final["entropy"])
+    assert stats.clip_fraction == pytest.approx(final["clip_fraction"])
+    assert stats.max_abs_log_ratio == pytest.approx(final["max_abs_log_ratio"])
+    assert stats.approx_kl == pytest.approx(final["approx_kl"])
+    assert 0.0 <= stats.critic_clipped_fraction <= 1.0
+    assert stats.critic_pre_update_ev is not None
+    assert stats.critic_post_update_same_rollout_ev is not None
     assert stats.critic_value_seconds > 0
     assert stats.actor_update_seconds > 0
     assert stats.critic_update_seconds > 0

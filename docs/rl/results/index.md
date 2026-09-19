@@ -35,12 +35,16 @@ semantic experiment file containing configuration and provenance.
 
 ## Diagnostics
 
-- [Stage 7 DEV panel sizing](stage7-dev-panel-sizing.md) — about 5,760 deals/cell
-  are needed for a paired 95% CI half-width of 0.005; the first pilot instead
-  uses 256 deals/cell at five coarse monitoring points because full precision at
-  every checkpoint is computationally infeasible.
+- [Stage 7 DEV panel sizing](stage7-dev-panel-sizing.md) — 256 deals/cell remains
+  the coarse monitoring panel. The initialized policy suggested about 5,760
+  deals/cell for a paired 95% CI half-width of 0.005, while the trained final
+  actor's 8,192-deal validation estimated 9,926; the predeclared rounding rule
+  requests a final nested extension to 9,984 deals/cell.
 - [Stage 7 full-UNO B pilot](pilot-notes.md) — seed 0 reached 501,367 learner
   decisions in 3,606.5 seconds and improved monotonically from 0.0313 to 0.4287
-  DEV score. Full-rollout KL stayed controlled despite nearly universal actor
-  gradient-norm clipping. The result also records weak critic fit, a misnamed
-  draw-action metric, and a final-minibatch-only PPO logging defect.
+  coarse-panel DEV score. On the larger diagnostic panel its final actor scored
+  0.4420 against 0.5013 for Heuristic, a paired difference of -0.0593 with a
+  nominal 95% CI of `[-0.0648, -0.0538]`. Full-rollout KL stayed controlled
+  despite nearly universal actor gradient-norm clipping. Corrected counters show
+  the former approximately 30% Draw metric was almost entirely forced drawing,
+  not avoidable optional draws.

@@ -304,12 +304,18 @@ from the unregularized return gradient. Advantage normalization starts disabled.
 
 For the KL diagnostic use sampled old-policy actions and the nonnegative estimate
 `mean((r - 1) - log(r))`; also log clip fraction and maximum absolute log-ratio.
-This is a sampled diagnostic, not an exact KL guarantee. Complete critic fitting
-even if actor epochs stop early. Log actual optimizer steps and epochs used.
+After each actor epoch, compute surrogate, entropy, KL, ratio-clip fraction and
+maximum absolute log-ratio over the complete rollout under that epoch's final
+policy. Do not report the last optimizer minibatch as an update aggregate. This is
+a sampled diagnostic, not an exact KL guarantee. Complete critic fitting even if
+actor epochs stop early. Log actual optimizer steps and epochs used.
 
 The game-summed actor objective may have larger gradients than common
 decision-averaged PPO code. Measure unclipped norm and fraction of clipped updates;
-do not interpret the proposed learning rate as transferred calibration. For the
+do this separately for actor and critic. Report critic explained variance both for
+the frozen pre-update critic on the fresh rollout and for the fitted critic on that
+same rollout; the latter measures fit, not next-rollout generalization. Do not
+interpret the proposed learning rate as transferred calibration. For the
 exact-gradient test disable entropy, normalization, clipping of gradient norms,
 and optimizer effects; compare raw parameter gradients at the collection policy.
 
@@ -418,8 +424,9 @@ confirmatory interval. Training return is a diagnostic, not the selection metric
 
 For every evaluation retain cell means, paired baseline differences, deal counts,
 standard errors/95% CIs with labels, and covariance needed for aggregates. Report
-draws, game lengths, action-cap rate, voluntary draws, keeps, wild/action-card use,
-and entropy. Aggregate the eight cell scores equally, never by decision count.
+game draws, game lengths, action-cap rate, forced draws, optional-draw opportunity
+rate, `P(Draw | Draw and a Play are both legal)`, keeps, wild/action-card use, and
+entropy. Aggregate the eight cell scores equally, never by decision count.
 
 Holdout rulebots, Random/Heuristic references, and frozen PIMC comparisons belong in
 the final report card. Give expensive PIMC and attack measurements their own caps.
@@ -456,14 +463,15 @@ folder and the remainder is a flat descriptive name. The folders are `primary`,
 `progress`, `training`, `actor`, `critic`, `batch`, `timing`, `throughput`,
 `collection`, `resources`, and `evaluation`; MLflow does not recursively render
 nested slash components. Keep only DEV/train score, whole-iteration data
-throughput, entropy, approximate KL, and critic explained variance in `primary`.
+throughput, entropy, approximate KL, and pre-update critic explained variance in
+`primary`.
 The local CSV keeps its compact flat analysis schema.
 
 | Group | Required content |
 |---|---|
-| Provenance | Base commit, dirty patch artifact if any, resolved config/hash, dependency lock, Python/Torch/MLflow versions, OS/device, schema/rules/league hashes |
+| Provenance | Base commit, dirty patch artifact if any, resolved config/full hash, algorithm hash, dependency lock, Python/Torch/MLflow versions, OS/device, schema/rules/league hashes |
 | Seeds | Training seed, DEV partitions and exact panels, logical episode counters, stream derivation version, deal reuse counts |
-| Training | Per-cell scores/counts, actor surrogate, critic MSE/explained variance, return/advantage moments, entropy, KL estimate, clip fraction, gradient norms and clipping rates |
+| Training | Per-cell scores/counts, rollout-wide final-policy actor surrogate/entropy/KL/ratio-clip diagnostics, critic MSE and pre/post-fit explained variance, return/advantage moments, gradient norms and clipping rates |
 | Progress | Learner and engine decisions, completed games, update/optimizer counts, actual epochs, cumulative time |
 | Performance | Stage wall times, throughput, inference batches, queue/drain time, transfer bytes, all-process memory and device memory |
 | Evaluation | Checkpoint ID/hash, per-cell scores/differences, primary mean, SE/CI and sample counts, behavioral summaries, baseline/panel versions |
@@ -495,8 +503,9 @@ Retain latest, previous latest, DEV best, and final; cap other milestone retenti
 A portable training checkpoint contains:
 
 - Actor and critic parameters, optimizer states, and any scheduler state.
-- Resolved immutable algorithm configuration; feature/action/rules/league schemas
-  and hashes; preprocessing; model architecture; format version.
+- Resolved full configuration and its provenance hash; a separate immutable
+  algorithm hash; feature/action/rules/league schemas and hashes; preprocessing;
+  model architecture; format version.
 - Next update/episode IDs, deal schedule position, RNG states for initialization/
   sampling/minibatches and available accelerator generators, and stream scheme.
 - Cumulative counters/time, next evaluation threshold, selected-best score and
@@ -513,12 +522,15 @@ cumulative time separately. There is no need to migrate the original MLflow DB.
 Preserve prior selected-best artifacts when moving if subsequent final selection
 can still choose them.
 
-Device, worker count, and artifact paths may change. Changing observation schema,
-league, optimizer hyperparameters, or objective makes an explicit experiment
-branch, not an invisible resume. Cross-device continuation preserves progress and
-configuration, not bitwise numerical trajectories. Exact continuation on one
-device is a tested property only if deterministic kernels/order support it; saving
-RNG states alone is not proof. A worker failure retries its assigned logical work;
+Device, worker/live-game execution width, evaluation budget/cadence, run caps, and
+artifact paths may change. Batch construction, training seed, model, observation
+schema, league, optimizer hyperparameters, and objective are immutable; changing
+one makes an explicit experiment branch, not an invisible resume. The full config
+hash records the exact segment while the algorithm hash enforces this boundary.
+Cross-device continuation preserves progress and algorithm configuration, not
+bitwise numerical trajectories. Exact continuation on one device is a tested
+property only if deterministic kernels/order support it; saving RNG states alone
+is not proof. A worker failure retries its assigned logical work;
 duplicate episode results are rejected. If recovery is uncertain, reload the last
 boundary and replay the whole iteration.
 

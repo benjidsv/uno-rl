@@ -46,11 +46,13 @@ class Behavior:
     """The behavioral summaries section 9 asks every evaluation to report."""
 
     games: int = 0
-    draws: int = 0
+    game_draws: int = 0
     cap_games: int = 0
     total_turns: int = 0
     learner_decisions: int = 0
-    voluntary_draws: int = 0
+    forced_draws: int = 0
+    optional_draw_opportunities: int = 0
+    optional_draws: int = 0
     keeps: int = 0  # Pass at AFTER_DRAW: a playable drawn card kept
     wild_plays: int = 0
     action_card_plays: int = 0
@@ -59,16 +61,47 @@ class Behavior:
     def as_dict(self) -> dict:
         n = max(self.games, 1)
         d = max(self.learner_decisions, 1)
+        opportunities = max(self.optional_draw_opportunities, 1)
         return {
-            "draw_rate": self.draws / n,
+            "game_draw_rate": self.game_draws / n,
             "action_cap_rate": self.cap_games / n,
             "mean_game_length": self.total_turns / n,
-            "voluntary_draw_rate": self.voluntary_draws / d,
+            "forced_draw_rate": self.forced_draws / d,
+            "optional_draw_opportunity_rate": self.optional_draw_opportunities / d,
+            "optional_draw_rate": self.optional_draws / opportunities,
             "keep_rate": self.keeps / d,
             "wild_play_rate": self.wild_plays / d,
             "action_card_rate": self.action_card_plays / d,
             "entropy": self.entropy_sum / d,
         }
+
+
+def _record_action(
+    behavior: Behavior,
+    rs: Ruleset,
+    obs,
+    legal: tuple[int, ...],
+    action: int,
+    entropy: float,
+    is_play: tuple[bool, ...],
+) -> None:
+    """Record mutually interpretable action counts for either evaluated policy."""
+    behavior.learner_decisions += 1
+    behavior.entropy_sum += entropy
+    has_play = any(is_play[a] for a in legal)
+    optional_draw = rs.draw_action in legal and has_play
+    behavior.optional_draw_opportunities += optional_draw
+    if action == rs.draw_action:
+        if optional_draw:
+            behavior.optional_draws += 1
+        else:
+            behavior.forced_draws += 1
+    elif action == rs.pass_action and obs.phase is Phase.AFTER_DRAW:
+        behavior.keeps += 1
+    elif is_play[action]:
+        card = rs.card_types[rs.actions[action].card]
+        behavior.wild_plays += card.is_wild
+        behavior.action_card_plays += not card.is_wild and card.rank is None
 
 
 @dataclass
@@ -169,7 +202,7 @@ def play_panel(
             value = float(returns(game.state)[game.seat])
             by_cell[(game.episode.opponent, game.episode.seat)][game.episode.deal_seed] = (value + 1.0) / 2.0
             behavior.games += 1
-            behavior.draws += value == 0.0
+            behavior.game_draws += value == 0.0
             behavior.cap_games += game.state.end == "cap"
             behavior.total_turns += game.state.turn
         if done and on_games is not None:
@@ -181,20 +214,15 @@ def play_panel(
         masks = np.stack([legal_mask(rs, o) for o in obs])
         feats = extract(spec, obs, [g.evidence for g in active] if spec.has_evidence else None)
         log_probs = actor.log_probs(feats, masks)
-        behavior.entropy_sum += float(entropy_from_log_probs(torch.from_numpy(log_probs)).sum())
+        entropies = entropy_from_log_probs(torch.from_numpy(log_probs)).numpy()
         us = np.fromiter((uniform(training_seed, EVAL, g.episode.episode_id, g.decision_index) for g in active), dtype=np.float64, count=len(active))
         chosen = actor.sample(log_probs, us)
         for i, game in enumerate(active):
             a = int(chosen[i])
-            behavior.learner_decisions += 1
-            if a == rs.draw_action:
-                behavior.voluntary_draws += 1
-            elif a == rs.pass_action and obs[i].phase is Phase.AFTER_DRAW:
-                behavior.keeps += 1
-            elif is_play[a]:
-                card = rs.card_types[rs.actions[a].card]
-                behavior.wild_plays += card.is_wild
-                behavior.action_card_plays += not card.is_wild and card.rank is None
+            legal = tuple(int(x) for x in np.flatnonzero(masks[i]))
+            _record_action(
+                behavior, rs, obs[i], legal, a, float(entropies[i]), is_play
+            )
             game.apply(a)
 
     deals = np.asarray(sorted({e.deal_seed for e in manifest.episodes}), dtype=np.int64)
@@ -213,6 +241,7 @@ def baseline_panel(
     """The same panel played by a reference agent, for the paired comparison."""
     by_cell: dict[tuple[str, int], dict[int, float]] = {c: {} for c in manifest.cells}
     behavior = Behavior()
+    is_play = tuple(isinstance(a, Play) for a in rs.actions)
     for episode in manifest.episodes:
         game = LiveGame(rs, episode, opponents[episode.opponent])
         while not game.terminal:
@@ -220,13 +249,19 @@ def baseline_panel(
             if game.terminal:
                 break
             legal = legal_actions(game.state)
-            probs = agent.policy(observe(game.state, game.seat, Level.L1), legal)
+            obs = observe(game.state, game.seat, Level.L1)
+            probs = agent.policy(obs, legal)
             u = uniform(training_seed, EVAL, episode.episode_id, game.decision_index)
-            game.apply(sample_action(probs, u))
+            action = sample_action(probs, u)
+            entropy = -sum(p * math.log(p) for p in probs.values() if p > 0.0)
+            _record_action(
+                behavior, rs, obs, legal, action, entropy, is_play
+            )
+            game.apply(action)
         value = float(returns(game.state)[game.seat])
         by_cell[(episode.opponent, episode.seat)][episode.deal_seed] = (value + 1.0) / 2.0
         behavior.games += 1
-        behavior.draws += value == 0.0
+        behavior.game_draws += value == 0.0
         behavior.cap_games += game.state.end == "cap"
         behavior.total_turns += game.state.turn
         if on_games is not None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import signal
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -18,7 +19,8 @@ import torch
 
 from tests.rl.helpers import SMALL_WIDTH
 from uno.agents.baseline import Heuristic
-from uno.game.rules import TOY
+from uno.game.engine import Phase
+from uno.game.rules import Play, TOY
 from uno.rl import checkpoint as ckpt
 from uno.rl import evaluate as ev
 from uno.rl import features as F
@@ -76,6 +78,47 @@ def test_checkpoint_refuses_a_different_schema_or_configuration(tmp_path):
     retuned = make_run(tmp_path / "lr", optim=Optim(actor_lr=1e-2))
     with pytest.raises(ValueError, match="configuration"):
         ckpt.restore(payload, retuned.config, retuned.actor, retuned.critic)
+
+
+def test_checkpoint_allows_new_budgets_evaluation_and_execution_settings(tmp_path):
+    run = make_run(tmp_path)
+    ckpt.save(
+        tmp_path / "c.pt", run.config, run.actor, run.critic,
+        run.actor_opt, run.critic_opt, run.progress, {"league": "toy"},
+    )
+    payload = ckpt.load(tmp_path / "c.pt")
+    continued_config = run.config.with_(
+        data_cap=50_000,
+        time_cap_s=600.0,
+        device="cpu",
+        collection=Collection(
+            games_per_cell=run.config.collection.games_per_cell,
+            target_decisions=run.config.collection.target_decisions,
+            workers=3,
+            live_games_per_worker=7,
+        ),
+        evaluation=Evaluation(deals_per_cell=31, every_fraction=0.25),
+    )
+    assert continued_config.hash != run.config.hash
+    assert continued_config.algorithm_hash == run.config.algorithm_hash
+    other = Run(continued_config, tmp_path / "continued", league_name="toy")
+    ckpt.restore(
+        payload, continued_config, other.actor, other.critic,
+        other.actor_opt, other.critic_opt,
+    )
+
+
+def test_legacy_checkpoint_derives_algorithm_identity_from_its_full_config(tmp_path):
+    run = make_run(tmp_path)
+    ckpt.save(
+        tmp_path / "c.pt", run.config, run.actor, run.critic,
+        run.actor_opt, run.critic_opt, run.progress,
+    )
+    payload = ckpt.load(tmp_path / "c.pt")
+    payload.pop("algorithm_hash")
+    continued = run.config.with_(data_cap=run.config.data_cap * 2)
+    other = Run(continued, tmp_path / "legacy", league_name="toy")
+    ckpt.restore(payload, continued, other.actor, other.critic)
 
 
 def test_completed_stage6_configuration_hash_remains_resume_compatible():
@@ -250,6 +293,13 @@ def test_diagnostic_panel_stream_ids_do_not_change_when_it_is_extended():
     assert all(long_ids[key] == episode_id for key, episode_id in short_ids.items())
 
 
+def test_panel_sizing_prefixes_concentrate_near_the_requested_maximum():
+    from uno.experiments.rl import _panel_sizes
+
+    assert _panel_sizes(5_760) == (4_608, 5_184, 5_760)
+    assert _panel_sizes(256) == (205, 230, 256)
+
+
 def test_paired_difference_groups_the_cells_of_a_deal(tmp_path):
     run = make_run(tmp_path, evaluation=__import__("uno.rl.config", fromlist=["Evaluation"]).Evaluation(deals_per_cell=24))
     result = ev.play_panel(run.panel, run.policy, run.opponents, run.config.training_seed)
@@ -260,7 +310,34 @@ def test_paired_difference_groups_the_cells_of_a_deal(tmp_path):
     assert diff.n == 24
     # the aggregate is the equal-weight mean of the cells, not a decision-weighted one
     assert abs(result.mean - float(np.mean(list(result.cell_means.values())))) < 1e-12
-    assert set(result.behavior.as_dict()) >= {"draw_rate", "action_cap_rate", "mean_game_length", "entropy"}
+    assert set(result.behavior.as_dict()) >= {
+        "game_draw_rate", "forced_draw_rate", "optional_draw_opportunity_rate",
+        "optional_draw_rate", "action_cap_rate", "mean_game_length", "entropy",
+    }
+    assert baseline.behavior.learner_decisions > 0
+
+
+def test_draw_behavior_separates_forced_and_optional_draws():
+    behavior = ev.Behavior()
+    is_play = tuple(isinstance(action, Play) for action in TOY.actions)
+    play = next(i for i, value in enumerate(is_play) if value)
+    obs = SimpleNamespace(phase=Phase.TURN_START)
+    ev._record_action(
+        behavior, TOY, obs, (TOY.draw_action,), TOY.draw_action, 0.0, is_play
+    )
+    ev._record_action(
+        behavior, TOY, obs, (TOY.draw_action, play), TOY.draw_action, 0.0, is_play
+    )
+    ev._record_action(
+        behavior, TOY, obs, (TOY.draw_action, play), play, 0.0, is_play
+    )
+    metrics = behavior.as_dict()
+    assert behavior.forced_draws == 1
+    assert behavior.optional_draw_opportunities == 2
+    assert behavior.optional_draws == 1
+    assert metrics["forced_draw_rate"] == pytest.approx(1 / 3)
+    assert metrics["optional_draw_opportunity_rate"] == pytest.approx(2 / 3)
+    assert metrics["optional_draw_rate"] == 0.5
 
 
 def test_panel_progress_callbacks_count_completed_games(tmp_path):
@@ -458,7 +535,10 @@ def test_a_real_mlflow_run_records_tags_params_metrics_and_artifacts(tmp_path):
     assert experiment.artifact_location == artifacts  # explicit, not the process's cwd
     stored = client.get_run(run_id)
     assert {"study_id", "arm", "phase", "seed", "machine", "kind", "league"} <= set(stored.data.tags)
-    assert {"config_hash", "league_hash", "actor_schema", "critic_schema", "stream_version", "base_commit", "mlflow"} <= set(stored.data.params)
+    assert {
+        "config_hash", "algorithm_hash", "league_hash", "actor_schema",
+        "critic_schema", "stream_version", "base_commit", "mlflow",
+    } <= set(stored.data.params)
     metric_names = set(stored.data.metrics)
     assert {
         "primary/dev_score",
@@ -466,11 +546,13 @@ def test_a_real_mlflow_run_records_tags_params_metrics_and_artifacts(tmp_path):
         "primary/iteration_decisions_per_second",
         "primary/entropy",
         "primary/approx_kl",
-        "primary/explained_variance",
+        "primary/critic_pre_update_explained_variance",
         "progress/games",
         "progress/engine_decisions",
         "actor/surrogate",
         "critic/mse",
+        "critic/post_update_same_rollout_explained_variance",
+        "critic/grad_clipped_fraction",
         "timing/collection_total_seconds",
         "timing/update_total_seconds",
         "evaluation/score_league_mean",

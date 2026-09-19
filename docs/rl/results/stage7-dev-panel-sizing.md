@@ -1,10 +1,11 @@
 # Stage 7 preflight — DEV panel sizing
 
-**Status, completed 2026-09-19:** the half-point precision target needs about
-5,700 deals/cell and is too expensive for routine checkpoint monitoring. Freeze
-256 deals/cell at quarter-budget milestones for the one-hour pilot, and reserve
-a 5,760-deal panel for one-off high-precision evaluation. This is not a
-learner-strength result and uses no EVAL seeds.
+**Status, trained-checkpoint validation 2026-09-19:** 256 deals/cell remains the
+frozen coarse monitoring panel. The initialized actor suggested about 5,760
+deals/cell for a paired half-width of 0.005, but the trained final actor had higher
+paired variance: 8,192 deals/cell achieved 0.00550 and estimated 9,926. The
+predeclared rounding rule therefore requests one final 9,984-deal validation.
+These are DEV diagnostic seeds, not a frozen EVAL claim.
 
 ## Question and decision rule
 
@@ -58,8 +59,9 @@ either sizing run as evidence of learning.
 The final nested run used 8,192 diagnostic deals/cell (65,536 games for each
 policy). The initialized actor scored 0.0321, Heuristic scored 0.5010, and their
 paired difference was -0.4689. That strength gap is expected from an untrained
-actor: it voluntarily drew on 37.7% of its decisions and is not a learning
-result.
+actor and is not a learning result. The historical 37.7% Draw-action field cannot
+be interpreted as voluntary drawing because it combined forced and optional Draw
+actions.
 
 | Deals/cell | Paired 95% half-width | Estimated deals for 0.005 |
 |---:|---:|---:|
@@ -99,10 +101,52 @@ limit is reached first ends the run. It creates a tagged local MLflow run in the
 complete update, followed by final evaluation, checkpointing, summary writing and
 tracking closure; a second Ctrl-C aborts immediately. The final boundary reuses a
 scheduled evaluation rather than replaying the same panel. If the pilot is
-promising, validate its frozen actor once at 5,760 deals/cell before setting the
-multi-seed strength protocol.
+promising, validate its frozen actor on the separate diagnostic panel before
+setting the multi-seed strength protocol.
 
 During incremental sizing, changing the requested maximum changed logical
 episode IDs and therefore stochastic policy streams. The final 8,192-deal run is
 internally nested, so the table and decision above remain valid. Future diagnostic
 panel IDs are now width-independent, preserving streams when a panel is extended.
+
+## Trained-checkpoint validation
+
+The completed pilot's final actor (update 38, 501,367 learner decisions, checksum
+`c3fc7243e0e1f97b83e0747607fa656b`) was evaluated on 8,192 diagnostic deals per
+cell, paired against the same-seat Heuristic reference. The run covered deals
+900,000–908,191 and saved its semantic result and per-deal scores under
+`logs/rl/devsize_FULL_UNO_B_seed0_1789827026/`.
+
+| Deals/cell | Actor score | Heuristic score | Paired difference | Paired 95% half-width | Estimated deals |
+|---:|---:|---:|---:|---:|---:|
+| 5,734 | 0.4439 | 0.4999 | -0.0561 | 0.00655 | 9,840 |
+| 6,963 | 0.4422 | 0.4997 | -0.0575 | 0.00596 | 9,887 |
+| 8,192 | 0.4420 | 0.5013 | -0.0593 | 0.00550 | 9,926 |
+
+At the maximum prefix, the actor's own nominal 95% interval was
+`[0.4381, 0.4458]`; the Heuristic interval was `[0.4973, 0.5052]`, and the paired
+actor-minus-Heuristic interval was `[-0.0648, -0.0538]`. Thus the strict paired
+precision target was narrowly missed, but the substantive DEV conclusion is not
+ambiguous: this checkpoint is about 5.9 score points below the reference. Every
+opponent/seat cell favored Heuristic, with cell differences from -0.0500 to
+-0.0706. This is descriptive DEV evidence, not a multi-seed or EVAL claim.
+
+The trained actor took 824.2 seconds and Heuristic 55.6 seconds. The required-size
+estimates were stable across the three prefixes, so round 9,926 upward to the next
+64-deal boundary, 9,984, and validate that nested maximum:
+
+```sh
+uv run uno rl devsize FULL_UNO B 0 9984 0.005 1 \
+  logs/rl/FULL_UNO_B_seed0_mb512_cpu_1789786184/checkpoints/final_actor.pt
+```
+
+This reruns the panel and should take about 18 minutes at the observed rate. It is
+needed only to satisfy the predeclared 0.005 sizing rule; the current interval is
+already sufficient for the qualitative strength decision.
+
+The corrected behavior counters also reject the proposed Draw-penalty diagnosis.
+Forced draws occupied 29.55% of learner decisions. Optional draws were available
+on 59.87% of decisions, but the actor chose Draw on only 0.0056% of those
+opportunities, versus 0% for Heuristic. The earlier approximately 30% field had
+mixed forced and optional draws; this trained actor is not losing six score points
+by routinely declining playable cards.

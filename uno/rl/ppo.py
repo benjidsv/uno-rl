@@ -71,7 +71,9 @@ class UpdateStats:
     actor_grad_norm: float = 0.0
     actor_clipped_fraction: float = 0.0
     critic_grad_norm: float = 0.0
-    explained_variance: float | None = None
+    critic_clipped_fraction: float = 0.0
+    critic_pre_update_ev: float | None = None
+    critic_post_update_same_rollout_ev: float | None = None
     advantage_mean: float = 0.0
     advantage_std: float = 0.0
     return_mean: float = 0.0
@@ -83,9 +85,10 @@ class UpdateStats:
     critic_update_seconds: float = 0.0
 
     def __str__(self) -> str:
-        ev = "n/a" if self.explained_variance is None else f"{self.explained_variance:.3f}"
+        pre_ev = "n/a" if self.critic_pre_update_ev is None else f"{self.critic_pre_update_ev:.3f}"
+        post_ev = "n/a" if self.critic_post_update_same_rollout_ev is None else f"{self.critic_post_update_same_rollout_ev:.3f}"
         return (
-            f"surrogate {self.surrogate:+.5f} critic mse {self.critic_mse:.5f} (ev {ev}) entropy {self.entropy:.3f} "
+            f"surrogate {self.surrogate:+.5f} critic mse {self.critic_mse:.5f} (ev {pre_ev}->{post_ev}) entropy {self.entropy:.3f} "
             f"kl {self.approx_kl:.4f} clip {self.clip_fraction:.3f} |grad| {self.actor_grad_norm:.3f} "
             f"epochs {self.actor_epochs}/{self.critic_epochs}" + (" [early stop]" if self.early_stopped else "")
         )
@@ -186,17 +189,71 @@ def weighted_gradient(actor: Actor, rollout: Rollout, adv: np.ndarray, batches, 
 
 
 @torch.no_grad()
-def rollout_kl(actor: Actor, rollout: Rollout, optim: Optim, device: str = "cpu", chunk: int = FORWARD_CHUNK) -> float:
-    """`mean((r - 1) - log r)` over the whole rollout: nonnegative, and sampled."""
-    total, n = 0.0, 0
+def rollout_actor_diagnostics(
+    actor: Actor,
+    rollout: Rollout,
+    optim: Optim,
+    adv: np.ndarray | None = None,
+    device: str = "cpu",
+    chunk: int = FORWARD_CHUNK,
+) -> dict[str, float]:
+    """Final-policy diagnostics over every decision in the rollout.
+
+    These values describe one coherent policy, unlike an average over optimizer
+    steps whose minibatches were evaluated under changing parameters. The
+    surrogate uses the frozen rollout advantages and the same game-average-sum
+    scale as the objective. With advantage normalization enabled, its diagnostic
+    normalization is rollout-wide; the shipped configuration leaves normalization
+    disabled.
+    """
+    if adv is not None and len(adv) != rollout.n_decisions:
+        raise ValueError("rollout diagnostics need one advantage per decision")
+    diagnostic_adv = None
+    if adv is not None:
+        diagnostic_adv = adv.astype(np.float32, copy=False)
+        if optim.normalize_advantages:
+            diagnostic_adv = (
+                diagnostic_adv - diagnostic_adv.mean()
+            ) / (diagnostic_adv.std() + 1e-8)
+    surrogate_total = entropy_total = kl_total = clip_total = 0.0
+    max_abs_log_ratio = 0.0
+    n = 0
     for i in range(0, rollout.n_decisions, chunk):
         sl = slice(i, i + chunk)
-        logp, _ = new_log_probs(actor, rollout.actor[sl], rollout.masks[sl], rollout.actions[sl], optim.temperature, device, None if rollout.set_id is None else rollout.set_id[sl])
+        logp, entropy = new_log_probs(actor, rollout.actor[sl], rollout.masks[sl], rollout.actions[sl], optim.temperature, device, None if rollout.set_id is None else rollout.set_id[sl])
         log_ratio = logp - torch.from_numpy(rollout.old_logp[sl].astype(np.float32)).to(device)
         r = torch.exp(log_ratio)
-        total += float(((r - 1.0) - log_ratio).sum())
+        kl_total += float(((r - 1.0) - log_ratio).sum())
+        entropy_total += float(entropy.sum())
+        clip_total += float(((r - 1.0).abs() > optim.clip).sum())
+        max_abs_log_ratio = max(max_abs_log_ratio, float(log_ratio.abs().max()))
+        if diagnostic_adv is not None:
+            a = torch.from_numpy(diagnostic_adv[sl]).to(device)
+            surrogate_total += float(
+                torch.minimum(
+                    r * a,
+                    torch.clamp(r, 1 - optim.clip, 1 + optim.clip) * a,
+                ).sum()
+            )
         n += len(logp)
-    return total / n if n else 0.0
+    scale = rollout.n_decisions / rollout.n_games if rollout.n_games else 0.0
+    return {
+        "surrogate": scale * surrogate_total / n if n and diagnostic_adv is not None else 0.0,
+        "entropy": entropy_total / n if n else 0.0,
+        "approx_kl": kl_total / n if n else 0.0,
+        "clip_fraction": clip_total / n if n else 0.0,
+        "max_abs_log_ratio": max_abs_log_ratio,
+    }
+
+
+def rollout_kl(actor: Actor, rollout: Rollout, optim: Optim, device: str = "cpu", chunk: int = FORWARD_CHUNK) -> float:
+    """`mean((r - 1) - log r)` over the whole rollout: nonnegative, and sampled."""
+    return rollout_actor_diagnostics(actor, rollout, optim, device=device, chunk=chunk)["approx_kl"]
+
+
+def _explained_variance(returns: np.ndarray, values: np.ndarray) -> float | None:
+    variance = float(np.var(returns))
+    return None if variance == 0.0 else 1.0 - float(np.var(returns - values)) / variance
 
 
 def _minibatches(rng, n: int, size: int) -> list[np.ndarray]:
@@ -232,10 +289,9 @@ def update(
     rets = rollout.returns_per_decision.astype(np.float64)
     stats.advantage_mean, stats.advantage_std = float(adv.mean()), float(adv.std())
     stats.return_mean, stats.return_std = float(rets.mean()), float(rets.std())
-    var = float(np.var(rets))
     # An explained variance with zero return variance is undefined; log it as
     # unavailable rather than inventing a value (pipeline plan section 10).
-    stats.explained_variance = None if var == 0.0 else 1.0 - float(np.var(rets - values)) / var
+    stats.critic_pre_update_ev = _explained_variance(rets, values)
 
     size = min(optim.minibatch, t)
     scale = t / g
@@ -245,7 +301,7 @@ def update(
     for epoch in range(optim.actor_epochs):
         rng = generator(training_seed, MINIBATCH, "actor", update_index, epoch)
         for index in _minibatches(rng, t, size):
-            loss, diag = actor_loss(actor, rollout, index, adv, scale, optim, device)
+            loss, _ = actor_loss(actor, rollout, index, adv, scale, optim, device)
             actor_opt.zero_grad(set_to_none=True)
             loss.backward()
             norm = float(torch.nn.utils.clip_grad_norm_(actor.parameters(), optim.actor_grad_norm))
@@ -253,13 +309,15 @@ def update(
             stats.actor_steps += 1
             stats.actor_grad_norm += norm
             stats.actor_clipped_fraction += float(norm > optim.actor_grad_norm)
-            stats.surrogate, stats.entropy = diag["surrogate"], diag["entropy"]
-            stats.clip_fraction, stats.max_abs_log_ratio = diag["clip_fraction"], max(stats.max_abs_log_ratio, diag["max_abs_log_ratio"])
         stats.actor_epochs = epoch + 1
-        kl = rollout_kl(actor, rollout, optim, device)
-        stats.kl_per_epoch.append(kl)
-        stats.approx_kl = kl
-        if kl > optim.target_kl:
+        diagnostic = rollout_actor_diagnostics(actor, rollout, optim, adv, device)
+        stats.surrogate = diagnostic["surrogate"]
+        stats.entropy = diagnostic["entropy"]
+        stats.approx_kl = diagnostic["approx_kl"]
+        stats.clip_fraction = diagnostic["clip_fraction"]
+        stats.max_abs_log_ratio = diagnostic["max_abs_log_ratio"]
+        stats.kl_per_epoch.append(stats.approx_kl)
+        if stats.approx_kl > optim.target_kl:
             stats.early_stopped = True
             break
     if stats.actor_steps:
@@ -280,7 +338,9 @@ def update(
             loss = ((pred - targets[torch.from_numpy(index.astype(np.int64)).to(device)]) ** 2).mean()
             critic_opt.zero_grad(set_to_none=True)
             loss.backward()
-            stats.critic_grad_norm += float(torch.nn.utils.clip_grad_norm_(critic.parameters(), optim.critic_grad_norm))
+            norm = float(torch.nn.utils.clip_grad_norm_(critic.parameters(), optim.critic_grad_norm))
+            stats.critic_grad_norm += norm
+            stats.critic_clipped_fraction += float(norm > optim.critic_grad_norm)
             critic_opt.step()
             stats.critic_steps += 1
             total += float(loss.detach()) * len(index)
@@ -289,6 +349,9 @@ def update(
         stats.critic_mse = total / seen if seen else math.nan
     if stats.critic_steps:
         stats.critic_grad_norm /= stats.critic_steps
+        stats.critic_clipped_fraction /= stats.critic_steps
+    post_values = critic_values(critic, rollout.critic, device)
+    stats.critic_post_update_same_rollout_ev = _explained_variance(rets, post_values)
     _synchronize_device(device)
     stats.critic_update_seconds = time.perf_counter() - started
     actor.eval()
@@ -298,5 +361,5 @@ def update(
 
 __all__ = [
     "UpdateStats", "actor_loss", "advantages", "critic_values", "new_log_probs",
-    "rollout_kl", "surrogate", "update", "weighted_gradient",
+    "rollout_actor_diagnostics", "rollout_kl", "surrogate", "update", "weighted_gradient",
 ]  # fmt: skip

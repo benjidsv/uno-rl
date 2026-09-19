@@ -3,7 +3,7 @@
 `uv run uno rl shapes [RULESET] [ARM]`            recorded tensor shapes and parameter counts
 `uv run uno rl smoke [RULESET] [ARM] [GAMES/CELL]` one bounded iteration end to end
 `uv run uno rl train [RULESET] [ARM] [SEED] [DECISIONS] [WORKERS] [GAMES/CELL] [DEV DEALS/CELL] [DEVICE] [COLLECTION_THREADS] [UPDATE_THREADS] [MINIBATCH] [TIME_CAP_S] [EVALUATION_FRACTION]`
-`uv run uno rl resume CHECKPOINT [RULESET] [ARM] [SEED] [DECISIONS]`
+`uv run uno rl resume CHECKPOINT [RULESET] [ARM] [SEED] [DECISIONS] [DEVICE] [WORKERS] [LIVE] [COLLECTION_THREADS] [UPDATE_THREADS] [TIME_CAP_S] [EVALUATION_FRACTION]`
 `uv run uno rl systems [RULESET] [ARM] [WORKERS] [LIVE] [DEVICE] [GAMES/CELL] [SAMPLES] [MINIBATCH] [COLLECTION_THREADS] [UPDATE_THREADS]`
 `uv run uno rl devsize [RULESET] [ARM] [SEED] [MAX_DEALS/CELL] [TARGET_95_HALFWIDTH] [TORCH_THREADS] [ACTOR_EXPORT]`
 `uv run uno rl pilot [SEED]`                     one-hour full-UNO B pilot preset
@@ -193,9 +193,7 @@ def cmd_train(
         ),
         **({"update_torch_threads": update_threads} if update_threads else {}),
     }
-    run.tracker = start_tracker(
-        run, study_id=tracking_study_id, kind=tracking_kind
-    )
+    run.tracker = start_tracker(run, study_id=tracking_study_id, kind=tracking_kind)
     print(
         f"\n== train {ruleset} arm {arm} seed {seed}: cap {cap:,} learner decisions, {len(run.opponents)} opponents, "
         f"{cfg.collection.games_per_cell} games/cell, minibatch {minibatch}, device {device}, "
@@ -271,7 +269,7 @@ def _rss_mib(pids: list[int]) -> dict[str, float | None]:
                 ).strip()
             )
             out[str(pid)] = kib / 1024
-        except (ValueError, subprocess.CalledProcessError):
+        except ValueError, subprocess.CalledProcessError:
             out[str(pid)] = None
     return out
 
@@ -285,7 +283,7 @@ def _current_rss_mib(pids: list[int]) -> dict[int, float]:
             ["ps", "-o", "pid=,rss=", "-p", ",".join(map(str, pids))],
             text=True,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         return {}
     out = {}
     for line in output.splitlines():
@@ -305,14 +303,14 @@ def _macos_memory_pressure() -> tuple[float | None, float | None]:
         match = re.search(r"free percentage:\s*([0-9.]+)%", output)
         if match:
             free = float(match.group(1))
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         pass
     try:
         output = subprocess.check_output(["sysctl", "-n", "vm.swapusage"], text=True)
         match = re.search(r"used = ([0-9.]+)([MG])", output)
         if match:
             swap = float(match.group(1)) * (1024 if match.group(2) == "G" else 1)
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         pass
     return free, swap
 
@@ -579,9 +577,17 @@ def cmd_systems(
 
 
 def _panel_sizes(max_deals: int) -> tuple[int, ...]:
-    """Nested sizing checkpoints, retaining an explicitly requested maximum."""
+    """Nested prefixes concentrated near an explicitly requested maximum.
+
+    Once a target panel size has been selected, nearby 80% and 90% prefixes are
+    more useful for checking its precision boundary than the old quarter/half
+    prefixes. Small panels may collapse duplicate rounded sizes, which is fine.
+    """
     return tuple(
-        sorted({min(n, max_deals) for n in (max_deals // 4, max_deals // 2, max_deals)})
+        sorted({
+            min(max_deals, max(2, round(max_deals * fraction)))
+            for fraction in (0.7, 0.85, 1.0)
+        })
     )
 
 
@@ -823,10 +829,45 @@ def cmd_resume(
     seed: int = 0,
     cap: int = 100_000,
     device: str = "cpu",
+    workers: int = 1,
+    live_games: int = 64,
+    collection_threads: int = 0,
+    update_threads: int = 0,
+    time_cap_s: float = 0.0,
+    evaluation_fraction: float = 0.1,
 ) -> None:
-    cfg = _config(ruleset, arm, seed, cap, 1, 64, 256, device)
+    if workers < 1 or live_games < 1:
+        raise SystemExit("workers and live games must be positive")
+    if collection_threads < 0 or update_threads < 0:
+        raise SystemExit("collection and update threads may be zero or positive")
+    if time_cap_s < 0 or not 0 < evaluation_fraction <= 1:
+        raise SystemExit(
+            "time cap must be nonnegative and evaluation fraction in (0, 1]"
+        )
+    cfg = _config(
+        ruleset,
+        arm,
+        seed,
+        cap,
+        workers,
+        64,
+        256,
+        device,
+        live_games=live_games,
+        evaluation_fraction=evaluation_fraction,
+    )
+    if time_cap_s:
+        cfg = cfg.with_(time_cap_s=time_cap_s)
     out = Path("logs/rl") / f"resume_{ruleset}_{arm}_seed{seed}_{int(time.time())}"
     run = resume(checkpoint, cfg, out, _league_for(ruleset), device)
+    run.execution = {
+        **(
+            {"collection_torch_threads": collection_threads}
+            if collection_threads
+            else {}
+        ),
+        **({"update_torch_threads": update_threads} if update_threads else {}),
+    }
     run.tracker = start_tracker(run, kind="resume")
     print(
         f"\n== resume from {checkpoint}: update {run.progress.update}, {run.progress.learner_decisions:,} learner decisions carried over"
@@ -834,7 +875,25 @@ def cmd_resume(
     print(
         f"   a continuation preserves progress and configuration, not bitwise numerical trajectories"
     )
-    summary = train(run, run.tracker)
+    collector = None
+    if workers > 1:
+        collector = ParallelCollector(
+            WorkerConfig(
+                ruleset=ruleset,
+                arm=arm,
+                width=cfg.width,
+                blocks=cfg.blocks,
+                league=run.league_name,
+                training_seed=seed,
+                live_games=live_games,
+            ),
+            workers,
+        )
+    try:
+        summary = train(run, run.tracker, collector)
+    finally:
+        if collector is not None:
+            collector.close()
     print(
         f"   final {summary['final_score']:.4f}, selected update {summary['selected_update']}"
     )
@@ -853,7 +912,21 @@ def main(argv: list[str]) -> None:
                 *(
                     f(x)
                     for f, x in zip(
-                        (str, str, int, int, int, int, int, str, int, int, int, float, float),
+                        (
+                            str,
+                            str,
+                            int,
+                            int,
+                            int,
+                            int,
+                            int,
+                            str,
+                            int,
+                            int,
+                            int,
+                            float,
+                            float,
+                        ),
                         rest,
                     )
                 )
@@ -862,7 +935,14 @@ def main(argv: list[str]) -> None:
             cmd_pilot(*(f(x) for f, x in zip((int,), rest)))
         case "resume":
             cmd_resume(
-                rest[0], *(f(x) for f, x in zip((str, str, int, int, str), rest[1:]))
+                rest[0],
+                *(
+                    f(x)
+                    for f, x in zip(
+                        (str, str, int, int, str, int, int, int, int, float, float),
+                        rest[1:],
+                    )
+                ),
             )
         case "systems":
             cmd_systems(

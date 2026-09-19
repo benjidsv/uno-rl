@@ -74,8 +74,10 @@ _TRAIN_MLFLOW_PATHS = {
     "actor_steps": "actor/steps",
     "early_stopped": "actor/early_stopped",
     "critic_mse": "critic/mse",
-    "explained_variance": "critic/explained_variance",
+    "critic_pre_update_ev": "critic/pre_update_explained_variance",
+    "critic_post_update_same_rollout_ev": "critic/post_update_same_rollout_explained_variance",
     "critic_grad_norm": "critic/grad_norm",
+    "critic_clipped_fraction": "critic/grad_clipped_fraction",
     "critic_epochs": "critic/epochs",
     "critic_steps": "critic/steps",
     "advantage_mean": "batch/advantage_mean",
@@ -124,7 +126,7 @@ _PRIMARY_TRAIN_METRICS = {
     "iteration_fresh_decisions_per_s": "primary/iteration_decisions_per_second",
     "entropy": "primary/entropy",
     "approx_kl": "primary/approx_kl",
-    "explained_variance": "primary/explained_variance",
+    "critic_pre_update_ev": "primary/critic_pre_update_explained_variance",
 }
 
 
@@ -256,7 +258,8 @@ def start_tracker(
         "machine": provenance(cfg.hash)["machine"], "kind": kind, "league": run.league_name,
     }  # fmt: skip
     params = {
-        **cfg.resolved(), "config_hash": cfg.hash, "stream_version": STREAM_VERSION,
+        **cfg.resolved(), "config_hash": cfg.hash, "algorithm_hash": cfg.algorithm_hash,
+        "stream_version": STREAM_VERSION,
         "league_hash": league_hash(cfg.rs, run.league_name), "actor_schema": spec(cfg.rs, cfg.arm).hash,
         "critic_schema": spec(cfg.rs, "CRITIC").hash, "shapes": str(shapes(spec(cfg.rs, cfg.arm), spec(cfg.rs, "CRITIC"), cfg.width, cfg.blocks)),
         **provenance(cfg.hash),
@@ -282,6 +285,7 @@ def _write_run_manifest(run: Run, tracker: Tracker) -> None:
     payload = {
         "config": cfg.resolved(),
         "config_hash": cfg.hash,
+        "algorithm_hash": cfg.algorithm_hash,
         "stream_version": STREAM_VERSION,
         "league": run.league_name,
         "league_members": list(run.opponents),
@@ -592,10 +596,13 @@ def _train(
             "update": run.progress.update, "games": run.progress.games, "engine_decisions": run.progress.engine_decisions,
             "optimizer_steps": run.progress.optimizer_steps, "active_seconds": run.progress.active_seconds,
             "run_wall_seconds": time.perf_counter() - started,
-            "surrogate": stats.surrogate, "critic_mse": stats.critic_mse, "explained_variance": stats.explained_variance,
+            "surrogate": stats.surrogate, "critic_mse": stats.critic_mse,
+            "critic_pre_update_ev": stats.critic_pre_update_ev,
+            "critic_post_update_same_rollout_ev": stats.critic_post_update_same_rollout_ev,
             "entropy": stats.entropy, "approx_kl": stats.approx_kl, "clip_fraction": stats.clip_fraction,
             "max_abs_log_ratio": stats.max_abs_log_ratio, "actor_grad_norm": stats.actor_grad_norm,
             "actor_clipped_fraction": stats.actor_clipped_fraction, "critic_grad_norm": stats.critic_grad_norm,
+            "critic_clipped_fraction": stats.critic_clipped_fraction,
             "advantage_mean": stats.advantage_mean, "advantage_std": stats.advantage_std,
             "return_mean": stats.return_mean, "return_std": stats.return_std,
             "actor_epochs": stats.actor_epochs, "critic_epochs": stats.critic_epochs, "early_stopped": int(stats.early_stopped),
@@ -763,6 +770,10 @@ def resume(
     """
     payload = ckpt.load(path)
     cfg = config if device is None else config.with_(device=device)
+    saved_league_hash = payload.get("league_hash")
+    expected_league_hash = league_hash(cfg.rs, league_name)
+    if saved_league_hash is not None and saved_league_hash != expected_league_hash:
+        raise ValueError("checkpoint's league differs: that is an experiment branch, not a resume")
     run = Run(cfg, Path(directory), league_name)
     progress = ckpt.restore(
         payload, cfg, run.actor, run.critic, run.actor_opt, run.critic_opt, cfg.device

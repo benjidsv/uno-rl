@@ -5,8 +5,9 @@ docs/rl/pipeline-plan.md section 11. A checkpoint is written only at a completed
 checksum manifest beside it. It carries:
 
 - actor and critic parameters, optimizer states and any scheduler state;
-- the resolved immutable algorithm configuration, the feature/action/rules/league
-  schemas and their hashes, the model architecture and a format version;
+- the resolved full configuration and separate immutable algorithm hash, the
+  feature/action/rules/league schemas and their hashes, the model architecture and
+  a format version;
 - the next update and episode IDs, the deal schedule position, the RNG states and
   the stream derivation scheme;
 - cumulative counters and time, the next evaluation threshold, the selected-best
@@ -16,12 +17,12 @@ No worker pool, live game, open queue or unfinished rollout is serialized. Tenso
 are stored on CPU and optimizer state is remapped on load, so a checkpoint moves
 between the Mac and the desktop.
 
-**What portability is and is not.** Continuing elsewhere preserves progress and
-configuration, not bitwise numerical trajectories. Saving RNG states is not a
-proof of exact continuation: that is a tested property only where deterministic
-kernels and orderings support it. Changing the observation schema, the league, the
-optimizer hyperparameters or the objective is an explicit experiment branch and is
-refused here, not absorbed as an invisible resume.
+**What portability is and is not.** Run caps, evaluation settings, device, worker
+count and live-game width may change while the algorithm hash keeps batch
+construction, seed, model, observation schema and optimizer fixed. Continuing
+elsewhere preserves progress and algorithm configuration, not bitwise numerical
+trajectories. Saving RNG states is not a proof of exact continuation: that is a
+tested property only where deterministic kernels and orderings support it.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from uno.rl.config import Config
+from uno.rl.config import Config, algorithm_hash
 from uno.rl.features import spec
 from uno.rl.model import Actor, Critic
 from uno.rl.opponents import league_hash
@@ -100,6 +101,7 @@ def save(
         "saved_at": time.time(),
         "config": config.resolved(),
         "config_hash": config.hash,
+        "algorithm_hash": config.algorithm_hash,
         "ruleset_repr": repr(rs),
         "actor_schema": spec(rs, config.arm).hash,
         "critic_schema": spec(rs, "CRITIC").hash,
@@ -126,6 +128,7 @@ def save(
         "checksum": _checksum(path),
         "format_version": FORMAT_VERSION,
         "config_hash": config.hash,
+        "algorithm_hash": config.algorithm_hash,
         "progress": progress.as_dict(),
         "lineage": lineage or {},
     }
@@ -160,8 +163,11 @@ def restore(payload: dict, config: Config, actor: Actor, critic: Critic, actor_o
         raise ValueError(f"checkpoint is for another ruleset: {payload['ruleset_repr']}")
     if payload["actor_schema"] != spec(config.rs, config.arm).hash:
         raise ValueError("checkpoint's actor feature schema differs: that is an experiment branch, not a resume")
-    if payload["config_hash"] != config.hash:
-        raise ValueError("checkpoint's resolved configuration differs: branch the experiment explicitly")
+    if payload["critic_schema"] != spec(config.rs, "CRITIC").hash:
+        raise ValueError("checkpoint's critic feature schema differs: that is an experiment branch, not a resume")
+    saved_algorithm_hash = payload.get("algorithm_hash") or algorithm_hash(payload["config"])
+    if saved_algorithm_hash != config.algorithm_hash:
+        raise ValueError("checkpoint's algorithm configuration differs: branch the experiment explicitly")
     actor.load_state_dict(payload["actor"])
     critic.load_state_dict(payload["critic"])
     actor.to(device)

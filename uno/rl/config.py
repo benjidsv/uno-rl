@@ -6,9 +6,11 @@ endorsed individually. They are bounded starting proposals: change them during
 the diagnostic pilot with a recorded reason, and freeze them before multi-seed
 gates and comparisons (pipeline plan section 1).
 
-A `Config` is hashed into checkpoints and run provenance, so a resumed or
-compared run can be shown to have used the same algorithm. Changing the
-observation schema, the league, the optimizer hyperparameters or the objective
+A `Config` has two identities. `hash` covers the complete resolved run for
+provenance. `algorithm_hash` excludes budgets and execution/evaluation settings,
+so a checkpoint can continue for longer or on another device without silently
+changing the model, optimizer, batch construction, seed or objective. Changing
+the observation schema, league, optimizer hyperparameters or objective still
 makes an explicit experiment branch, never an invisible resume (section 11).
 """
 
@@ -95,6 +97,14 @@ class Config:
 
         return f"{stable_hash(_canonical(self.resolved())):016x}"
 
+    def algorithm_resolved(self) -> dict:
+        """Configuration that must remain fixed across a true continuation."""
+        return algorithm_resolved(self.resolved())
+
+    @property
+    def algorithm_hash(self) -> str:
+        return algorithm_hash(self.resolved())
+
     def with_(self, **kw) -> Config:
         return replace(self, **kw)
 
@@ -108,4 +118,28 @@ def _canonical(d: dict):
     return d
 
 
-__all__ = ["CONFIG_VERSION", "Collection", "Config", "Evaluation", "Optim"]
+def algorithm_resolved(resolved: dict) -> dict:
+    """Project a serialized full configuration onto continuation invariants."""
+    algorithm = {
+        key: value
+        for key, value in resolved.items()
+        if key not in {"device", "data_cap", "time_cap_s", "evaluation"}
+    }
+    algorithm["collection"] = {
+        key: value
+        for key, value in resolved["collection"].items()
+        if key not in {"workers", "live_games_per_worker"}
+    }
+    return algorithm
+
+
+def algorithm_hash(resolved: dict) -> str:
+    from uno.eval.play import stable_hash
+
+    return f"{stable_hash(_canonical(algorithm_resolved(resolved))):016x}"
+
+
+__all__ = [
+    "CONFIG_VERSION", "Collection", "Config", "Evaluation", "Optim",
+    "algorithm_hash", "algorithm_resolved",
+]

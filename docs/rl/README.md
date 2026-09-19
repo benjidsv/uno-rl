@@ -18,10 +18,13 @@ and synchronized MPS within 5% end to end; the tie goes to CPU-4. On the longer
 integrated run, even free collection could not meet the plan's 10% parallel-
 scaling threshold. See the [Stage 6 result](results/stage6-m1-systems.md). The
 [DEV-panel sizing](results/stage7-dev-panel-sizing.md) selected 256 deals/cell
-for coarse quarter-budget monitoring and reserved 5,760 for one-off precision.
-The one-hour B pilot is complete; next fix its diagnostic logging defects and
-validate the final actor once on the 5,760-deal panel before choosing the next
-training intervention. The
+for coarse quarter-budget monitoring. The trained final actor's 8,192-deal
+validation clearly established a 0.0593 paired deficit to Heuristic but narrowly
+missed the strict 0.005 half-width target; the sizing rule requests a final nested
+extension to 9,984 deals/cell. The one-hour B pilot and its diagnostic
+logging/resume follow-up are complete. Finish that precision extension if strict
+closure of the sizing protocol is still useful, then choose the next training
+intervention. The
 [minibatch calibration](results/stage7-minibatch-calibration.md) retained
 CPU-4/minibatch-512 without a learning follow-up. Stages 8-10 (the A ablation,
 recurrent C comparison and frozen report card) follow Stage 7.
