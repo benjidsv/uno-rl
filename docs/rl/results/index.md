@@ -1,8 +1,9 @@
 # RL results index
 
-**Status, 2026-09-19:** exact-toy gates, the corrected M1 systems pilot, and the
-first full-UNO B learning pilot are complete. The pilot is a successful one-seed
-DEV learning diagnostic, not a frozen learner-strength or EVAL result.
+**Status, 2026-09-19:** exact-toy measurements, the corrected M1 systems pilot,
+and the first full-UNO B learning pilot are complete. The exact gradient checks
+passed, but the retained toy learning gate did not. The full-UNO pilot is a
+successful one-seed DEV learning diagnostic, not a frozen strength or EVAL result.
 
 This file is the canonical headline ledger for learned-policy measurements. The
 Steps 1-10 baselines and foundation measurements remain in the
@@ -35,6 +36,12 @@ semantic experiment file containing configuration and provenance.
 
 ## Diagnostics
 
+- [Stage 5 exact-toy study](stage5-toy-gates.md) — all four raw-gradient checks
+  passed, including the PPO/score-function identity. The retained tabular gate
+  passed 5/5 seeds against Heuristic but only 3/5 against PlayFirstRandom because
+  seeds 0 and 1 missed the seat-1 tolerance. Neural comparisons had no predeclared
+  threshold and remain diagnostic; Stage 5's exit gate is open.
+
 - [Stage 7 DEV panel sizing](stage7-dev-panel-sizing.md) — 256 deals/cell remains
   the coarse monitoring panel. The initialized policy suggested about 5,760
   deals/cell for a paired 95% CI half-width of 0.005, while the trained final
@@ -54,3 +61,7 @@ semantic experiment file containing configuration and provenance.
   `[+0.00879, +0.01672]`. This excludes zero but crosses the predeclared
   one-point practical boundary and contains no training-seed uncertainty. The
   direct A/B panel is frozen at 5,248 deals/cell; matched seeds 1–4 remain.
+- [Stage 8 extended B diagnostic](stage8-b-extended-diagnostic.md) — the corrected
+  longer B run reduced the Heuristic deficit from `-0.0593` to `-0.0116` at
+  9,984 deals/cell, but the interval still excludes parity and the score curve
+  shows diminishing returns.

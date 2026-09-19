@@ -1,14 +1,25 @@
 # Stage 8 — A/B feed-forward ablation
 
 **Status, 2026-09-19:** A seed 0 completed successfully and favored A over B by
-0.01276 on the paired diagnostic panel. The game-sampling interval excludes zero
-but crosses the predeclared 0.01 practical boundary, so complete matched seeds
-1–4 before choosing an arm. The direct A/B comparison panel is frozen at 5,248
-deals/cell. C is a later recurrent experiment and is outside this protocol.
+0.01276 at the original 500k budget. Before running matched seeds 1–4, B's 5+
+evidence bin was found to have an ambiguous marginal projection. Schema 2 attempted
+to resolve it by retaining one board, but a follow-up review found that it selected
+the oldest board and accidentally lost the promised overflow count. Its ongoing
+1,000,000-decision seed-0 run remains a diagnostic, not part of the final matched
+comparison.
+
+**Post-launch schema note:** that corrected B process loaded schema 2 and continues
+with its in-memory code. The follow-up review replaced the ambiguous overflow rule
+with schema 3 (most recent 5+ board plus an all-event count). Current loaders reject
+unknown schemas rather than silently changing a policy; actor exports with the
+known schema-2 hash use an explicit read-only compatibility extractor. Training
+resume still requires schema 3. Run future matched A/B seeds under one frozen
+schema. The revised schema-3 comparison uses the doubled
+1,000,000-decision budget to test whether B needs a longer warmup.
 
 ## Question
 
-At the same 500,000 learner-decision budget, does B's structured public-evidence
+At the 1,000,000 learner-decision budget, does B's structured public-evidence
 branch improve full-UNO league learning enough to justify retaining it over the
 simpler A position/discard representation?
 
@@ -21,16 +32,16 @@ either arm has converged or surpassed Heuristic.
 
 - Arms: A and B.
 - Training seeds: 0, 1, 2, 3 and 4, paired by seed.
-- Primary checkpoint: the final complete update at or beyond 500,000 learner
+- Primary checkpoint: the final complete update at or beyond 1,000,000 learner
   decisions. DEV-selected checkpoints are secondary because selection adds noise.
 - Collection: one process, 64 live games, 64 games per opponent/seat cell and one
   collection Torch thread.
 - PPO: CPU, four Torch threads, minibatch 512, and the existing frozen optimizer.
 - Scheduled DEV: the same 256 deals/cell at initialization, 25%, 50%, 75% and the
   final boundary.
-- Safety wall cap: 7,200 seconds. This is not the comparison budget. A run stopped
-  by time before reaching the data cap is incomplete rather than equal-data
-  evidence.
+- Safety wall cap: 7,500 seconds (2 hours 5 minutes). This is not the comparison
+  budget. A run stopped by time before reaching the data cap is incomplete rather
+  than equal-data evidence.
 - Tracking study/kind: `stage8-a-b-ablation` / `ablation-data`.
 
 Both actor and critic gradients are already norm-clipped separately at 0.5 on
@@ -44,17 +55,12 @@ Run one arm/seed with:
 uv run uno rl ablation A 0
 ```
 
-Replace A and the seed as required. The existing B seed-0 pilot is valid
-equal-data strength evidence because the subsequent diagnostic patch did not
-change its model, objective, optimizer or sampled training stream. It is not an
-equal-wall-time measurement under the current instrumentation. A same-revision B
-seed-0 rerun is therefore optional for equal-data analysis and required before a
-strict equal-wall comparison.
+Replace A and the seed as required.
 
 ## Decision rule
 
 The primary estimand is the paired-seed mean `B - A` final-checkpoint league score
-at 500,000 learner decisions. Report every seed, the mean, training-seed spread,
+at 1,000,000 learner decisions. Report every seed, the mean, training-seed spread,
 per-cell results, actual decision overshoot, games, engine decisions, wall time
 and memory. Keep game-sampling uncertainty separate from training-seed variation.
 
@@ -77,9 +83,7 @@ A/B difference can have different covariance.
 Equal wall time is a separate secondary comparison, not something inferred by
 dividing the equal-data scores by runtime. Freeze its cap and evaluation schedule
 after the equal-data seed-0 pair measures A's actual rate. Run both arms under the
-same current revision. Do not reuse the historical B run for this secondary
-endpoint because the corrected diagnostics add work even though they do not alter
-the learning algorithm.
+same current revision.
 
 ## Stop and interpretation rules
 
@@ -94,7 +98,10 @@ sizing protocol. It is an estimated size for reaching a paired 95% half-width of
 at most 0.005, not a prerequisite for this ablation and not a guarantee of an
 exactly 0.005 realized interval.
 
-## Seed-0 result
+## Seed-0 early result (500k)
+
+*Note: This was a preliminary result before the B representation bug was fixed and
+the budget doubled.*
 
 A stopped on the data cap after 37 complete updates, 506,946 learner decisions,
 18,944 games and 1,016,078 engine decisions. It took 3,473.3 active seconds and
@@ -115,7 +122,7 @@ CI `[-0.05174, -0.04189]`. The half-width was 0.00493, meeting the 0.005 target.
 All eight cell differences still favored Heuristic. This is DEV evidence from one
 training seed, not a frozen strength claim.
 
-### Direct paired A/B result
+### Direct paired A/B result (500k)
 
 The A and B diagnostic files share identical Heuristic outcomes over their first
 8,192 deals, confirming the intended common deal/opponent streams. Pairing the
@@ -157,8 +164,8 @@ earlier behavioral hypothesis.
 
 ## Next decision
 
-Proceed with matched A/B seeds 1–4 under the frozen equal-data preset. Evaluate
-each final actor on the first 5,248 diagnostic deals/cell and retain per-deal
-scores. Report the five paired training-seed differences before deciding whether
-A's seed-0 advantage is reproducible. Do not tune the critic or extend training
-within only one arm during this comparison.
+Run matched A/B seeds 0–4 under the extended 1,000,000-decision frozen equal-data
+preset. Evaluate each final actor on the first 5,248 diagnostic deals/cell and
+retain per-deal scores. Report the five paired training-seed differences before
+deciding whether A's simplicity remains superior. Do not tune the critic or
+extend training within only one arm during this comparison.

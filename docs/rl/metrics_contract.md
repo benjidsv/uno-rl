@@ -50,7 +50,20 @@ decision in that rollout, under one coherent final policy. Write
 | Metric | Definition |
 |---|---|
 | `surrogate` | `(T/G) * mean_t[min(r_t A_t, clip(r_t, 1-eps, 1+eps) A_t)]`; game-average-sum units. |
+| `policy_loss` | `-surrogate`, matching the actor's return objective as a minimized loss; entropy regularization is currently zero. |
 | `entropy` | Mean legal-action policy entropy per learner decision, in nats. |
+| `legal_actions` | Mean number of legal actions per learner decision. |
+| `max_entropy` | Mean `log(|A(s)|)` in nats: the entropy ceiling for each visited decision state. |
+| `normalized_entropy` | Mean per-state `entropy / log(|A(s)|)`, with forced one-action states contributing `0`; `1` is locally uniform. |
+| `effective_actions` | Mean `exp(entropy)`, the policy's effective number of equally likely actions (perplexity). |
+
+Entropy is measured in natural logarithms. For a state with `k` legal actions,
+the maximum is `log(k)`; a deterministic policy is `0`, and a uniform policy has
+`effective_actions = k`. Thus raw values such as `0.4`, `0.3`, and `0.2` correspond
+to effective supports of about `1.49`, `1.35`, and `1.22` actions, respectively.
+Because UNO states have different legal-action counts, use `normalized_entropy`
+and `legal_actions` together when judging whether a falling entropy reflects
+stronger preferences or simply more forced/low-choice decisions.
 | `approx_kl` | Sample mean `((r_t - 1) - log r_t)`; nonnegative sampled diagnostic, not exact KL. |
 | `clip_fraction` | Fraction of rollout decisions with `abs(r_t - 1) > eps`. |
 | `max_abs_log_ratio` | Maximum `abs(log r_t)` over the rollout. |
@@ -59,6 +72,7 @@ decision in that rollout, under one coherent final policy. Write
 | `actor_epochs`, `critic_epochs`; `actor_steps`, `critic_steps` | Epochs and minibatch optimizer steps completed in this update. Actor epochs may stop on KL; critic epochs still complete. |
 | `early_stopped` | `1` iff actor epochs stopped because rollout-wide `approx_kl > target_kl`; else `0`. |
 | `critic_mse` | Decision-mean MSE against undiscounted terminal `R_g`, averaged over the final critic epoch. |
+| `value_loss` | Alias of `critic_mse`, provided under the conventional value-learning name. |
 | `critic_pre_update_ev` | `1 - Var(R-V_old)/Var(R)` over decisions before fitting. |
 | `critic_post_update_same_rollout_ev` | The same statistic after fitting, on the same rollout; a fit diagnostic, not held-out prediction. |
 | `return_mean`, `return_std` | Population mean/SD of terminal returns broadcast to decisions; long games receive more weight. |
@@ -77,10 +91,15 @@ The same names in panel-sizing output are also recorded for the reference policy
 | `forced_draw_rate` | Forced Draw actions divided by learner decisions. |
 | `optional_draw_opportunity_rate` | Learner decisions where Draw and at least one Play were legal, divided by learner decisions. |
 | `optional_draw_rate` | Draws taken divided by optional-draw opportunities: `P(Draw | Draw and Play legal)`. |
+| `wild_choice_play_rate`, `action_choice_play_rate` | Among optional-draw decisions with both a playable wild/action category and at least one other playable category, the fraction that played that category. This measures intentional play when there is a real alternative. |
+| `wild_only_draw_rate`, `action_only_draw_rate` | Among optional-draw decisions where wild/action is the only playable category, the fraction that chose Draw instead. The complementary hold rate is `1 - draw_rate`. Wild combines Wild and Wild Draw Four; action combines Skip, Reverse, and Draw Two. |
 | `keep_rate` | Pass after drawing a playable card, divided by learner decisions. |
-| `wild_play_rate` | Wild plays divided by learner decisions. |
-| `action_card_rate` | Non-wild action-card plays divided by learner decisions. |
+| `wild_play_rate`, `action_card_rate` | Overall play frequency divided by learner decisions; descriptive only, and not a substitute for the context-conditioned choice/only-draw rates above. |
 | `entropy` | Mean legal-action entropy per evaluated learner decision, in nats. |
+| `legal_actions` | Mean number of legal actions per evaluated learner decision. |
+| `max_entropy` | Mean per-state entropy ceiling `log(|A(s)|)`, in nats. |
+| `normalized_entropy` | Mean per-state entropy divided by its ceiling; `1` is locally uniform and `0` deterministic. |
+| `effective_actions` | Mean `exp(entropy)`, the effective number of actions selected by the policy. |
 
 Zero denominators yield `0` for these behavioral rates. Game rates weight games;
 action rates and entropy weight learner decisions, not cells.

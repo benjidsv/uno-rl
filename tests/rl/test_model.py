@@ -116,6 +116,30 @@ def test_masked_probabilities_are_supported_only_on_legal_actions():
     assert (p[masks] > 0.0).all()
 
 
+def test_inverse_cdf_roundoff_never_assigns_mass_to_illegal_actions():
+    rs = MID_25
+    policy = ActorPolicy(F.spec(rs, F.ARM_A), small_actor(rs, F.ARM_A))
+    # Leading, interior and trailing illegal actions exercise u=0 and the largest
+    # representable uniform below one. The legal mass is deliberately float32 and
+    # sums just below one before the sampler's float64 renormalization.
+    logp = np.array(
+        [[-np.inf, -0.6881597, -np.inf, -0.6981597, -np.inf]],
+        dtype=np.float32,
+    )
+    chosen = policy.sample(
+        np.repeat(logp, 2, axis=0),
+        np.array([0.0, np.nextafter(1.0, 0.0)]),
+    )
+    assert chosen.tolist() == [1, 3]
+
+
+def test_inverse_cdf_rejects_out_of_range_uniforms():
+    rs = MID_25
+    policy = ActorPolicy(F.spec(rs, F.ARM_A), small_actor(rs, F.ARM_A))
+    with pytest.raises(ValueError, match=r"\[0, 1\)"):
+        policy.sample(np.array([[0.0]], dtype=np.float32), np.array([1.0]))
+
+
 def test_neural_agent_reports_the_distribution_it_would_play():
     from uno.game.engine import legal_actions
 
@@ -125,7 +149,7 @@ def test_neural_agent_reports_the_distribution_it_would_play():
         legal = legal_actions(s)
         p = agent.policy(observe(s, s.player, Level.L1), legal)
         assert set(p) == set(legal)
-        assert abs(sum(p.values()) - 1.0) < 1e-6
+        assert sum(p.values()) == pytest.approx(1.0, abs=1e-15)
 
 
 def test_entropy_ignores_illegal_actions():

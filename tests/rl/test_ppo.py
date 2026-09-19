@@ -141,6 +141,10 @@ def test_rollout_actor_diagnostics_are_chunk_independent_and_cover_the_final_pol
     chunked = ppo.rollout_actor_diagnostics(actor, rollout, optim, adv, chunk=7)
     assert chunked == pytest.approx(whole, rel=1e-5, abs=1e-6)
     assert whole["approx_kl"] > 0.0
+    assert whole["legal_actions"] >= 1.0
+    assert whole["max_entropy"] >= whole["entropy"] - 1e-6
+    assert 0.0 <= whole["normalized_entropy"] <= 1.0
+    assert whole["effective_actions"] >= 1.0
 
 
 # -- the objective ------------------------------------------------------------------
@@ -224,6 +228,10 @@ def test_update_reports_steps_epochs_and_kl_and_fits_the_critic_to_completion():
     final = ppo.rollout_actor_diagnostics(actor, rollout, optim, frozen_advantages)
     assert stats.surrogate == pytest.approx(final["surrogate"])
     assert stats.entropy == pytest.approx(final["entropy"])
+    assert stats.legal_actions == pytest.approx(final["legal_actions"])
+    assert stats.max_entropy == pytest.approx(final["max_entropy"])
+    assert stats.normalized_entropy == pytest.approx(final["normalized_entropy"])
+    assert stats.effective_actions == pytest.approx(final["effective_actions"])
     assert stats.clip_fraction == pytest.approx(final["clip_fraction"])
     assert stats.max_abs_log_ratio == pytest.approx(final["max_abs_log_ratio"])
     assert stats.approx_kl == pytest.approx(final["approx_kl"])

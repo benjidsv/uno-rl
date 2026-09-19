@@ -48,7 +48,8 @@ from uno.game.rules import Kind, Ruleset
 from uno.rl.evidence import AGE_BINS, COUNTER_CAP, MULTIPLICITY_CAP, Evidence
 from uno.rl.layout import Layout, layout
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
+EVALUATION_SCHEMA_VERSIONS = (2, SCHEMA_VERSION)
 
 AGGREGATE_CAP = 8  # a per-color evidence aggregate is exposed as min(sum, 8) / 8
 
@@ -149,9 +150,14 @@ class Spec:
 
 
 @cache
-def spec(rs: Ruleset, arm: str) -> Spec:
+def spec(rs: Ruleset, arm: str, version: int = SCHEMA_VERSION) -> Spec:
     if arm not in ARMS:
         raise ValueError(f"unknown arm {arm!r}; expected one of {ARMS}")
+    if version not in EVALUATION_SCHEMA_VERSIONS:
+        raise ValueError(
+            f"unsupported learner feature schema {version}; "
+            f"known evaluation schemas are {EVALUATION_SCHEMA_VERSIONS}"
+        )
     lay = layout(rs)
     if arm == ARM_A:
         widths = (TOK_POSITION, COL_POSITION, GLOB_POSITION)
@@ -159,7 +165,7 @@ def spec(rs: Ruleset, arm: str) -> Spec:
         widths = (TOK_EVIDENCE_END, COL_EVIDENCE_END, GLOB_EVIDENCE_END)
     else:
         widths = (TOK_CRITIC_END, COL_CRITIC_END, GLOB_CRITIC_END)
-    return Spec(rs, arm, lay, *widths)
+    return Spec(rs, arm, lay, *widths, version=version)
 
 
 # -- the production legality mask ---------------------------------------------
@@ -302,16 +308,22 @@ def extract(sp: Spec, observations, evidences=None) -> Features:
 def _evidence_row(sp: Spec, obs: Observation, ev: Evidence, t, c, g, token_of_type, type_color) -> None:
     """Write B's evidence block for one row.
 
-    The underlying indexed object is `E[active color, top type, age bin]`, whose
-    cells are capped at `MULTIPLICITY_CAP` before anything is aggregated. A color
-    permutation maps cell `(a, top, age)` to `(g a, g top, age)`, so aggregating
-    it by its own indices -- onto the top card's token, onto the active color,
-    onto the top card's color, and over everything -- keeps the color-pair
-    relation the contract asks for without ever flattening an ordered color pair.
+    Schema 3 returns at most one ``(top, active, age_bin)`` triple per bin and the
+    5+ bin uses the most recent qualifying event. The read-only schema-2 evaluator
+    reproduces its oldest-event rule. Each version therefore has one joint pair
+    per bin, making the off-diagonal
+    writes ``col[active, COL_EV_ACTIVE]`` and ``col[tc, COL_EV_TOP]`` together
+    with ``tok[top_token, TOK_EV_DIFF]`` identify the specific board without
+    collision.  (When multiple overflow-bin items existed under the old ``ages()``
+    they could produce identical marginal projections for different histories;
+    that is fixed at the ``Evidence`` level, not here.)
+
+    A color permutation maps cell ``(a, top, age)`` to ``(g a, g top, age)``,
+    so aggregating by its own indices keeps equivariance by construction.
     """
     from collections import Counter
 
-    cells = Counter(ev.ages())
+    cells = Counter(_identity_ages(ev, sp.version))
     for (top, active, age), count in cells.items():
         v = min(count, MULTIPLICITY_CAP) / MULTIPLICITY_CAP
         tc = int(type_color[top])
@@ -325,7 +337,6 @@ def _evidence_row(sp: Spec, obs: Observation, ev: Evidence, t, c, g, token_of_ty
             t[token_of_type[top], TOK_EV_DIFF + age] += v
             c[active, COL_EV_ACTIVE + age] += v
             c[tc, COL_EV_TOP + age] += v
-        g[GLOB_EV_TOTAL + age] += v
 
     # Aggregates are compressed to [0, 1] by declared, permutation-blind constants.
     # A token's block sums over at most `colors` cells, so dividing by that loses
@@ -336,9 +347,21 @@ def _evidence_row(sp: Spec, obs: Observation, ev: Evidence, t, c, g, token_of_ty
     block = c[:, COL_EV_DIAG:COL_LAST_PLAY]
     np.minimum(block, AGGREGATE_CAP, out=block)
     block /= AGGREGATE_CAP
-    total = g[GLOB_EV_TOTAL:GLOB_EVIDENCE_END]
-    np.minimum(total, COUNTER_CAP, out=total)
-    total /= COUNTER_CAP
+    if sp.version == 2:
+        # Exact compatibility for the already-running schema-2 diagnostic. It
+        # accidentally derived totals from its one representative and scaled by
+        # both multiplicity and counter caps. Keep this only for explicit replay.
+        for (_, _, age), count in cells.items():
+            g[GLOB_EV_TOTAL + age] += min(count, MULTIPLICITY_CAP) / MULTIPLICITY_CAP
+        g[GLOB_EV_TOTAL:GLOB_EVIDENCE_END] /= COUNTER_CAP
+    else:
+        # Counts are independent of the representative board identities above. In
+        # particular, the overflow total includes every 5+ item even though tok/col
+        # retain one joint board pair. These are ordinary counters: cap once, then
+        # scale once, like the penalty and draws-since-play fields below.
+        g[GLOB_EV_TOTAL:GLOB_EVIDENCE_END] = (
+            np.minimum(ev.age_counts(), COUNTER_CAP) / COUNTER_CAP
+        )
 
     if ev.last_play_card >= 0:
         t[token_of_type[ev.last_play_card], TOK_LAST_PLAY] = 1.0
@@ -352,6 +375,22 @@ def _evidence_row(sp: Spec, obs: Observation, ev: Evidence, t, c, g, token_of_ty
     g[GLOB_DRAWS_SINCE_PLAY] = min(ev.drawn_since_opp_play, COUNTER_CAP) / COUNTER_CAP
 
 
+def _identity_ages(ev: Evidence, version: int) -> list[tuple[int, int, int]]:
+    """Versioned board-identity compression for checkpoint replay."""
+    if version != 2:
+        return ev.ages()
+    result = []
+    seen_overflow = False
+    for it in ev.items:  # schema 2 retained the oldest, not the newest, 5+ item
+        age = min(ev.cum_opp_drawn - it.mark, AGE_BINS - 1)
+        if age < AGE_BINS - 1:
+            result.append((it.top, it.color, age))
+        elif not seen_overflow:
+            result.append((it.top, it.color, age))
+            seen_overflow = True
+    return result
+
+
 def extract_one(sp: Spec, obs: Observation, ev: Evidence | None = None) -> Features:
     """Single-row `extract`. The batched path is the production one; this exists so
     a scalar caller and a batch can be compared row for row."""
@@ -359,6 +398,7 @@ def extract_one(sp: Spec, obs: Observation, ev: Evidence | None = None) -> Featu
 
 
 __all__ = [
-    "ARM_A", "ARM_B", "ARM_CRITIC", "ARMS", "SCHEMA_VERSION", "Features", "Spec",
+    "ARM_A", "ARM_B", "ARM_CRITIC", "ARMS", "EVALUATION_SCHEMA_VERSIONS",
+    "SCHEMA_VERSION", "Features", "Spec",
     "extract", "extract_one", "legal_mask", "legal_masks", "spec",
 ]  # fmt: skip

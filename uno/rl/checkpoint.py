@@ -60,6 +60,8 @@ class Progress:
     next_eval_at: int = 0
     best_score: float | None = None
     best_checkpoint: str | None = None
+    best_update: int | None = None
+    best_decisions: int | None = None
     deal_schedule: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
@@ -219,16 +221,32 @@ def export_actor(path: str | Path, config: Config, actor: Actor, name: str, prog
 
 
 def load_actor(path: str | Path, rs=None):
-    """Rebuild an `ActorPolicy` and a named agent from an actor-only export."""
+    """Rebuild an actor export only under the exact saved feature schema."""
     from uno.game.rules import NAMED
     from uno.rl.policy import ActorPolicy, NeuralAgent
 
     payload = torch.load(Path(path), weights_only=False, map_location="cpu")
+    if payload.get("format_version") != FORMAT_VERSION:
+        raise ValueError(
+            f"actor export format {payload.get('format_version')} != {FORMAT_VERSION}"
+        )
     if rs is None:
         rs = next(r for r in NAMED.values() if repr(r) == payload["ruleset_repr"])
     elif repr(rs) != payload["ruleset_repr"]:
         raise ValueError(f"export is for another ruleset: {payload['ruleset_repr']}")
-    sp = spec(rs, payload["arm"])
+    candidates = [spec(rs, payload["arm"])]
+    # Schema 2 is retained as an explicit, read-only evaluator for the diagnostic
+    # launched under it. Unknown and schema-1 exports remain rejected.
+    candidates.append(spec(rs, payload["arm"], version=2))
+    sp = next(
+        (candidate for candidate in candidates if payload.get("actor_schema") == candidate.hash),
+        None,
+    )
+    if sp is None:
+        raise ValueError(
+            "actor export's feature schema differs; evaluate it with its original "
+            "versioned extractor rather than silently changing the policy"
+        )
     actor = Actor(sp, payload["width"], payload["blocks"])
     actor.load_state_dict(payload["actor"])
     return NeuralAgent(ActorPolicy(sp, actor, payload["temperature"]), payload["name"]), payload

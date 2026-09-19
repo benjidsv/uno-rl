@@ -230,14 +230,18 @@ architecture proposal, not a proof of sufficient expressiveness.
 
 ### B evidence
 
-Propose exact card-draw ages `0, 1, 2, 3, 4` plus a `5+` overflow bin. Retain old
-evidence in overflow rather than deleting it. Index voluntary-draw evidence by
-active color and full top identity, including rank/kind/color, as required by the
-contract. At insertion, exclude cards drawn at that event from that event's age;
-subsequent opponent draws age it by actual card count. Plays do not clear history.
+Use exact card-draw ages `0, 1, 2, 3, 4` plus a `5+` overflow bin. Exact bins keep
+their joint board identity. The overflow token/color channels keep the most recent
+qualifying board and a separate global counter retains the number of all overflow
+events; older board identities are an explicit compression loss. Index voluntary-
+draw evidence by active color and full top identity, including rank/kind/color, as
+required by the contract. At insertion, exclude cards drawn at that event from
+that event's age; subsequent opponent draws age it by actual card count. Plays do
+not clear history.
 
 Maintain exact integer counts internally so incremental bin updates agree with
-full-history reconstruction; expose each evidence multiplicity as `min(count, 8)/8`.
+full-history reconstruction. Scale retained board indicators by the declared
+multiplicity cap of 8; scale global per-bin event counts as `min(count, 32)/32`.
 Expose separate penalty-event and penalty-card counters, each capped at 32 and
 divided by 32, and draws since the last opponent play capped/scaled the same way.
 These caps are explicit compression choices to diagnose if B stalls. Include
@@ -280,8 +284,11 @@ game's contribution by its length, normalize separately by minibatch game counts
 or silently replace this with a flat decision-mean loss. Test minibatch/full-batch
 gradient agreement, including unequal game lengths and final partial minibatches.
 
-Critic loss is a decision-mean MSE, optimized separately. Report entropy as a
-decision mean; initial entropy bonus is zero. If later enabled, use a declared
+Critic loss is a decision-mean MSE, optimized separately. Report raw entropy in
+nats together with mean legal-action count, the local ceiling `log(|A(s)|)`,
+per-state normalized entropy, and effective actions `exp(entropy)`; raw entropy
+alone is confounded by the number of legal actions. Initial entropy bonus is zero.
+If later enabled, use a declared
 decision-mean entropy bonus with its own coefficient and validate it separately
 from the unregularized return gradient. Advantage normalization starts disabled.
 

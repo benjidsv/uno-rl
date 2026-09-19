@@ -128,10 +128,13 @@ B includes all of A, unchanged, plus a fixed-width public-history summary:
 
 Use fixed tensor indices/bins keyed by the relevant color and rank/kind, so the
 relations survive and permute with the cards. B is not a variable-length event
-model. The precise age bins, count caps, and whether old evidence is retained in an
-overflow bin must be recorded before implementation comparisons; age threshold 4
-is a pilot candidate, not a measured universal default. Define separate event age
-if used; elapsed decisions and cards drawn since evidence are different quantities.
+model. The implemented bins are exact opponent-card-draw ages 0–4 plus 5+.
+Exact-age bins contain at most one event. The 5+ token/color channels retain the
+most recent qualifying event's joint board identity, while a separate global
+channel counts every 5+ event, capped at 32. Older overflow board identities are
+compressed away. This resolves the pairing ambiguity that separate token/color
+marginals would have with multiple boards in one bin. Elapsed decisions and cards
+drawn since evidence remain different quantities.
 
 Voluntary draws are **soft evidence**. A policy may draw with a play available or
 keep a playable drawn card. These features neither restrict legality nor assert a

@@ -156,7 +156,11 @@ class TabularPolicy:
         # not, the set lookup is wrong and the whole tabular arm is meaningless.
         if not np.array_equal(self.actor.legal(set_ids), masks):
             raise ValueError("the compiled keying's legal actions disagree with the engine's mask")
-        return masked_log_probs(logits, torch.from_numpy(masks), self.temperature).numpy()
+        from uno.rl.policy import played_log_probs
+
+        return played_log_probs(
+            masked_log_probs(logits, torch.from_numpy(masks), self.temperature).numpy()
+        )
 
     def sample(self, log_probs: np.ndarray, rng_values: np.ndarray) -> np.ndarray:
         from uno.rl.policy import ActorPolicy

@@ -1,7 +1,10 @@
 # Stage 5: exact-toy gates for the PPO learner
 
-**Status:** results pending the run recorded in this file's "How it was run" section.
-Placeholders marked `TBD` are filled from `logs/rl_toy/`.
+**Status, corrected 2026-09-19:** gradient agreement passed. The retained tabular
+gate passed against Heuristic but failed against PlayFirstRandom: three of five
+training seeds met the two-seat rule. Neural comparisons were measured without a
+predeclared numerical tolerance, so they are diagnostics rather than a passed
+learning gate. Canonical artifact: `logs/rl_toy/rl_toy_all_1789764834.json`.
 
 ## Question
 
@@ -35,8 +38,10 @@ Frozen before the five-seed runs, after the bounded diagnostic in
 | Neural cap | 100,000 learner decisions per seed per seat | `NEURAL_CAP` |
 | Exact comparator | 250 Adam steps at lr 3e-3 on the exact gradient | `EXACT_STEPS`, `EXACT_LR` |
 
-The neural arm has **no** pass/fail threshold: the plan asks for a comparison and
-a reported BR gap, not a claim that the architecture is sufficient.
+No neural threshold was frozen before the multi-seed run. That departed from
+`pipeline-plan.md` sections 3 and 13, which required a justified tolerance or a
+decision to remain in diagnostics. The measurements below must therefore not be
+retroactively turned into a pass/fail result.
 
 ## Configuration and seeds
 
@@ -69,19 +74,63 @@ kept at the plan's 0.5 points.
 
 ### 1. Gradient agreement
 
-TBD
+All four fixed-opponent/seat checks passed:
+
+| Opponent | Seat | Worst projection \|z\| | PPO/reference relative error |
+|---|---:|---:|---:|
+| PlayFirstRandom | 0 | 1.388 | 3.30e-6 |
+| PlayFirstRandom | 1 | 1.046 | 3.25e-6 |
+| Heuristic | 0 | 1.688 | 3.66e-6 |
+| Heuristic | 1 | 2.162 | 3.53e-6 |
+
+The worst projection remained below 3.0 and every PPO identity error remained
+below 1e-5. Each sampled score also lay within its declared 95% check around the
+exact score. This validates the raw sampled gradient at collection weights; it
+does not validate the outcome of repeated clipped PPO updates.
 
 ### 2. Tabular five-seed gate
 
-TBD
+Gaps below are exact `BR - learned score`, in score points. The gate required
+every seed to be within 0.50 points at both seats.
+
+| Opponent | Seed | Seat 0 gap | Seat 1 gap | Two-seat result |
+|---|---:|---:|---:|---|
+| PlayFirstRandom | 0 | 0.144 | 0.624 | fail |
+| PlayFirstRandom | 1 | 0.207 | 0.890 | fail |
+| PlayFirstRandom | 2 | 0.237 | 0.352 | pass |
+| PlayFirstRandom | 3 | 0.195 | 0.363 | pass |
+| PlayFirstRandom | 4 | 0.109 | 0.110 | pass |
+| Heuristic | 0 | 0.022 | 0.099 | pass |
+| Heuristic | 1 | 0.033 | 0.101 | pass |
+| Heuristic | 2 | 0.026 | 0.107 | pass |
+| Heuristic | 3 | 0.019 | 0.023 | pass |
+| Heuristic | 4 | 0.046 | 0.022 | pass |
+
+Thus Heuristic passed 5/5 seeds, while PlayFirstRandom passed 3/5. The retained
+overall gate failed. These are exact values, so trajectory-sampling uncertainty
+cannot explain the two misses.
 
 ### 3. Neural arm: sampled against exact-gradient optimization
 
-TBD
+At 100,000 sampled learner decisions per seed/seat, sampled neural BR gaps ranged
+from 2.61–6.16 points against PlayFirstRandom and 1.77–6.42 against Heuristic.
+The 250-step exact-gradient comparator's gaps ranged from 2.65–11.56 and
+4.17–10.36 points respectively. Sampled PPO often exceeded this achieved exact
+comparator, but not in every cell. That says the chosen exact Adam run is a weak
+optimization reference in several cells; it is neither an architecture optimum
+nor evidence that the sampled learner reached its attainable limit.
 
 ## Interpretation
 
-TBD
+The production gradient and score-function plumbing passed its declared checks.
+The broader claim that the sampled optimizer passed Stage 5 does not follow: the
+retained tabular control missed in two PlayFirstRandom seat-1 runs, and the neural
+study had no valid acceptance threshold. The study also stopped at `TOY`; the
+planned `TOY_FULL` and `TOY2_SKIP` learning progression was not measured.
+
+Full-UNO work subsequently established useful diagnostic learning, but it did not
+retroactively close this gate. The residual toy failures should remain visible
+while their practical relationship to full-UNO learning is diagnosed.
 
 ## Incidental finding in existing code (not changed)
 
@@ -149,4 +198,9 @@ superseded by `uno/rl/features.py` either way.
 
 ## Next decision
 
-TBD
+Treat Stage 5 as partially passed: retain the successful gradient result, preserve
+the failed learning outcomes, and do not claim the phase exit gate. Before a
+frozen full-UNO report, either explain the PlayFirstRandom failures under a
+reviewed rule or run a newly predeclared follow-up. Any neural pass rule must be
+declared before new multi-seed data. Exercise voluntary draws and action cards on
+`TOY_FULL` / `TOY2_SKIP` rather than treating `TOY` as complete coverage.

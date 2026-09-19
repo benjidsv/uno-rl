@@ -65,6 +65,10 @@ class UpdateStats:
     surrogate: float = 0.0
     critic_mse: float = 0.0
     entropy: float = 0.0
+    legal_actions: float = 0.0
+    max_entropy: float = 0.0
+    normalized_entropy: float = 0.0
+    effective_actions: float = 0.0
     approx_kl: float = 0.0
     clip_fraction: float = 0.0
     max_abs_log_ratio: float = 0.0
@@ -89,6 +93,7 @@ class UpdateStats:
         post_ev = "n/a" if self.critic_post_update_same_rollout_ev is None else f"{self.critic_post_update_same_rollout_ev:.3f}"
         return (
             f"surrogate {self.surrogate:+.5f} critic mse {self.critic_mse:.5f} (ev {pre_ev}->{post_ev}) entropy {self.entropy:.3f} "
+            f"/ max {self.max_entropy:.3f} (norm {self.normalized_entropy:.2f}, eff {self.effective_actions:.2f}) "
             f"kl {self.approx_kl:.4f} clip {self.clip_fraction:.3f} |grad| {self.actor_grad_norm:.3f} "
             f"epochs {self.actor_epochs}/{self.critic_epochs}" + (" [early stop]" if self.early_stopped else "")
         )
@@ -216,6 +221,7 @@ def rollout_actor_diagnostics(
                 diagnostic_adv - diagnostic_adv.mean()
             ) / (diagnostic_adv.std() + 1e-8)
     surrogate_total = entropy_total = kl_total = clip_total = 0.0
+    legal_actions_total = max_entropy_total = normalized_entropy_total = effective_actions_total = 0.0
     max_abs_log_ratio = 0.0
     n = 0
     for i in range(0, rollout.n_decisions, chunk):
@@ -225,6 +231,13 @@ def rollout_actor_diagnostics(
         r = torch.exp(log_ratio)
         kl_total += float(((r - 1.0) - log_ratio).sum())
         entropy_total += float(entropy.sum())
+        legal_count = rollout.masks[sl].sum(axis=1).astype(np.float64)
+        max_entropy = np.log(np.maximum(legal_count, 1.0))
+        entropy_np = entropy.detach().cpu().numpy()
+        legal_actions_total += float(legal_count.sum())
+        max_entropy_total += float(max_entropy.sum())
+        normalized_entropy_total += float(np.divide(entropy_np, max_entropy, out=np.zeros_like(entropy_np), where=max_entropy > 0).sum())
+        effective_actions_total += float(np.exp(entropy_np).sum())
         clip_total += float(((r - 1.0).abs() > optim.clip).sum())
         max_abs_log_ratio = max(max_abs_log_ratio, float(log_ratio.abs().max()))
         if diagnostic_adv is not None:
@@ -240,6 +253,10 @@ def rollout_actor_diagnostics(
     return {
         "surrogate": scale * surrogate_total / n if n and diagnostic_adv is not None else 0.0,
         "entropy": entropy_total / n if n else 0.0,
+        "legal_actions": legal_actions_total / n if n else 0.0,
+        "max_entropy": max_entropy_total / n if n else 0.0,
+        "normalized_entropy": normalized_entropy_total / n if n else 0.0,
+        "effective_actions": effective_actions_total / n if n else 0.0,
         "approx_kl": kl_total / n if n else 0.0,
         "clip_fraction": clip_total / n if n else 0.0,
         "max_abs_log_ratio": max_abs_log_ratio,
@@ -313,6 +330,10 @@ def update(
         diagnostic = rollout_actor_diagnostics(actor, rollout, optim, adv, device)
         stats.surrogate = diagnostic["surrogate"]
         stats.entropy = diagnostic["entropy"]
+        stats.legal_actions = diagnostic["legal_actions"]
+        stats.max_entropy = diagnostic["max_entropy"]
+        stats.normalized_entropy = diagnostic["normalized_entropy"]
+        stats.effective_actions = diagnostic["effective_actions"]
         stats.approx_kl = diagnostic["approx_kl"]
         stats.clip_fraction = diagnostic["clip_fraction"]
         stats.max_abs_log_ratio = diagnostic["max_abs_log_ratio"]

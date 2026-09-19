@@ -152,8 +152,37 @@ class Evidence:
     # -- reading -----------------------------------------------------------------
 
     def ages(self) -> list[tuple[int, int, int]]:
-        """(top, active color, age bin) per retained item; the 5+ bin is the overflow."""
-        return [(it.top, it.color, min(self.cum_opp_drawn - it.mark, MAX_AGE)) for it in self.items]
+        """Board identity for exact-age items and one overflow representative.
+
+        Bins 0–4 are unique by construction: each voluntary single-card draw
+        increments ``cum_opp_drawn`` before inserting its item, so marks are
+        strictly monotone. Items can therefore share a bin only at 5+. That bin
+        retains the most recent qualifying item (largest mark): the freshest board
+        whose exact age no longer fits. Keeping one joint ``(top, color)`` pair
+        avoids the pairing ambiguity created by projecting several pairs into
+        separate token and color marginals.
+
+        ``age_counts`` separately preserves how many items occupy every bin. Older
+        overflow board identities are intentionally compressed away, not claimed
+        to survive in the token/color channels.
+        """
+        overflow = None
+        for it in self.items:
+            if self.cum_opp_drawn - it.mark >= MAX_AGE:
+                overflow = it  # items are insertion ordered, so this ends newest
+        result: list[tuple[int, int, int]] = []
+        for it in self.items:
+            age = min(self.cum_opp_drawn - it.mark, MAX_AGE)
+            if age < MAX_AGE or it is overflow:
+                result.append((it.top, it.color, age))
+        return result
+
+    def age_counts(self) -> tuple[int, ...]:
+        """Number of voluntary-draw items in each age bin, including all at 5+."""
+        counts = [0] * AGE_BINS
+        for it in self.items:
+            counts[min(self.cum_opp_drawn - it.mark, MAX_AGE)] += 1
+        return tuple(counts)
 
     def setup_tail(self, pile_size: int) -> int:
         """Public setup-skipped cards still at the pile bottom (contract section 1.3).

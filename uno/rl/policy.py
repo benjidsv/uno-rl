@@ -32,6 +32,30 @@ from uno.rl.features import Features, Spec, extract, legal_masks
 from uno.rl.model import Actor, masked_log_probs, to_tensors
 
 
+def played_probabilities(log_probs: np.ndarray) -> np.ndarray:
+    """Float64 played probabilities, normalized over finite/legal entries."""
+    if log_probs.ndim != 2:
+        raise ValueError("probabilities need a log-probability matrix")
+    legal = np.isfinite(log_probs)
+    if not legal.any(axis=1).all():
+        raise ValueError("a probability row has no legal action")
+    p = np.exp(log_probs.astype(np.float64))
+    p[~legal] = 0.0
+    mass = p.sum(axis=1, keepdims=True)
+    if not np.isfinite(mass).all() or np.any(mass <= 0.0):
+        raise ValueError("a probability row has invalid legal mass")
+    return p / mass
+
+
+def played_log_probs(log_probs: np.ndarray) -> np.ndarray:
+    """Numerically normalized log probabilities for storage and reporting."""
+    p = played_probabilities(log_probs)
+    out = np.full(p.shape, -np.inf, dtype=np.float64)
+    positive = p > 0.0
+    out[positive] = np.log(p[positive])
+    return out
+
+
 class ActorPolicy:
     """A frozen actor with one masking/temperature convention, batched.
 
@@ -56,7 +80,7 @@ class ActorPolicy:
         is a drop-in for the collector."""
         logits = self.actor(*to_tensors(features, self.device))
         lp = masked_log_probs(logits, torch.from_numpy(masks).to(self.device), self.temperature)
-        return lp.cpu().numpy()
+        return played_log_probs(lp.cpu().numpy())
 
     def distributions(self, observations, evidences=None) -> tuple[np.ndarray, np.ndarray]:
         """`(log probabilities, legal masks)` for a batch of decisions."""
@@ -72,10 +96,28 @@ class ActorPolicy:
         section 4): the same episode draws the same number whatever the worker
         count or the batch it landed in.
         """
-        p = np.exp(log_probs)
+        if log_probs.ndim != 2 or rng_values.shape != (len(log_probs),):
+            raise ValueError("sampling needs a log-probability matrix and one uniform per row")
+        if not np.isfinite(rng_values).all() or np.any((rng_values < 0.0) | (rng_values >= 1.0)):
+            raise ValueError("sampling uniforms must be finite values in [0, 1)")
+        # Reconstruct in float64 and renormalize so float32 softmax roundoff cannot
+        # assign a small leftover interval to an illegal action. Inverse-CDF uses
+        # the first cumulative mass strictly greater than u: this also skips zero-
+        # mass illegal actions when u is exactly zero.
+        p = played_probabilities(log_probs)
+        legal = np.isfinite(log_probs)
         cdf = np.cumsum(p, axis=1)
-        cdf[:, -1] = 1.0
-        return (cdf < rng_values[:, None]).sum(axis=1).clip(max=p.shape[1] - 1)
+        last_legal = p.shape[1] - 1 - np.argmax(legal[:, ::-1], axis=1)
+        cdf[np.arange(len(cdf)), last_legal] = 1.0
+        cdf = np.maximum.accumulate(cdf, axis=1)
+        sampled = (cdf <= rng_values[:, None]).sum(axis=1)
+        if not legal[np.arange(len(legal)), sampled].all():
+            raise AssertionError("inverse-CDF sampling selected an illegal action")
+        return sampled
+
+    @staticmethod
+    def probabilities(log_probs: np.ndarray) -> np.ndarray:
+        return played_probabilities(log_probs)
 
 
 class NeuralAgent:
@@ -98,8 +140,10 @@ class NeuralAgent:
         engine[list(legal)] = True
         if not np.array_equal(engine, masks[0]):
             raise ValueError("the production mask disagrees with the engine's legal actions")
-        p = np.exp(lp[0])
+        p = self.actor.probabilities(lp)[0]
         return {int(a): float(p[a]) for a in legal}
 
 
-__all__ = ["ActorPolicy", "NeuralAgent"]
+__all__ = [
+    "ActorPolicy", "NeuralAgent", "played_log_probs", "played_probabilities",
+]

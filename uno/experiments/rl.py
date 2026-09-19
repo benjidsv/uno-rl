@@ -237,7 +237,7 @@ def cmd_train(
 
 
 def cmd_pilot(seed: int = 0) -> None:
-    """The frozen first one-hour full-UNO B learning pilot."""
+    """The frozen one-hour Stage 7 full-UNO B learning pilot."""
     cmd_train(
         ruleset="FULL_UNO",
         arm=ARM_B,
@@ -261,7 +261,7 @@ def cmd_ablation(arm: str = ARM_A, seed: int = 0) -> None:
     """The frozen Stage 8 equal-data A/B representation comparison.
 
     The two-hour wall cap is a safety bound, not the comparison budget. A valid
-    run reaches the 500,000-decision soft cap; a run stopped by time is incomplete
+    run reaches the 1,000,000-decision soft cap; a run stopped by time is incomplete
     and must not be treated as equal-data evidence.
     """
     if arm not in (ARM_A, ARM_B):
@@ -270,7 +270,7 @@ def cmd_ablation(arm: str = ARM_A, seed: int = 0) -> None:
         ruleset="FULL_UNO",
         arm=arm,
         seed=seed,
-        cap=500_000,
+        cap=1_000_000,
         workers=1,
         games_per_cell=64,
         deals_per_cell=256,
@@ -278,7 +278,7 @@ def cmd_ablation(arm: str = ARM_A, seed: int = 0) -> None:
         collection_threads=1,
         update_threads=4,
         minibatch=512,
-        time_cap_s=7_200,
+        time_cap_s=7_500,
         evaluation_fraction=0.25,
         tracking_study_id="stage8-a-b-ablation",
         tracking_kind="ablation-data",

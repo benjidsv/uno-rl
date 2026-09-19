@@ -49,6 +49,10 @@ def test_checkpoint_round_trip_restores_parameters_counters_and_schedule(tmp_pat
     run = make_run(tmp_path)
     run.progress.update = 3
     run.progress.learner_decisions = 1234
+    run.progress.best_score = 0.75
+    run.progress.best_checkpoint = "checkpoints/best.pt"
+    run.progress.best_update = 2
+    run.progress.best_decisions = 900
     run.progress.deal_schedule = run.schedule.state
     manifest = ckpt.save(tmp_path / "c.pt", run.config, run.actor, run.critic, run.actor_opt, run.critic_opt, run.progress, {"league": "toy"})
     assert ckpt.verify(tmp_path / "c.pt")
@@ -65,6 +69,7 @@ def test_checkpoint_round_trip_restores_parameters_counters_and_schedule(tmp_pat
     assert not torch.equal(before, after)
     assert torch.equal(after, torch.cat([p.detach().reshape(-1) for p in run.actor.parameters()]))
     assert progress.update == 3 and progress.learner_decisions == 1234
+    assert (progress.best_score, progress.best_update, progress.best_decisions) == (0.75, 2, 900)
     assert progress.deal_schedule == run.schedule.state
 
 
@@ -121,8 +126,8 @@ def test_legacy_checkpoint_derives_algorithm_identity_from_its_full_config(tmp_p
     ckpt.restore(payload, continued, other.actor, other.critic)
 
 
-def test_completed_stage6_configuration_hash_remains_resume_compatible():
-    """Runtime queue chunking must not silently invalidate existing checkpoints."""
+def test_current_full_uno_configuration_hash_is_pinned():
+    """Feature semantics must move the resolved configuration identity."""
     cfg = Config(
         ruleset="FULL_UNO",
         arm=F.ARM_B,
@@ -134,7 +139,10 @@ def test_completed_stage6_configuration_hash_remains_resume_compatible():
         ),
         evaluation=Evaluation(deals_per_cell=16),
     )
-    assert cfg.hash == "564a372b249cbd0a"
+    # Schema 3 makes the 5+ representative and its all-event count explicit.
+    # Earlier B checkpoints are intentionally incompatible with this extractor.
+    assert cfg.hash == "d0f2232be3a2f8f3"
+
 
 
 def test_iteration_uses_and_restores_runtime_thread_budgets(tmp_path):
@@ -195,6 +203,29 @@ def test_actor_export_excludes_the_critic_and_replays_the_same_policy(tmp_path):
         assert abs(exported[a] - float(np.exp(lp[0, a]))) < 1e-6
 
 
+def test_actor_export_refuses_an_incompatible_schema_or_format(tmp_path):
+    run = make_run(tmp_path)
+    path = tmp_path / "actor.pt"
+    ckpt.export_actor(path, run.config, run.actor, "toy_actor", run.progress)
+    payload = torch.load(path, weights_only=False)
+
+    payload["actor_schema"] = "old-schema"
+    torch.save(payload, path)
+    with pytest.raises(ValueError, match="feature schema differs"):
+        ckpt.load_actor(path, TOY)
+
+    payload["actor_schema"] = F.spec(TOY, F.ARM_B, version=2).hash
+    torch.save(payload, path)
+    legacy, _ = ckpt.load_actor(path, TOY)
+    assert legacy.actor.spec.version == 2
+
+    payload["actor_schema"] = F.spec(TOY, F.ARM_B).hash
+    payload["format_version"] = ckpt.FORMAT_VERSION + 1
+    torch.save(payload, path)
+    with pytest.raises(ValueError, match="export format"):
+        ckpt.load_actor(path, TOY)
+
+
 def test_interrupted_continuation_reaches_the_same_state_as_an_uninterrupted_run(tmp_path):
     """Two iterations straight through, against one-then-resume-then-one."""
     straight = make_run(tmp_path / "straight")
@@ -218,6 +249,30 @@ def test_interrupted_continuation_reaches_the_same_state_as_an_uninterrupted_run
     a = torch.cat([p.detach().reshape(-1) for p in resumed.actor.parameters()])
     b = torch.cat([p.detach().reshape(-1) for p in straight.actor.parameters()])
     assert torch.allclose(a, b, atol=1e-6)
+
+
+def test_resume_carries_the_selected_artifact_and_metadata(tmp_path):
+    from uno.rl import train as training
+
+    source = make_run(tmp_path / "source")
+    source.progress.best_score = 0.7
+    source.progress.best_checkpoint = "checkpoints/best.pt"
+    source.progress.best_update = 0
+    source.progress.best_decisions = 0
+    training._save(source, "best")
+    training._save(source, "latest")
+
+    resumed = training.resume(
+        source.directory / "checkpoints/latest.pt",
+        source.config,
+        tmp_path / "resumed-best",
+        league_name="toy",
+    )
+    selected = resumed.directory / resumed.progress.best_checkpoint
+    assert selected.exists()
+    assert ckpt.verify(selected)
+    assert resumed.progress.best_score == 0.7
+    assert resumed.progress.best_update == 0
 
 
 # -- tracking ----------------------------------------------------------------------
@@ -313,6 +368,9 @@ def test_paired_difference_groups_the_cells_of_a_deal(tmp_path):
     assert set(result.behavior.as_dict()) >= {
         "game_draw_rate", "forced_draw_rate", "optional_draw_opportunity_rate",
         "optional_draw_rate", "action_cap_rate", "mean_game_length", "entropy",
+        "legal_actions", "max_entropy", "normalized_entropy", "effective_actions",
+        "wild_play_rate", "action_card_rate", "action_choice_play_rate",
+        "action_only_draw_rate", "wild_choice_play_rate", "wild_only_draw_rate",
     }
     assert baseline.behavior.learner_decisions > 0
 
@@ -385,10 +443,10 @@ def test_ablation_command_freezes_the_equal_data_preset(monkeypatch):
     monkeypatch.setattr(experiment, "cmd_train", lambda **kwargs: captured.update(kwargs))
     experiment.cmd_ablation(arm=F.ARM_A, seed=3)
     assert captured == {
-        "ruleset": "FULL_UNO", "arm": F.ARM_A, "seed": 3, "cap": 500_000,
+        "ruleset": "FULL_UNO", "arm": F.ARM_A, "seed": 3, "cap": 1_000_000,
         "workers": 1, "games_per_cell": 64, "deals_per_cell": 256,
         "device": "cpu", "collection_threads": 1, "update_threads": 4,
-        "minibatch": 512, "time_cap_s": 7_200, "evaluation_fraction": 0.25,
+        "minibatch": 512, "time_cap_s": 7_500, "evaluation_fraction": 0.25,
         "tracking_study_id": "stage8-a-b-ablation",
         "tracking_kind": "ablation-data",
     }
@@ -414,6 +472,35 @@ def test_training_reuses_a_boundary_evaluation_as_the_final_result(tmp_path):
     assert summary["evaluation_points"] == 2  # initial and one update boundary
     assert summary["final_evaluation_reused"] is True
     assert len(run.eval_history) == 2
+
+
+def test_every_evaluation_path_updates_the_persistent_best(tmp_path, monkeypatch):
+    from uno.rl import train as training
+
+    run = make_run(tmp_path)
+    saved = []
+    monkeypatch.setattr(training, "_save", lambda run, label: saved.append(label))
+
+    first = SimpleNamespace(mean=0.4)
+    assert training._record_evaluation(run, None, first, 0, 0.0)
+    assert saved == ["best"]
+    assert run.progress.best_update == 0
+    assert run.progress.best_decisions == 0
+    assert run.progress.best_checkpoint == "checkpoints/best.pt"
+
+    run.progress.update = 3
+    run.progress.learner_decisions = 123
+    assert not training._record_evaluation(
+        run, None, SimpleNamespace(mean=0.3), 123, 1.0
+    )
+    assert saved == ["best"]
+    assert training._record_evaluation(
+        run, None, SimpleNamespace(mean=0.5), 123, 1.0
+    )
+    assert saved == ["best", "best"]
+    assert run.progress.best_score == 0.5
+    assert run.progress.best_update == 3
+    assert run.progress.best_decisions == 123
 
 
 def test_training_progress_bar_tracks_learner_decisions(tmp_path, monkeypatch):
@@ -568,12 +655,20 @@ def test_a_real_mlflow_run_records_tags_params_metrics_and_artifacts(tmp_path):
         "primary/train_score",
         "primary/iteration_decisions_per_second",
         "primary/entropy",
+        "primary/normalized_entropy",
+        "primary/effective_actions",
         "primary/approx_kl",
         "primary/critic_pre_update_explained_variance",
         "progress/games",
         "progress/engine_decisions",
         "actor/surrogate",
+        "actor/policy_loss",
+        "actor/legal_actions",
+        "actor/max_entropy",
+        "actor/normalized_entropy",
+        "actor/effective_actions",
         "critic/mse",
+        "critic/value_loss",
         "critic/post_update_same_rollout_explained_variance",
         "critic/grad_clipped_fraction",
         "timing/collection_total_seconds",

@@ -16,7 +16,7 @@ from tests.rl.helpers import decision_games, decision_states
 from uno.game.observe import Level, observe
 from uno.game.rules import FULL_UNO, MID_25, TOY, TOY2_SKIP
 from uno.rl import features as F
-from uno.rl.evidence import MAX_AGE, Evidence
+from uno.rl.evidence import MAX_AGE, Evidence, Item
 
 RS = FULL_UNO
 OPP = 1  # evidence is always about the other seat
@@ -75,13 +75,50 @@ def test_age_counts_cards_not_draw_events():
 
 
 def test_old_evidence_is_retained_in_the_overflow_bin():
+    """The newest 5+ board survives and the global channel counts every old item."""
     public = [setup("c0r1"), ("draw", OPP, 1)]
     for _ in range(10):
         public += [play(0, "c1r1", 1), ("draw", OPP, 1)]
     e = ev(public)
     ages = [a for _, _, a in e.ages()]
-    assert max(ages) == MAX_AGE  # capped, not deleted
-    assert len(ages) == 11
+    assert max(ages) == MAX_AGE
+    assert ages.count(MAX_AGE) == 1
+    assert len(e.items) == 11
+    assert e.age_counts()[MAX_AGE] == 6
+
+    sp = F.spec(RS, F.ARM_B)
+    state = decision_states(RS, range(3))[0]
+    row = F.extract(sp, [observe(state, state.player, Level.L1)], [e])
+    assert row.glob[0, F.GLOB_EV_TOTAL + MAX_AGE] == pytest.approx(6 / 32)
+
+
+def test_overflow_bin_deduplication_prevents_pair_collision():
+    """One joint overflow pair distinguishes histories with identical marginals."""
+    sp = F.spec(RS, F.ARM_B)
+    o = observe(decision_states(RS, range(3))[0], 0, Level.L1)
+    top0, top2 = tid(RS, "c0r1"), tid(RS, "c2r1")
+    # The old all-item projection saw the same top cards, active colors and top
+    # colors in both rows; only the pairing differs.
+    a = Evidence(RS, OPP, [Item(top0, 1, 1), Item(top2, 3, 2)], cum_opp_drawn=10)
+    b = Evidence(RS, OPP, [Item(top0, 3, 1), Item(top2, 1, 2)], cum_opp_drawn=10)
+    old_a = sorted((it.top for it in a.items)), sorted((it.color for it in a.items))
+    old_b = sorted((it.top for it in b.items)), sorted((it.color for it in b.items))
+    assert old_a == old_b
+    assert a.ages() == [(top2, 3, MAX_AGE)]
+    assert b.ages() == [(top2, 1, MAX_AGE)]
+    assert a.age_counts() == b.age_counts()
+
+    fa, fb = F.extract(sp, [o], [a]), F.extract(sp, [o], [b])
+    assert not np.array_equal(fa.col, fb.col)
+    assert fa.glob[0, F.GLOB_EV_TOTAL + MAX_AGE] == pytest.approx(2 / 32)
+
+    # The explicit schema-2 evaluator reproduces the launched diagnostic: oldest
+    # representative and a one-item total scaled by both 8 and 32.
+    assert F._identity_ages(a, 2) == [(top0, 1, MAX_AGE)]
+    legacy = F.extract(F.spec(RS, F.ARM_B, version=2), [o], [a])
+    assert legacy.glob[0, F.GLOB_EV_TOTAL + MAX_AGE] == pytest.approx(1 / 256)
+
+
 
 
 # -- penalties ------------------------------------------------------------------

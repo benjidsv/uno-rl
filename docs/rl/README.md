@@ -1,8 +1,10 @@
 # RL project
 
-**Status, 2026-09-19:** the learner exists. Pipeline-plan stages 1-5 are
-implemented in `uno/rl/` and their acceptance checks pass; the exact-toy gates are
-measured in [stage5-toy-gates.md](results/stage5-toy-gates.md). The first
+**Status, 2026-09-19:** the learner exists. Pipeline-plan stages 1-4 are
+implemented in `uno/rl/`. The [Stage 5 exact-toy study](results/stage5-toy-gates.md)
+validated raw gradient agreement, but its retained tabular gate passed only 3/5
+seeds against PlayFirstRandom and no neural tolerance was predeclared; the Stage 5
+exit gate is therefore open. The first
 [full-UNO B pilot](results/pilot-notes.md) improved from 0.0313 to 0.4287 DEV
 score over 501,367 learner decisions, establishing basic from-scratch learning but
 not final strength. Adaptability and robustness remain distant follow-up
@@ -26,8 +28,11 @@ logging/resume follow-up are complete. The 9,984-deal extension is optional
 precision closure rather than an architecture gate. In the frozen
 [Stage 8 A/B ablation](results/stage8-a-ablation.md), A seed 0 was 0.01276 ahead
 of B on the direct paired diagnostic panel, but its interval crossed the
-predeclared one-point practical boundary. Complete matched seeds 1–4 before
-choosing an arm. The direct comparison panel is frozen at 5,248 deals/cell. The
+predeclared one-point practical boundary. The [extended B diagnostic](results/stage8-b-extended-diagnostic.md)
+reduced the pre-fix Heuristic deficit to about 0.012 at 9,984 deals/cell, but did
+not reach parity; it remains a one-seed schema-2 DEV result. Restart matched A/B
+seeds 0–4 under schema 3 before choosing an arm. The direct comparison panel is
+frozen at 5,248 deals/cell. The
 [minibatch calibration](results/stage7-minibatch-calibration.md) retained
 CPU-4/minibatch-512 without a learning follow-up. Stages 8-10 (the A ablation,
 recurrent C comparison and frozen report card) follow Stage 7.

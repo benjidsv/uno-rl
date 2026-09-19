@@ -26,6 +26,7 @@ interrupt. This loop never records a truncation as a terminal result.
 from __future__ import annotations
 
 import json
+import shutil
 import signal
 import threading
 import time
@@ -64,7 +65,12 @@ _TRAIN_MLFLOW_PATHS = {
     "critic_presentations": "progress/critic_presentations",
     # PPO health and optimization statistics.
     "surrogate": "actor/surrogate",
+    "policy_loss": "actor/policy_loss",
     "entropy": "actor/entropy",
+    "legal_actions": "actor/legal_actions",
+    "max_entropy": "actor/max_entropy",
+    "normalized_entropy": "actor/normalized_entropy",
+    "effective_actions": "actor/effective_actions",
     "approx_kl": "actor/approx_kl",
     "clip_fraction": "actor/clip_fraction",
     "max_abs_log_ratio": "actor/max_abs_log_ratio",
@@ -74,6 +80,7 @@ _TRAIN_MLFLOW_PATHS = {
     "actor_steps": "actor/steps",
     "early_stopped": "actor/early_stopped",
     "critic_mse": "critic/mse",
+    "value_loss": "critic/value_loss",
     "critic_pre_update_ev": "critic/pre_update_explained_variance",
     "critic_post_update_same_rollout_ev": "critic/post_update_same_rollout_explained_variance",
     "critic_grad_norm": "critic/grad_norm",
@@ -125,6 +132,8 @@ _PRIMARY_TRAIN_METRICS = {
     "train_score": "primary/train_score",
     "iteration_fresh_decisions_per_s": "primary/iteration_decisions_per_second",
     "entropy": "primary/entropy",
+    "normalized_entropy": "primary/normalized_entropy",
+    "effective_actions": "primary/effective_actions",
     "approx_kl": "primary/approx_kl",
     "critic_pre_update_ev": "primary/critic_pre_update_explained_variance",
 }
@@ -559,8 +568,9 @@ def _train(
     if run.progress.next_eval_at == 0:
         run.progress.next_eval_at = eval_every
         first = evaluate_now(run)  # the initial policy is a scheduled evaluation point
-        run.eval_history.append((0, first.mean))
-        _log_eval(run, tracker, first, 0, time.perf_counter() - started)
+        _record_evaluation(
+            run, tracker, first, 0, time.perf_counter() - started
+        )
         last_evaluation, last_evaluation_step = first, 0
         last_dev_score = first.mean
     overrun = 0.0
@@ -596,10 +606,13 @@ def _train(
             "update": run.progress.update, "games": run.progress.games, "engine_decisions": run.progress.engine_decisions,
             "optimizer_steps": run.progress.optimizer_steps, "active_seconds": run.progress.active_seconds,
             "run_wall_seconds": time.perf_counter() - started,
-            "surrogate": stats.surrogate, "critic_mse": stats.critic_mse,
+            "surrogate": stats.surrogate, "policy_loss": -stats.surrogate,
+            "critic_mse": stats.critic_mse, "value_loss": stats.critic_mse,
             "critic_pre_update_ev": stats.critic_pre_update_ev,
             "critic_post_update_same_rollout_ev": stats.critic_post_update_same_rollout_ev,
-            "entropy": stats.entropy, "approx_kl": stats.approx_kl, "clip_fraction": stats.clip_fraction,
+            "entropy": stats.entropy, "legal_actions": stats.legal_actions, "max_entropy": stats.max_entropy,
+            "normalized_entropy": stats.normalized_entropy, "effective_actions": stats.effective_actions,
+            "approx_kl": stats.approx_kl, "clip_fraction": stats.clip_fraction,
             "max_abs_log_ratio": stats.max_abs_log_ratio, "actor_grad_norm": stats.actor_grad_norm,
             "actor_clipped_fraction": stats.actor_clipped_fraction, "critic_grad_norm": stats.critic_grad_norm,
             "critic_clipped_fraction": stats.critic_clipped_fraction,
@@ -621,23 +634,15 @@ def _train(
 
         if run.progress.learner_decisions >= run.progress.next_eval_at:
             result = evaluate_now(run)
-            run.eval_history.append((run.progress.update, result.mean))
-            _log_eval(
-                run, tracker, result, run.progress.learner_decisions,
-                time.perf_counter() - started,
-            )
             last_evaluation = result
             last_evaluation_step = run.progress.learner_decisions
             last_dev_score = result.mean
-            if (
-                run.progress.best_score is None
-                or result.mean > run.progress.best_score + 1e-6
-            ):
-                run.progress.best_score = result.mean
-                run.progress.best_checkpoint = f"update{run.progress.update}"
-                _save(run, "best")
             while run.progress.next_eval_at <= run.progress.learner_decisions:
                 run.progress.next_eval_at += eval_every
+            _record_evaluation(
+                run, tracker, result, run.progress.learner_decisions,
+                time.perf_counter() - started,
+            )
             _save(run, "latest")
             last_save = time.perf_counter()
         elif time.perf_counter() - last_save > CHECKPOINT_INTERVAL_S:
@@ -666,8 +671,7 @@ def _train(
         final = last_evaluation
     else:
         final = evaluate_now(run)
-        run.eval_history.append((run.progress.update, final.mean))
-        _log_eval(
+        _record_evaluation(
             run, tracker, final, run.progress.learner_decisions,
             time.perf_counter() - started,
         )
@@ -675,7 +679,6 @@ def _train(
     wall_seconds = time.perf_counter() - started
     if cfg.time_cap_s is not None:
         overrun = max(0.0, wall_seconds - cfg.time_cap_s)
-    best_update, best_score = ev.select(run.eval_history)
     summary = {
         "stop_reason": stop_reason,
         "overrun_s": overrun,
@@ -687,8 +690,14 @@ def _train(
         "wall_seconds": wall_seconds,
         "evaluation_points": len(run.eval_history),
         "final_evaluation_reused": final_evaluation_reused,
-        "selected_update": best_update,
-        "selected_score": best_score,
+        "selected_update": run.progress.best_update,
+        "selected_decisions": run.progress.best_decisions,
+        "selected_checkpoint": run.progress.best_checkpoint,
+        "selected_checkpoint_available": bool(
+            run.progress.best_checkpoint
+            and (run.directory / run.progress.best_checkpoint).exists()
+        ),
+        "selected_score": run.progress.best_score,
         "final_score": final.mean,
         "final_ci95": final.ci95,
         "behavior": final.behavior.as_dict(),
@@ -724,6 +733,34 @@ def _log_eval(
         step=step,
         mlflow_metrics=_evaluation_mlflow_metrics(metrics, result),
     )
+
+
+def _record_evaluation(
+    run: Run,
+    tracker: Tracker | None,
+    result: ev.PanelResult,
+    step: int,
+    run_wall_seconds: float,
+) -> bool:
+    """Log one evaluation and persist a coherent global best checkpoint.
+
+    Progress owns the selection state so it survives resume. ``eval_history`` is
+    retained as the current process segment's diagnostic history; it is not used
+    to reconstruct a lineage-wide winner.
+    """
+    run.eval_history.append((run.progress.update, result.mean))
+    _log_eval(run, tracker, result, step, run_wall_seconds)
+    improved = (
+        run.progress.best_score is None
+        or result.mean > run.progress.best_score + 1e-6
+    )
+    if improved:
+        run.progress.best_score = result.mean
+        run.progress.best_checkpoint = "checkpoints/best.pt"
+        run.progress.best_update = run.progress.update
+        run.progress.best_decisions = run.progress.learner_decisions
+        _save(run, "best")
+    return improved
 
 
 def _save(run: Run, label: str) -> dict:
@@ -779,6 +816,12 @@ def resume(
         payload, cfg, run.actor, run.critic, run.actor_opt, run.critic_opt, cfg.device
     )
     run.progress = progress
+    if progress.best_update is None and progress.best_checkpoint is not None:
+        try:
+            progress.best_update = int(progress.best_checkpoint.removeprefix("update"))
+        except ValueError:
+            pass
+    _carry_best_artifacts(Path(path), run.directory, progress)
     run.schedule = (
         mf.DealSchedule.from_state(cfg.training_seed, progress.deal_schedule)
         if progress.deal_schedule
@@ -790,6 +833,46 @@ def resume(
         "resumed_at": time.time(),
     }
     return run
+
+
+def _carry_best_artifacts(
+    resumed_checkpoint: Path, destination: Path, progress: ckpt.Progress
+) -> None:
+    """Keep the lineage's selected artifact available in a resumed run directory."""
+    if progress.best_score is None:
+        return
+    source_dir = resumed_checkpoint.parent
+    source_checkpoint = source_dir / "best.pt"
+    source_actor = source_dir / "best_actor.pt"
+    if not source_checkpoint.exists() and progress.best_update == progress.update:
+        source_checkpoint = resumed_checkpoint
+        candidate = resumed_checkpoint.with_name(
+            resumed_checkpoint.stem + "_actor.pt"
+        )
+        source_actor = candidate
+    if not source_checkpoint.exists():
+        # The score remains valid metadata, but the caller copied no selected
+        # artifact. The final summary exposes availability instead of claiming one.
+        progress.best_checkpoint = None
+        return
+
+    target_dir = destination / "checkpoints"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_checkpoint = target_dir / "best.pt"
+    if source_checkpoint.resolve() != target_checkpoint.resolve():
+        shutil.copy2(source_checkpoint, target_checkpoint)
+    source_manifest = source_checkpoint.with_suffix(
+        source_checkpoint.suffix + ".manifest.json"
+    )
+    if source_manifest.exists():
+        target_manifest = target_dir / "best.pt.manifest.json"
+        if source_manifest.resolve() != target_manifest.resolve():
+            shutil.copy2(source_manifest, target_manifest)
+    if source_actor.exists():
+        target_actor = target_dir / "best_actor.pt"
+        if source_actor.resolve() != target_actor.resolve():
+            shutil.copy2(source_actor, target_actor)
+    progress.best_checkpoint = "checkpoints/best.pt"
 
 
 __all__ = [

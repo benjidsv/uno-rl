@@ -32,7 +32,7 @@ import torch
 from uno.agents.baseline import Agent
 from uno.game.engine import Phase, legal_actions, returns
 from uno.game.observe import Level, observe
-from uno.game.rules import Play, Ruleset
+from uno.game.rules import Kind, Play, Ruleset
 from uno.rl.collect import LiveGame, sample_action
 from uno.rl.features import extract, legal_mask
 from uno.rl.manifest import Manifest
@@ -53,16 +53,24 @@ class Behavior:
     forced_draws: int = 0
     optional_draw_opportunities: int = 0
     optional_draws: int = 0
+    context_play_opportunities: dict[str, int] = field(default_factory=dict)
+    context_plays: dict[str, int] = field(default_factory=dict)
+    sole_context_opportunities: dict[str, int] = field(default_factory=dict)
+    sole_context_draws: dict[str, int] = field(default_factory=dict)
     keeps: int = 0  # Pass at AFTER_DRAW: a playable drawn card kept
     wild_plays: int = 0
     action_card_plays: int = 0
     entropy_sum: float = 0.0
+    legal_actions_sum: float = 0.0
+    max_entropy_sum: float = 0.0
+    normalized_entropy_sum: float = 0.0
+    effective_actions_sum: float = 0.0
 
     def as_dict(self) -> dict:
         n = max(self.games, 1)
         d = max(self.learner_decisions, 1)
         opportunities = max(self.optional_draw_opportunities, 1)
-        return {
+        result = {
             "game_draw_rate": self.game_draws / n,
             "action_cap_rate": self.cap_games / n,
             "mean_game_length": self.total_turns / n,
@@ -73,7 +81,34 @@ class Behavior:
             "wild_play_rate": self.wild_plays / d,
             "action_card_rate": self.action_card_plays / d,
             "entropy": self.entropy_sum / d,
+            "legal_actions": self.legal_actions_sum / d,
+            "max_entropy": self.max_entropy_sum / d,
+            "normalized_entropy": self.normalized_entropy_sum / d,
+            "effective_actions": self.effective_actions_sum / d,
         }
+        for kind in _DRAW_CONTEXT_KINDS:
+            play_opportunities = self.context_play_opportunities.get(kind, 0)
+            sole_opportunities = self.sole_context_opportunities.get(kind, 0)
+            result[f"{kind}_choice_play_rate"] = self.context_plays.get(kind, 0) / max(play_opportunities, 1)
+            result[f"{kind}_only_draw_rate"] = self.sole_context_draws.get(kind, 0) / max(sole_opportunities, 1)
+        return result
+
+
+_DRAW_CONTEXT_KINDS = ("action", "wild")
+
+
+def _play_context_kinds(rs: Ruleset, legal: tuple[int, ...], is_play: tuple[bool, ...]) -> tuple[str, ...]:
+    """Unique action-card categories among playable alternatives."""
+    found = set()
+    for action in legal:
+        if not is_play[action]:
+            continue
+        card = rs.card_types[rs.actions[action].card]
+        if card.is_wild:
+            found.add("wild")
+        elif card.kind is not Kind.NUMBER:
+            found.add("action")
+    return tuple(kind for kind in _DRAW_CONTEXT_KINDS if kind in found)
 
 
 def _record_action(
@@ -88,18 +123,38 @@ def _record_action(
     """Record mutually interpretable action counts for either evaluated policy."""
     behavior.learner_decisions += 1
     behavior.entropy_sum += entropy
+    nlegal = len(legal)
+    max_entropy = math.log(nlegal) if nlegal > 1 else 0.0
+    behavior.legal_actions_sum += nlegal
+    behavior.max_entropy_sum += max_entropy
+    behavior.normalized_entropy_sum += entropy / max_entropy if max_entropy > 0 else 0.0
+    behavior.effective_actions_sum += math.exp(entropy)
     has_play = any(is_play[a] for a in legal)
     optional_draw = rs.draw_action in legal and has_play
     behavior.optional_draw_opportunities += optional_draw
+    context_kinds = _play_context_kinds(rs, legal, is_play) if optional_draw else ()
+    if len(context_kinds) >= 2:
+        for kind in context_kinds:
+            behavior.context_play_opportunities[kind] = behavior.context_play_opportunities.get(kind, 0) + 1
+    elif len(context_kinds) == 1:
+        kind = context_kinds[0]
+        behavior.sole_context_opportunities[kind] = behavior.sole_context_opportunities.get(kind, 0) + 1
     if action == rs.draw_action:
         if optional_draw:
             behavior.optional_draws += 1
+            if len(context_kinds) == 1:
+                kind = context_kinds[0]
+                behavior.sole_context_draws[kind] = behavior.sole_context_draws.get(kind, 0) + 1
         else:
             behavior.forced_draws += 1
     elif action == rs.pass_action and obs.phase is Phase.AFTER_DRAW:
         behavior.keeps += 1
     elif is_play[action]:
         card = rs.card_types[rs.actions[action].card]
+        if len(context_kinds) >= 2:
+            kind = "wild" if card.is_wild else "action" if card.kind is not Kind.NUMBER else None
+            if kind is not None:
+                behavior.context_plays[kind] = behavior.context_plays.get(kind, 0) + 1
         behavior.wild_plays += card.is_wild
         behavior.action_card_plays += not card.is_wild and card.rank is None
 
