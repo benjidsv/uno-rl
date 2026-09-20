@@ -14,11 +14,11 @@ streams (`uno.rl.streams`), the coordinator reassembles in logical ID order, and
 `tests/rl/test_parallel.py` asserts that 1 worker and N workers produce the same
 rollout. Worker count is an execution setting, not a data-allocation setting.
 
-Transfers are explicit serialized array payloads, one chunk per bundle. The
-result queue is bounded to one pending payload per worker, and the coordinator
-records serialization, backpressure, waiting, deserialization, byte volume and
-assembly separately. A shared-memory buffer pool remains a measured optimization,
-not an assumed requirement.
+Transfers use named shared-memory blocks for NumPy arrays and a small serialized
+descriptor over the result queue, one chunk per bundle. The result queue is
+bounded to one pending descriptor per worker, and the coordinator records block
+creation, backpressure, waiting, mapping/copying, byte volume and assembly
+separately. A block is unlinked after the coordinator has copied its arrays.
 
 **Failure handling.** A bundle whose worker died is retried -- in the coordinator,
 with the same logical streams, so the retry produces the same episodes. Duplicate
@@ -29,13 +29,14 @@ replayed from the last saved boundary if recovery is uncertain.
 from __future__ import annotations
 
 import multiprocessing as mp
+from multiprocessing import shared_memory
 import os
-import pickle
 import queue
 import time
 from dataclasses import dataclass
 
 import torch
+import numpy as np
 
 from uno.game.rules import NAMED
 from uno.rl.collect import Stats, collect
@@ -61,6 +62,53 @@ def _payload(rollout: Rollout) -> dict:
         "end_reason": rollout.end_reason, "engine_decisions": rollout.engine_decisions,
         "learner_decisions": rollout.learner_decisions, "offset": rollout.offset,
     }  # fmt: skip
+
+
+_ARRAY_FIELDS = (
+    "tok", "col", "glob", "ctok", "ccol", "cglob", "masks", "actions",
+    "old_logp", "decision_index", "episode", "set_id", "episode_id",
+    "terminal_return", "learner_decisions", "offset", "engine_decisions",
+)
+
+
+def _shared_payload(rollout: Rollout) -> tuple[dict, list[shared_memory.SharedMemory]]:
+    """Copy a bundle's arrays into named shared-memory blocks."""
+    plain = _payload(rollout)
+    descriptors = {}
+    handles = []
+    transferred = 0
+    for name in _ARRAY_FIELDS:
+        array = plain[name]
+        shm = shared_memory.SharedMemory(create=True, size=max(1, array.nbytes))
+        if array.nbytes:
+            np.ndarray(array.shape, dtype=array.dtype, buffer=shm.buf)[...] = array
+        descriptors[name] = (shm.name, array.shape, array.dtype.str, array.nbytes)
+        handles.append(shm)
+        transferred += array.nbytes
+    return {
+        "shared": descriptors,
+        "bytes": transferred,
+        "end_reason": plain["end_reason"],
+    }, handles
+
+
+def _load_shared_payload(payload: dict) -> dict:
+    """Map, copy, close, and unlink one shared-memory result bundle."""
+    result = {"end_reason": payload["end_reason"]}
+    opened = {}
+    try:
+        for field, (name, shape, dtype, nbytes) in payload["shared"].items():
+            opened[field] = shared_memory.SharedMemory(name=name)
+            source = np.ndarray(shape, dtype=np.dtype(dtype), buffer=opened[field].buf)
+            result[field] = source.copy() if nbytes else np.empty(shape, dtype=np.dtype(dtype))
+        return result
+    finally:
+        for shm in opened.values():
+            shm.close()
+            try:
+                shm.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _merge(builder: Builder, payload: dict, episodes: dict) -> None:
@@ -106,12 +154,23 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
             sub = Manifest(-1, tuple(episodes), (), 0)
             rollout, stats = collect(sub, policy, critic_spec, opponents, cfg.training_seed, version, cfg.live_games)
             started = time.perf_counter()
-            payload = pickle.dumps(_payload(rollout), protocol=pickle.HIGHEST_PROTOCOL)
+            payload, handles = _shared_payload(rollout)
             stats.serialization_seconds = time.perf_counter() - started
             started = time.perf_counter()
-            results.put(("bundle", bundle_id, payload, stats))
+            sent = False
+            try:
+                results.put(("bundle", bundle_id, payload, stats))
+                sent = True
+            finally:
+                for shm in handles:
+                    shm.close()
+                    if not sent:
+                        try:
+                            shm.unlink()
+                        except FileNotFoundError:
+                            pass
             queue_put_seconds += time.perf_counter() - started
-            del rollout, payload
+            del rollout, payload, handles
 
 
 class ParallelCollector:
@@ -181,9 +240,9 @@ class ParallelCollector:
                 finished_workers += 1
                 stats.result_queue_put_seconds += float(worker_stats)
                 continue
-            stats.transfer_bytes += len(payload)
+            stats.transfer_bytes += int(payload.get("bytes", len(payload)))
             started = time.perf_counter()
-            decoded = pickle.loads(payload)
+            decoded = _load_shared_payload(payload) if "shared" in payload else payload
             stats.deserialization_seconds += time.perf_counter() - started
             started = time.perf_counter()
             _merge(builder, decoded, by_id)
