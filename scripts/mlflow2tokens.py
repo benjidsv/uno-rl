@@ -207,7 +207,7 @@ def export_run_for_llm(
 
 # --- Execution Example ---
 if __name__ == "__main__":
-    RUN_ID = "15cc37bf5c2742d48beadd6776741b21"
+    RUN_ID = "192cfce0c2714a94afdf6dd4a2335114"
 
     # Fetch data with regex filtering
     metrics = fetch_mlflow_run_data(
@@ -223,6 +223,6 @@ if __name__ == "__main__":
     # Process, write to file, and print terminal summary
     export_run_for_llm(
         metrics_data=metrics,
-        output_path="rl_run_analysis.txt",
+        output_path="lowerlr.txt",
         windows_per_metric=20,  # 10 windows = max ~20 points per metric
     )
