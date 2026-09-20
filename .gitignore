@@ -15,6 +15,7 @@ wheels/
 
 # Project generated
 logs/
+docs/generated/
 
 # AI/Repomix
 .claude/

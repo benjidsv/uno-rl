@@ -1,4 +1,4 @@
-"""Benchmark PPO loops using torch.utils.benchmark."""
+"""Benchmark PPO loops using torch.utils.benchmark and standard timers."""
 
 import time
 import json
@@ -140,7 +140,7 @@ def main():
         rollout_size = rollout.n_decisions
         print(f"Collected rollout of size {rollout_size} decisions.")
 
-        # Benchmark 1: 1 Minibatch
+        # Benchmark 1: 1 Minibatch (fast microbenchmark, safe to use timeit)
         print("Benchmarking 1 minibatch...")
         mb_rollout = slice_rollout(rollout, minibatch)
         mb_optim = replace(cfg.optim, actor_epochs=1, critic_epochs=1, minibatch=minibatch)
@@ -153,32 +153,21 @@ def main():
             },
             num_threads=update_threads,
         ).timeit(10)
-        
-        # Benchmark 2: 1 Complete Update
-        print("Benchmarking 1 complete update...")
-        t_update = benchmark.Timer(
-            stmt="update(actor, critic, actor_opt, critic_opt, r, o, seed, 0, device)",
-            globals={
-                "update": ppo.update, "actor": run.actor, "critic": run.critic,
-                "actor_opt": run.actor_opt, "critic_opt": run.critic_opt,
-                "r": rollout, "o": cfg.optim, "seed": seed, "device": device,
-            },
-            num_threads=update_threads,
-        ).timeit(5)
-        
-        # Benchmark 3: Full Cycle
-        print("Benchmarking full cycle (collect + update)...")
-        t_cycle = benchmark.Timer(
-            stmt="_iteration(run, collector, update_threads)",
-            globals={
-                "_iteration": _iteration, "run": run, "collector": collector, "update_threads": update_threads,
-            },
-            num_threads=collection_threads,
-        ).timeit(3)
-
         mb_time = t_mb.mean
-        update_time = t_update.mean
-        cycle_time = t_cycle.mean
+        
+        # Benchmark 2: 1 Complete Update (macro benchmark, use single pass to avoid 20m calibrations)
+        print("Benchmarking 1 complete update...")
+        t0 = time.perf_counter()
+        ppo.update(run.actor, run.critic, run.actor_opt, run.critic_opt, rollout, cfg.optim, seed, 0, device)
+        if device == "mps":
+            torch.mps.synchronize()
+        update_time = time.perf_counter() - t0
+        
+        # Benchmark 3: Full Cycle (macro benchmark, use single pass)
+        print("Benchmarking full cycle (collect + update)...")
+        t0 = time.perf_counter()
+        stats, extra = _iteration(run, collector, update_threads)
+        cycle_time = time.perf_counter() - t0
 
         print("\n--- Benchmark Results ---")
         print(f"1 Minibatch ({minibatch} decisions): {mb_time:.4f}s")
@@ -186,12 +175,17 @@ def main():
         print(f"Full Cycle (Collect + Update): {cycle_time:.4f}s")
 
         # Throughputs
-        unique_env_throughput = rollout_size / cycle_time
-        rollout_t = cycle_time - update_time
-        rollout_throughput = rollout_size / rollout_t if rollout_t > 0 else float('inf')
-        update_throughput = rollout_size * cfg.optim.actor_epochs / update_time
+        # Use the actual rollout size and timings from the full cycle execution we just performed,
+        # otherwise a smaller cycle collection can falsely inflate throughputs if we use the fixed `rollout_size`
+        cycle_rollout_size = extra["actor_presentations"] / stats.actor_epochs
+        rollout_t = extra["collect_s"]
+        actual_update_t = extra["update_s"]
 
-        print("\n--- Derived Throughputs ---")
+        unique_env_throughput = cycle_rollout_size / cycle_time
+        rollout_throughput = cycle_rollout_size / rollout_t if rollout_t > 0 else float('inf')
+        update_throughput = cycle_rollout_size * cfg.optim.actor_epochs / actual_update_t
+
+        print("\n--- Derived Throughputs (from Full Cycle) ---")
         print(f"Unique env throughput: {unique_env_throughput:,.0f} decisions/s (rollout_size / total_cycle_t)")
         print(f"Rollout throughput: {rollout_throughput:,.0f} decisions/s (rollout_size / rollout_t)")
         print(f"Update throughput: {update_throughput:,.0f} presentations/s (rollout_size * epochs / update_t)")
