@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "UNO engine, exact solvers and evaluators: measure skill vs luck before RL"
 readme = "README.md"
 requires-python = ">=3.14"
+
 dependencies = [
     "matplotlib>=3.11.2",
     "mlflow>=3.16.1",
@@ -23,6 +24,18 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 module-name = "uno"
 module-root = ""
+
+# Windows -> CUDA PyTorch
+# macOS -> normal PyPI PyTorch
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu132", marker = "sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true
 
 [dependency-groups]
 dev = [

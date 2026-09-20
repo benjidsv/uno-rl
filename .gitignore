@@ -9,4 +9,17 @@ wheels/
 # Virtual environments
 .venv
 .cache/
+.pytest_cache/
+.hypothesis
+.ruff_cache/
+
+# Project generated
 logs/
+
+# AI/Repomix
+.claude/
+rl-code-review.xml
+rl-throughput.xml
+
+# MacOS
+.DS_Store
