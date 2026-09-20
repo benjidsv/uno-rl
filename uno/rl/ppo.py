@@ -395,7 +395,8 @@ def _explained_variance(returns: np.ndarray, values: np.ndarray) -> float | None
 
 def _minibatches(rng, n: int, size: int) -> list[np.ndarray]:
     perm = rng.permutation(n)
-    return [perm[i : i + size] for i in range(0, n, size)]
+    n_batches = max(1, round(n / size))
+    return np.array_split(perm, n_batches)
 
 
 def critic_loss(

@@ -191,7 +191,7 @@ def main():
                 print(f"\n--- Benchmarking minibatch={mb} (workers={w}) ---")
 
                 # Update cfg.optim for the full cycle and updates to use the current minibatch
-                cfg.optim = replace(cfg.optim, minibatch=mb)
+                cfg = replace(cfg, optim=replace(cfg.optim, minibatch=mb))
 
                 # Benchmark 1: 1 Minibatch (fast microbenchmark, safe to use timeit)
                 mb_rollout = slice_rollout(rollout, mb)
