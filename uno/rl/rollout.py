@@ -39,6 +39,9 @@ class Rollout:
     critic: Features
     masks: np.ndarray  # (T, num_actions) bool
     actions: np.ndarray  # (T,) int32
+    # Taken-action log probabilities from the collection policy. This is the
+    # frozen PPO reference for every epoch/minibatch in this rollout; training
+    # must never replace it with probabilities from the changing actor.
     old_logp: np.ndarray  # (T,) float32
     episode: np.ndarray  # (T,) int32, index into the per-episode arrays
     decision_index: np.ndarray  # (T,) int32, sequence position within its episode

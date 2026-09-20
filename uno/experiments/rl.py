@@ -338,7 +338,7 @@ def cmd_overnight(arm: str = ARM_B, seed: int = 0) -> None:
         workers=1,
         games_per_cell=64,
         deals_per_cell=256,
-        device="cpu",
+        device="mps",
         collection_threads=1,
         update_threads=6,
         minibatch=512,

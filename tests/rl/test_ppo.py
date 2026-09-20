@@ -130,6 +130,18 @@ def test_kl_and_ratio_are_zero_at_the_collection_policy():
     assert ppo.rollout_kl(actor, rollout, Optim()) < 1e-9
 
 
+def test_kl_keeps_the_collection_policy_as_its_frozen_reference():
+    actor, _, rollout, _, _ = setup()
+    old_logp = rollout.old_logp.copy()
+    with torch.no_grad():
+        parameter = actor.score[-1].weight
+        parameter.add_(torch.linspace(0.0, 0.1, parameter.numel()).reshape_as(parameter))
+    new_logp, _ = ppo.new_log_probs(actor, rollout.actor, rollout.masks, rollout.actions, 1.0, "cpu")
+    expected = 0.5 * np.mean((np.exp(new_logp.detach().numpy() - old_logp) - 1.0) ** 2)
+    assert ppo.rollout_kl(actor, rollout, Optim()) == pytest.approx(expected, rel=1e-5, abs=1e-10)
+    assert np.array_equal(rollout.old_logp, old_logp)
+
+
 def test_rollout_actor_diagnostics_are_chunk_independent_and_cover_the_final_policy():
     actor, critic, rollout, _, _ = setup(rs=TOY2_SKIP, games_per_cell=5)
     adv = _adv(critic, rollout)

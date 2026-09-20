@@ -114,6 +114,16 @@ def critic_values(critic: Critic, features: Features, device: str = "cpu", chunk
     return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
 
 
+@torch.no_grad()
+def _critic_values_tensors(critic: Critic, tensors: tuple[torch.Tensor, torch.Tensor, torch.Tensor], chunk: int = FORWARD_CHUNK) -> np.ndarray:
+    critic.eval()
+    tok, col, glob = tensors
+    out = []
+    for i in range(0, len(tok), chunk):
+        out.append(critic(tok[i : i + chunk], col[i : i + chunk], glob[i : i + chunk]).cpu().numpy())
+    return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
+
+
 def advantages(rollout: Rollout, values: np.ndarray) -> np.ndarray:
     """`A_gt = R_g - V_old(x_gt)`, detached by construction (a plain array)."""
     return (rollout.returns_per_decision - values).astype(np.float64)
@@ -160,15 +170,32 @@ def new_log_probs(actor, features: Features, masks: np.ndarray, actions: np.ndar
     (`uno.rl.model.masked_log_probs`), which is what makes the frozen-weight
     agreement check in stage 2 meaningful.
     """
+    tok, col, glob = to_tensors(features, device)
+    return _new_log_probs_tensors(actor, tok, col, glob, torch.from_numpy(masks).to(device), torch.from_numpy(actions.astype(np.int64)).to(device), temperature, set_ids)
+
+
+def _new_log_probs_tensors(
+    actor,
+    tok: torch.Tensor,
+    col: torch.Tensor,
+    glob: torch.Tensor,
+    masks: torch.Tensor,
+    actions: torch.Tensor,
+    temperature: float,
+    set_ids: np.ndarray | None = None,
+    *,
+    need_entropy: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Taken-action log-probs from already staged tensors."""
     # A tabular actor (`uno.rl.tabular`) is parameterized by information set, not by
     # features; it declares that with `uses_set_ids` and everything else is shared.
     if getattr(actor, "uses_set_ids", False):
         logits = actor.logits(set_ids)
     else:
-        logits = actor(*to_tensors(features, device))
-    lp = masked_log_probs(logits, torch.from_numpy(masks).to(device), temperature)
-    idx = torch.from_numpy(actions.astype(np.int64)).to(device)
-    return lp.gather(1, idx.unsqueeze(1)).squeeze(1), entropy_from_log_probs(lp)
+        logits = actor(tok, col, glob)
+    lp = masked_log_probs(logits, masks, temperature)
+    entropy = entropy_from_log_probs(lp) if need_entropy else None
+    return lp.gather(1, actions.unsqueeze(1)).squeeze(1), entropy
 
 
 def actor_loss(
@@ -177,13 +204,16 @@ def actor_loss(
     """The negated surrogate for one minibatch, with its diagnostics."""
     feats = rollout.actor[index]
     set_ids = None if rollout.set_id is None else rollout.set_id[index]
-    logp, entropy = new_log_probs(actor, feats, rollout.masks[index], rollout.actions[index], optim.temperature, device, set_ids)
+    logp, entropy = new_log_probs(actor, feats, rollout.masks[index], rollout.actions[index], optim.temperature, device, set_ids,)
+    # `old_logp` was recorded during collection and remains fixed throughout
+    # all actor epochs and minibatches. Only `logp` follows the updated actor.
     old = torch.from_numpy(rollout.old_logp[index].astype(np.float32)).to(device)
     a = torch.from_numpy(adv[index].astype(np.float32)).to(device)
     log_ratio = logp - old
     obj = surrogate(log_ratio, a, optim.clip, scale)
     loss = -obj
     if optim.entropy_coef:
+        assert entropy is not None
         loss = loss - scale * optim.entropy_coef * entropy.mean()
     with torch.no_grad():
         r = torch.exp(log_ratio)
@@ -193,6 +223,73 @@ def actor_loss(
             "approx_kl": float(0.5 * ((r - 1.0) ** 2).mean()),
             "clip_fraction": float(((r - 1.0).abs() > optim.clip).float().mean()),
             "max_abs_log_ratio": float(log_ratio.abs().max()),
+        }
+    return loss, diag
+
+
+@dataclass(frozen=True)
+class _PreparedRollout:
+    actor_tok: torch.Tensor
+    actor_col: torch.Tensor
+    actor_glob: torch.Tensor
+    actor_masks: torch.Tensor
+    actor_actions: torch.Tensor
+    old_logp: torch.Tensor
+    actor_set_ids: np.ndarray | None
+    critic_tok: torch.Tensor
+    critic_col: torch.Tensor
+    critic_glob: torch.Tensor
+    returns: torch.Tensor
+    values: torch.Tensor
+    advantages: torch.Tensor
+
+
+def _prepare_rollout(
+    rollout: Rollout,
+    adv: np.ndarray,
+    rets: np.ndarray,
+    values: np.ndarray,
+    device: str,
+    actor_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
+    critic_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
+) -> _PreparedRollout:
+    """Stage one update's arrays once; this changes no values or gradients."""
+    def tensors(features: Features) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return to_tensors(features, device)
+
+    actor_tok, actor_col, actor_glob = actor_data or tensors(rollout.actor)
+    critic_tok, critic_col, critic_glob = critic_data or tensors(rollout.critic)
+    return _PreparedRollout(
+        actor_tok, actor_col, actor_glob,
+        torch.from_numpy(rollout.masks).to(device),
+        torch.from_numpy(rollout.actions.astype(np.int64)).to(device),
+        torch.from_numpy(rollout.old_logp.astype(np.float32)).to(device),
+        None if rollout.set_id is None else rollout.set_id,
+        critic_tok, critic_col, critic_glob,
+        torch.from_numpy(rets.astype(np.float32)).to(device),
+        torch.from_numpy(values.astype(np.float32)).to(device),
+        torch.from_numpy(adv.astype(np.float32)).to(device),
+    )
+
+
+def _prepared_actor_loss(actor, prepared: _PreparedRollout, index: np.ndarray, rows: torch.Tensor, scale: float, optim: Optim) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    set_ids = None if prepared.actor_set_ids is None else prepared.actor_set_ids[index]
+    logp, entropy = _new_log_probs_tensors(
+        actor,
+        prepared.actor_tok[rows], prepared.actor_col[rows], prepared.actor_glob[rows],
+        prepared.actor_masks[rows], prepared.actor_actions[rows], optim.temperature, set_ids,
+        need_entropy=bool(optim.entropy_coef),
+    )
+    log_ratio = logp - prepared.old_logp[rows]
+    obj = surrogate(log_ratio, prepared.advantages[rows], optim.clip, scale)
+    loss = -obj
+    if optim.entropy_coef:
+        assert entropy is not None
+        loss = loss - scale * optim.entropy_coef * entropy.mean()
+    with torch.no_grad():
+        ratio = torch.exp(log_ratio)
+        diag = {
+            "approx_kl": 0.5 * ((ratio - 1.0) ** 2).mean(),
         }
     return loss, diag
 
@@ -253,6 +350,8 @@ def rollout_actor_diagnostics(
     for i in range(0, rollout.n_decisions, chunk):
         sl = slice(i, i + chunk)
         logp, entropy = new_log_probs(actor, rollout.actor[sl], rollout.masks[sl], rollout.actions[sl], optim.temperature, device, None if rollout.set_id is None else rollout.set_id[sl])
+        # Compare the current actor to the frozen collection-policy reference;
+        # never recompute the reference from the actor being trained.
         log_ratio = logp - torch.from_numpy(rollout.old_logp[sl].astype(np.float32)).to(device)
         r = torch.exp(log_ratio)
         kl_total += float((0.5 * (r - 1.0) ** 2).sum())
@@ -345,8 +444,10 @@ def update(
     t, g = rollout.n_decisions, rollout.n_games
     if t == 0:
         return stats
+    actor_tensor_data = to_tensors(rollout.actor, device)
+    critic_tensor_data = to_tensors(rollout.critic, device)
     started = time.perf_counter()
-    values = critic_values(critic, rollout.critic, device)
+    values = _critic_values_tensors(critic, critic_tensor_data)
     stats.critic_value_seconds = time.perf_counter() - started
     adv = advantages(rollout, values)
     rets = discounted_returns(rollout, optim.gamma)
@@ -360,80 +461,91 @@ def update(
 
     size = min(optim.minibatch, t)
     scale = t / g
+    prepared = _prepare_rollout(rollout, adv, rets, values, device, actor_tensor_data, critic_tensor_data)
 
     started = time.perf_counter()
     actor.train()
+    actor_grad_total = torch.zeros((), device=device)
+    actor_clipped_total = torch.zeros((), device=device)
     for epoch in range(optim.actor_epochs):
         rng = generator(training_seed, MINIBATCH, "actor", update_index, epoch)
+        epoch_kl_total = torch.zeros((), device=device)
+        epoch_rows = 0
         for index in _minibatches(rng, t, size):
-            loss, minibatch_diag = actor_loss(actor, rollout, index, adv, scale, optim, device)
+            rows = torch.from_numpy(index.astype(np.int64)).to(device)
+            loss, minibatch_diag = _prepared_actor_loss(actor, prepared, index, rows, scale, optim)
             # This uses the forward pass already needed for the loss. It sees
             # KL accumulated from prior steps, and stops before applying the
             # next step, avoiding an extra forward pass for the stop decision.
+            epoch_kl_total = epoch_kl_total + minibatch_diag["approx_kl"].detach() * len(index)
+            epoch_rows += len(index)
             if minibatch_diag["approx_kl"] > optim.target_kl:
                 stats.early_stopped = True
                 break
             actor_opt.zero_grad(set_to_none=True)
             loss.backward()
-            norm = float(torch.nn.utils.clip_grad_norm_(actor.parameters(), optim.actor_grad_norm))
+            norm = torch.nn.utils.clip_grad_norm_(actor.parameters(), optim.actor_grad_norm)
             actor_opt.step()
             stats.actor_steps += 1
-            stats.actor_grad_norm += norm
-            stats.actor_clipped_fraction += float(norm > optim.actor_grad_norm)
+            actor_grad_total = actor_grad_total + norm.detach()
+            actor_clipped_total = actor_clipped_total + (norm > optim.actor_grad_norm).to(actor_clipped_total.dtype)
         stats.actor_epochs = epoch + 1
-        diagnostic = rollout_actor_diagnostics(
-            actor, rollout, optim, adv, device, advantages_normalized=optim.normalize_advantages
-        )
-        stats.surrogate = diagnostic["surrogate"]
-        stats.entropy = diagnostic["entropy"]
-        stats.legal_actions = diagnostic["legal_actions"]
-        stats.max_entropy = diagnostic["max_entropy"]
-        stats.normalized_entropy = diagnostic["normalized_entropy"]
-        stats.effective_actions = diagnostic["effective_actions"]
-        stats.approx_kl = diagnostic["approx_kl"]
-        stats.clip_fraction = diagnostic["clip_fraction"]
-        stats.max_abs_log_ratio = diagnostic["max_abs_log_ratio"]
-        stats.kl_per_epoch.append(stats.approx_kl)
+        if epoch_rows:
+            stats.kl_per_epoch.append(float((epoch_kl_total / epoch_rows).detach()))
         if stats.early_stopped:
             break
+    # Keep the coherent full-rollout diagnostic, but pay for it once per update,
+    # after the actor has reached its final policy rather than once per epoch.
+    diagnostic = rollout_actor_diagnostics(
+        actor, rollout, optim, adv, device, advantages_normalized=optim.normalize_advantages
+    )
+    stats.surrogate = diagnostic["surrogate"]
+    stats.entropy = diagnostic["entropy"]
+    stats.legal_actions = diagnostic["legal_actions"]
+    stats.max_entropy = diagnostic["max_entropy"]
+    stats.normalized_entropy = diagnostic["normalized_entropy"]
+    stats.effective_actions = diagnostic["effective_actions"]
+    stats.approx_kl = diagnostic["approx_kl"]
+    stats.clip_fraction = diagnostic["clip_fraction"]
+    stats.max_abs_log_ratio = diagnostic["max_abs_log_ratio"]
     if stats.actor_steps:
-        stats.actor_grad_norm /= stats.actor_steps
-        stats.actor_clipped_fraction /= stats.actor_steps
+        stats.actor_grad_norm = float(actor_grad_total / stats.actor_steps)
+        stats.actor_clipped_fraction = float(actor_clipped_total / stats.actor_steps)
     _synchronize_device(device)
     stats.actor_update_seconds = time.perf_counter() - started
 
     # The critic is fitted to completion even when the actor stopped early.
     started = time.perf_counter()
     critic.train()
-    targets = torch.from_numpy(rets.astype(np.float32)).to(device)
+    critic_grad_total = torch.zeros((), device=device)
+    critic_clipped_total = torch.zeros((), device=device)
     for epoch in range(optim.critic_epochs):
         rng = generator(training_seed, MINIBATCH, "critic", update_index, epoch)
-        total, seen = 0.0, 0
+        total, seen = torch.zeros((), device=device), 0
         for index in _minibatches(rng, t, size):
-            pred = critic(*to_tensors(rollout.critic[index], device))
             rows = torch.from_numpy(index.astype(np.int64)).to(device)
-            old = torch.from_numpy(values[index].astype(np.float32)).to(device)
+            pred = critic(prepared.critic_tok[rows], prepared.critic_col[rows], prepared.critic_glob[rows])
             loss = critic_loss(
                 pred,
-                targets[rows],
-                old,
+                prepared.returns[rows],
+                prepared.values[rows],
                 optim.value_clip,
             )
             critic_opt.zero_grad(set_to_none=True)
             loss.backward()
-            norm = float(torch.nn.utils.clip_grad_norm_(critic.parameters(), optim.critic_grad_norm))
-            stats.critic_grad_norm += norm
-            stats.critic_clipped_fraction += float(norm > optim.critic_grad_norm)
+            norm = torch.nn.utils.clip_grad_norm_(critic.parameters(), optim.critic_grad_norm)
+            critic_grad_total = critic_grad_total + norm.detach()
+            critic_clipped_total = critic_clipped_total + (norm > optim.critic_grad_norm).to(critic_clipped_total.dtype)
             critic_opt.step()
             stats.critic_steps += 1
-            total += float(loss.detach()) * len(index)
+            total = total + loss.detach() * len(index)
             seen += len(index)
         stats.critic_epochs = epoch + 1
-        stats.critic_mse = total / seen if seen else math.nan
+        stats.critic_mse = float(total / seen) if seen else math.nan
     if stats.critic_steps:
-        stats.critic_grad_norm /= stats.critic_steps
-        stats.critic_clipped_fraction /= stats.critic_steps
-    post_values = critic_values(critic, rollout.critic, device)
+        stats.critic_grad_norm = float(critic_grad_total / stats.critic_steps)
+        stats.critic_clipped_fraction = float(critic_clipped_total / stats.critic_steps)
+    post_values = _critic_values_tensors(critic, critic_tensor_data)
     stats.critic_post_update_same_rollout_ev = _explained_variance(rets, post_values)
     _synchronize_device(device)
     stats.critic_update_seconds = time.perf_counter() - started
