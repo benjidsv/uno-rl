@@ -226,6 +226,7 @@ def _new_log_probs_tensors(
     set_ids: np.ndarray | None = None,
     *,
     need_entropy: bool = True,
+    validate_mask: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Taken-action log-probs from already staged tensors."""
     # A tabular actor (`uno.rl.tabular`) is parameterized by information set, not by
@@ -234,7 +235,7 @@ def _new_log_probs_tensors(
         logits = actor.logits(set_ids)
     else:
         logits = actor(tok, col, glob)
-    lp = masked_log_probs(logits, masks, temperature)
+    lp = masked_log_probs(logits, masks, temperature, validate=validate_mask)
     entropy = entropy_from_log_probs(lp) if need_entropy else None
     return lp.gather(1, actions.unsqueeze(1)).squeeze(1), entropy
 
@@ -308,6 +309,11 @@ def _prepare_rollout(
     critic_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
 ) -> _PreparedRollout:
     """Stage one update once and keep derived training tensors on the accelerator."""
+    # Validate the invariant once while masks are still CPU/NumPy data. Doing the
+    # same check inside every CUDA actor forward would force a host synchronization
+    # for every minibatch.
+    if not np.asarray(rollout.masks).any(axis=1).all():
+        raise ValueError("a decision row has no legal action")
 
     def tensors(features: Features) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return to_tensors(features, device)
@@ -349,6 +355,7 @@ def _prepared_actor_loss(
         optim.temperature,
         set_ids,
         need_entropy=bool(optim.entropy_coef),
+        validate_mask=False,
     )
     log_ratio = logp - prepared.old_logp[rows]
     obj = surrogate(log_ratio, prepared.advantages[rows], optim.clip)
@@ -406,6 +413,7 @@ def _prepared_actor_diagnostics(
             optim.temperature,
             set_ids,
             need_entropy=True,
+            validate_mask=False,
         )
         assert entropy is not None
         log_ratio = logp - prepared.old_logp[sl]

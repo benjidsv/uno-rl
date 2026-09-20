@@ -63,27 +63,51 @@ class Encoder(nn.Module):
         self.embed = nn.Embedding(lay.n_classes, width)
         # one projection for every token; a wild has no color block, so its color
         # features enter as zeros rather than as a second set of weights.
-        self.proj = nn.Linear(sp.tok_width + sp.col_width + width + sp.glob_width, width)
+        self.proj = nn.Linear(
+            sp.tok_width + sp.col_width + width + sp.glob_width, width
+        )
         # grid update sees its own token, its color, its rank across colors, its
         # copy class and the global context: 1 + 2 + 2 + 2 + 6 widths.
         self.grid_blocks = nn.ModuleList(
-            nn.Sequential(nn.Linear(13 * width, width), nn.ReLU(), nn.Linear(width, width)) for _ in range(blocks)
+            nn.Sequential(
+                nn.Linear(13 * width, width), nn.ReLU(), nn.Linear(width, width)
+            )
+            for _ in range(blocks)
         )
         # a wild token has no color and no rank index, so it sees itself and the global context.
         self.wild_blocks = nn.ModuleList(
-            nn.Sequential(nn.Linear(7 * width, width), nn.ReLU(), nn.Linear(width, width)) for _ in range(blocks)
+            nn.Sequential(
+                nn.Linear(7 * width, width), nn.ReLU(), nn.Linear(width, width)
+            )
+            for _ in range(blocks)
         )
         # slot -> compacted copy-class id, for the class pool
         classes = sorted({lay.slot_class[s] for s in range(lay.slots)})
         remap = {c: i for i, c in enumerate(classes)}
         self.n_slot_classes = len(classes)
-        self.register_buffer("slot_class", torch.tensor([remap[lay.slot_class[s]] for s in range(lay.slots)], dtype=torch.long), persistent=False)
+        self.register_buffer(
+            "slot_class",
+            torch.tensor(
+                [remap[lay.slot_class[s]] for s in range(lay.slots)], dtype=torch.long
+            ),
+            persistent=False,
+        )
         member = torch.zeros(len(classes), lay.slots)
         member[self.slot_class, torch.arange(lay.slots)] = 1.0
-        self.register_buffer("class_member", member, persistent=False)  # (classes, slots)
+        self.register_buffer(
+            "class_member", member, persistent=False
+        )  # (classes, slots)
         self.register_buffer("class_size", member.sum(1), persistent=False)
-        self.register_buffer("token_class", torch.tensor(list(lay.slot_class), dtype=torch.long), persistent=False)
-        self.register_buffer("wild_class_ids", torch.tensor(list(lay.wild_class), dtype=torch.long), persistent=False)
+        self.register_buffer(
+            "token_class",
+            torch.tensor(list(lay.slot_class), dtype=torch.long),
+            persistent=False,
+        )
+        self.register_buffer(
+            "wild_class_ids",
+            torch.tensor(list(lay.wild_class), dtype=torch.long),
+            persistent=False,
+        )
 
     def _class_ctx(self, h: torch.Tensor) -> torch.Tensor:
         """Pool the slots of each copy class, over colors too, and broadcast back.
@@ -96,9 +120,13 @@ class Encoder(nn.Module):
         k = self.n_slot_classes
         per_slot = h.permute(0, 2, 1, 3)  # (n, slots, colors, width)
         mem = self.class_member.view(1, k, s, 1)
-        means = (per_slot.mean(2).unsqueeze(1) * mem).sum(2) / self.class_size.view(1, k, 1)
+        means = (per_slot.mean(2).unsqueeze(1) * mem).sum(2) / self.class_size.view(
+            1, k, 1
+        )
         over_colors = per_slot.amax(2).unsqueeze(1).expand(n, k, s, w)
-        maxes = torch.where(mem.bool(), over_colors, torch.full_like(over_colors, float("-inf"))).amax(2)
+        maxes = torch.where(
+            mem.bool(), over_colors, torch.full_like(over_colors, float("-inf"))
+        ).amax(2)
         ctx = torch.cat((means, maxes), dim=-1)  # (n, classes, 2w)
         return ctx[:, self.slot_class]  # (n, slots, 2w)
 
@@ -112,7 +140,11 @@ class Encoder(nn.Module):
             (
                 grid_in,
                 col.unsqueeze(2).expand(n, c, s, col.shape[-1]),
-                self.embed(self.token_class).unsqueeze(0).unsqueeze(0).expand(n, c, s, w),
+                self
+                .embed(self.token_class)
+                .unsqueeze(0)
+                .unsqueeze(0)
+                .expand(n, c, s, w),
                 g.unsqueeze(1).expand(n, c, s, glob.shape[-1]),
             ),
             dim=-1,
@@ -134,7 +166,9 @@ class Encoder(nn.Module):
             rank_ctx = _pool(h, 1)  # (n, slots, 2w)
             class_ctx = self._class_ctx(h)  # (n, slots, 2w)
             wild_ctx = _pool(hw, 1)  # (n, 2w)
-            global_ctx = torch.cat((color_ctx.mean(1), color_ctx.amax(1), wild_ctx), dim=-1)  # (n, 6w)
+            global_ctx = torch.cat(
+                (color_ctx.mean(1), color_ctx.amax(1), wild_ctx), dim=-1
+            )  # (n, 6w)
             grid_update = grid_block(
                 torch.cat(
                     (
@@ -147,7 +181,9 @@ class Encoder(nn.Module):
                     dim=-1,
                 )
             )
-            wild_update = wild_block(torch.cat((hw, global_ctx.unsqueeze(1).expand(n, wl, 6 * w)), dim=-1))
+            wild_update = wild_block(
+                torch.cat((hw, global_ctx.unsqueeze(1).expand(n, wl, 6 * w)), dim=-1)
+            )
             h = h + grid_update
             hw = hw + wild_update
 
@@ -166,22 +202,55 @@ class Actor(nn.Module):
         lay = sp.layout
         self.spec, self.width = sp, width
         self.encoder = Encoder(sp, width, blocks)
-        self.score = nn.Sequential(nn.Linear(width + 2 * width + 6 * width + lay.act_feat_width, width), nn.ReLU(), nn.Linear(width, 1))
-        self.register_buffer("act_token", torch.tensor(lay.act_token, dtype=torch.long).clamp(min=0), persistent=False)
-        self.register_buffer("act_has_token", torch.tensor(lay.act_token >= 0, dtype=torch.float32), persistent=False)
-        self.register_buffer("act_color", torch.tensor(lay.act_color, dtype=torch.long).clamp(min=0), persistent=False)
-        self.register_buffer("act_has_color", torch.tensor(lay.act_color >= 0, dtype=torch.float32), persistent=False)
-        self.register_buffer("act_feat", torch.tensor(lay.act_feat, dtype=torch.float32), persistent=False)
+        self.score = nn.Sequential(
+            nn.Linear(width + 2 * width + 6 * width + lay.act_feat_width, width),
+            nn.ReLU(),
+            nn.Linear(width, 1),
+        )
+        self.register_buffer(
+            "act_token",
+            torch.tensor(lay.act_token, dtype=torch.long).clamp(min=0),
+            persistent=False,
+        )
+        self.register_buffer(
+            "act_has_token",
+            torch.tensor(lay.act_token >= 0, dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "act_color",
+            torch.tensor(lay.act_color, dtype=torch.long).clamp(min=0),
+            persistent=False,
+        )
+        self.register_buffer(
+            "act_has_color",
+            torch.tensor(lay.act_color >= 0, dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "act_feat",
+            torch.tensor(lay.act_feat, dtype=torch.float32),
+            persistent=False,
+        )
 
-    def forward(self, tok: torch.Tensor, col: torch.Tensor, glob: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, tok: torch.Tensor, col: torch.Tensor, glob: torch.Tensor
+    ) -> torch.Tensor:
         n = tok.shape[0]
         h, hw, color_ctx, global_ctx = self.encoder(tok, col, glob)
-        tokens = torch.cat((h.reshape(n, -1, self.width), hw), dim=1)  # (n, n_tokens, w)
+        tokens = torch.cat(
+            (h.reshape(n, -1, self.width), hw), dim=1
+        )  # (n, n_tokens, w)
         a = self.act_token.shape[0]
         tok_a = tokens[:, self.act_token] * self.act_has_token.view(1, a, 1)
         col_a = color_ctx[:, self.act_color] * self.act_has_color.view(1, a, 1)
         x = torch.cat(
-            (tok_a, col_a, global_ctx.unsqueeze(1).expand(n, a, global_ctx.shape[-1]), self.act_feat.unsqueeze(0).expand(n, a, -1)),
+            (
+                tok_a,
+                col_a,
+                global_ctx.unsqueeze(1).expand(n, a, global_ctx.shape[-1]),
+                self.act_feat.unsqueeze(0).expand(n, a, -1),
+            ),
             dim=-1,
         )
         return self.score(x).squeeze(-1)
@@ -196,7 +265,9 @@ class Critic(nn.Module):
         self.encoder = Encoder(sp, width, blocks)
         self.head = nn.Linear(6 * width, 1)
 
-    def forward(self, tok: torch.Tensor, col: torch.Tensor, glob: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, tok: torch.Tensor, col: torch.Tensor, glob: torch.Tensor
+    ) -> torch.Tensor:
         _, _, _, global_ctx = self.encoder(tok, col, glob)
         return self.head(global_ctx).squeeze(-1)
 
@@ -204,14 +275,23 @@ class Critic(nn.Module):
 # -- the one masking / probability convention ----------------------------------
 
 
-def masked_log_probs(logits: torch.Tensor, mask: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
+def masked_log_probs(
+    logits: torch.Tensor,
+    mask: torch.Tensor,
+    temperature: float = 1.0,
+    *,
+    validate: bool = True,
+) -> torch.Tensor:
     """Log-softmax over the legal actions only, at `temperature`.
 
     The single convention used by collection, the PPO loss, evaluation and replay
     (contract section 1.1). An all-illegal row is a caller bug, not something to
     paper over with a uniform fallback, so it raises.
     """
-    if not bool(mask.any(dim=-1).all()):
+    # ``bool(cuda_tensor)`` synchronizes the device.  Hot training paths validate
+    # the complete CPU rollout once before staging and call this with
+    # ``validate=False``; collection/evaluation keep the defensive check.
+    if validate and not bool(mask.any(dim=-1).all()):
         raise ValueError("a decision row has no legal action")
     z = logits / temperature
     z = z.masked_fill(~mask, float("-inf"))
@@ -221,10 +301,14 @@ def masked_log_probs(logits: torch.Tensor, mask: torch.Tensor, temperature: floa
 def entropy_from_log_probs(logp: torch.Tensor) -> torch.Tensor:
     """Per-row entropy in nats, with the -inf of illegal actions contributing zero."""
     p = logp.exp()
-    return -(p * torch.where(torch.isfinite(logp), logp, torch.zeros_like(logp))).sum(-1)
+    return -(p * torch.where(torch.isfinite(logp), logp, torch.zeros_like(logp))).sum(
+        -1
+    )
 
 
-def to_tensors(f: Features, device: torch.device | str = "cpu") -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def to_tensors(
+    f: Features, device: torch.device | str = "cpu"
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     return (
         torch.from_numpy(np.ascontiguousarray(f.tok)).to(device),
         torch.from_numpy(np.ascontiguousarray(f.col)).to(device),
@@ -258,7 +342,9 @@ class Shapes:
         )
 
 
-def shapes(actor_spec: Spec, critic_spec: Spec, width: int = WIDTH, blocks: int = BLOCKS) -> Shapes:
+def shapes(
+    actor_spec: Spec, critic_spec: Spec, width: int = WIDTH, blocks: int = BLOCKS
+) -> Shapes:
     lay = actor_spec.layout
     actor = Actor(actor_spec, width, blocks)
     critic = Critic(critic_spec, width, blocks)

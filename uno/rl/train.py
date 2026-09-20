@@ -201,10 +201,7 @@ def _evaluation_mlflow_metrics(metrics: dict, result: ev.PanelResult) -> dict:
             f"dev_{opponent}_s{seat}": f"evaluation/score_{opponent}_seat_{seat}"
             for opponent, seat in result.cells
         },
-        **{
-            f"dev_{name}": f"evalbehavior/{name}"
-            for name in result.behavior.as_dict()
-        },
+        **{f"dev_{name}": f"evalbehavior/{name}" for name in result.behavior.as_dict()},
     }
     grouped = {
         paths.get(name, f"diagnostic/{name}"): value for name, value in metrics.items()
@@ -459,8 +456,10 @@ def _iteration(
     run.progress.deal_schedule = run.schedule.state
     update_seconds = updated - collected
     iteration_seconds = updated - t0
-    actor_presentations = rollout.n_decisions * stats.actor_epochs
-    critic_presentations = rollout.n_decisions * stats.critic_epochs
+    # Exact counters from PPO remain correct even when KL stopping ends the actor
+    # after a partial set of epochs/minibatches.
+    actor_presentations = stats.actor_presentations
+    critic_presentations = stats.critic_presentations
     timings = {
         "collect_s": collected - t0, "update_s": update_seconds, "iteration_s": iteration_seconds,
         "iteration_fresh_decisions_per_s": rollout.n_decisions / iteration_seconds if iteration_seconds else 0.0,
@@ -522,9 +521,12 @@ def _rollout_metrics(rollout) -> dict:
     def summary(values: np.ndarray, prefix: str) -> dict:
         if not len(values):
             return {
-                f"{prefix}_mean": 0.0, f"{prefix}_std": 0.0,
-                f"{prefix}_min": 0.0, f"{prefix}_p50": 0.0,
-                f"{prefix}_p90": 0.0, f"{prefix}_max": 0.0,
+                f"{prefix}_mean": 0.0,
+                f"{prefix}_std": 0.0,
+                f"{prefix}_min": 0.0,
+                f"{prefix}_p50": 0.0,
+                f"{prefix}_p90": 0.0,
+                f"{prefix}_max": 0.0,
             }
         return {
             f"{prefix}_mean": float(values.mean()),
@@ -547,7 +549,9 @@ def _rollout_metrics(rollout) -> dict:
         "rollout_win_rate": float(np.mean(rewards > 0.0)) if n else 0.0,
         "rollout_draw_rate": float(np.mean(rewards == 0.0)) if n else 0.0,
         "rollout_loss_rate": float(np.mean(rewards < 0.0)) if n else 0.0,
-        "rollout_cap_rate": float(np.mean(np.asarray(rollout.end_reason) == "cap")) if n else 0.0,
+        "rollout_cap_rate": float(np.mean(np.asarray(rollout.end_reason) == "cap"))
+        if n
+        else 0.0,
         **summary(engine, "rollout_engine_length"),
         **summary(learner, "rollout_learner_length"),
     }
