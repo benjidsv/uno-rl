@@ -38,6 +38,7 @@ import torch
 
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.agents.rulebot import rulebot_league
+from uno.rl.device import synchronize_device
 from uno.eval.play import DEV_SEEDS, match
 from uno.game import rules
 
@@ -86,7 +87,11 @@ def mlp_bench(
         f"\nsynthetic MLP proxy (width={width}, in={in_dim}, out={out_dim}): matmul ceiling only, not the real encoder or feature construction"
     )
     print(f"{'device':6s} {'batch':>7s} {'fwd dec/s':>12s} {'fwd+bwd dec/s':>15s}")
-    devices = ["cpu"] + (["mps"] if torch.backends.mps.is_available() else [])
+    devices = ["cpu"]
+    if torch.cuda.is_available():
+        devices.append("cuda")
+    if torch.backends.mps.is_available():
+        devices.append("mps")
     for device in devices:
         net = torch.nn.Sequential(
             torch.nn.Linear(in_dim, width), torch.nn.ReLU(),
@@ -98,14 +103,12 @@ def mlp_bench(
             x = torch.randn(batch, in_dim, device=device)
             for _ in range(3):
                 net(x)
-            if device == "mps":
-                torch.mps.synchronize()
+            synchronize_device(device)
             t0 = time.perf_counter()
             for _ in range(reps):
                 with torch.no_grad():
                     net(x)
-            if device == "mps":
-                torch.mps.synchronize()
+            synchronize_device(device)
             fwd = (time.perf_counter() - t0) / reps
 
             t0 = time.perf_counter()
@@ -113,8 +116,7 @@ def mlp_bench(
                 opt.zero_grad()
                 net(x).sum().backward()
                 opt.step()
-            if device == "mps":
-                torch.mps.synchronize()
+            synchronize_device(device)
             fb = (time.perf_counter() - t0) / reps
             print(f"{device:6s} {batch:7d} {batch / fwd:12,.0f} {batch / fb:15,.0f}")
 
@@ -125,6 +127,7 @@ def main(argv: list[str] | None = None) -> None:
     print(
         f"host: {platform.platform()}, {platform.processor() or platform.machine()}, torch {torch.__version__}"
     )
+    print(f"cuda available: {torch.cuda.is_available()}")
     print(f"mps available: {torch.backends.mps.is_available()}")
     rs = rules.FULL_UNO
     simulate("engine-only (PlayFirstRandom stand-in)", PlayFirstRandom(rs), games)

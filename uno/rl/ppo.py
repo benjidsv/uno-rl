@@ -47,11 +47,7 @@ from uno.rl.streams import MINIBATCH, generator
 FORWARD_CHUNK = 1024  # rows per no-grad forward pass; a memory setting, not an algorithmic one
 
 
-def _synchronize_device(device: str) -> None:
-    if device == "mps":
-        torch.mps.synchronize()
-    elif device.startswith("cuda"):
-        torch.cuda.synchronize(torch.device(device))
+from uno.rl.device import synchronize_device as _synchronize_device
 
 
 @dataclass

@@ -45,6 +45,7 @@ from uno.rl import checkpoint as ckpt
 from uno.rl import evaluate as ev
 from uno.rl import manifest as mf
 from uno.rl.config import Collection, Config, Evaluation, Optim
+from uno.rl.device import resolve_device
 from uno.rl.features import ARM_A, ARM_B, ARM_CRITIC, spec
 from uno.rl.model import shapes
 from uno.rl.opponents import league, league_hash
@@ -146,7 +147,7 @@ def cmd_train(
     workers: int = 1,
     games_per_cell: int = 64,
     deals_per_cell: int = 256,
-    device: str = "cpu",
+    device: str = "auto",
     collection_threads: int = 0,
     update_threads: int = 0,
     minibatch: int = 512,
@@ -166,11 +167,7 @@ def cmd_train(
         raise SystemExit(
             "minibatch must be positive, time cap nonnegative, and evaluation fraction in (0, 1]"
         )
-    if device == "mps":
-        import torch
-
-        if not torch.backends.mps.is_available():
-            raise SystemExit("MPS was requested but is unavailable")
+    device = resolve_device(device)
     cfg = _config(
         ruleset,
         arm,
@@ -306,7 +303,7 @@ def cmd_experiment(arm: str = ARM_B, seed: int = 0) -> None:
         workers=1,
         games_per_cell=64,
         deals_per_cell=256,
-        device="mps",
+        device="auto",
         collection_threads=1,
         update_threads=6,
         minibatch=512,
@@ -327,7 +324,7 @@ def cmd_experiment(arm: str = ARM_B, seed: int = 0) -> None:
     )
 
 
-def cmd_overnight(arm: str = ARM_B, seed: int = 0) -> None:
+def cmd_overnight(arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "turbochungus") -> None:
     cmd_train(
         ruleset="FULL_UNO",
         arm=arm,
@@ -336,7 +333,7 @@ def cmd_overnight(arm: str = ARM_B, seed: int = 0) -> None:
         workers=1,
         games_per_cell=64,
         deals_per_cell=256,
-        device="mps",
+        device="auto",
         collection_threads=1,
         update_threads=6,
         minibatch=512,
@@ -344,7 +341,7 @@ def cmd_overnight(arm: str = ARM_B, seed: int = 0) -> None:
         evaluation_fraction=0.016,
         tracking_study_id="overnight-experiment",
         tracking_kind="overnight-data",
-        mlflow_prefix="turbochungus",
+        mlflow_prefix=mlflow_prefix,
         optim_overrides={
             "normalize_advantages": True,
             "entropy_coef": 0.01,

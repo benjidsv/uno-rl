@@ -15,6 +15,7 @@ from uno.rl.features import ARM_B, Features
 from uno.rl.train import Run, _iteration
 from uno.rl.parallel import ParallelCollector, WorkerConfig
 from uno.rl.rollout import Rollout
+from uno.rl.device import resolve_device, synchronize_device
 
 
 def slice_rollout(r: Rollout, size: int) -> Rollout:
@@ -43,7 +44,7 @@ def main():
     cap = 108_000
     workers = 1
     games_per_cell = 64
-    device = "mps"
+    device = "auto"
     collection_threads = 1
     update_threads = 6
     minibatch = 512
@@ -57,9 +58,8 @@ def main():
         "critic_lr": 1e-4,
     }
 
-    if device == "mps" and not torch.backends.mps.is_available():
-        print("MPS was requested but is unavailable (or falling back).")
-        device = "cpu"
+    device = resolve_device(device)
+    print(f"Resolved device: {device}")
 
     optim = Optim(minibatch=minibatch, **optim_overrides)
     cfg = Config(
@@ -159,8 +159,7 @@ def main():
         print("Benchmarking 1 complete update...")
         t0 = time.perf_counter()
         ppo.update(run.actor, run.critic, run.actor_opt, run.critic_opt, rollout, cfg.optim, seed, 0, device)
-        if device == "mps":
-            torch.mps.synchronize()
+        synchronize_device(device)
         update_time = time.perf_counter() - t0
         
         # Benchmark 3: Full Cycle (macro benchmark, use single pass)

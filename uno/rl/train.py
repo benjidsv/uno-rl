@@ -364,12 +364,7 @@ def iteration(
             torch.set_num_threads(previous_threads)
 
 
-def _synchronize_device(device: str) -> None:
-    """Make accelerator stage timings include queued device work."""
-    if device == "mps":
-        torch.mps.synchronize()
-    elif device.startswith("cuda"):
-        torch.cuda.synchronize(torch.device(device))
+from uno.rl.device import synchronize_device as _synchronize_device
 
 
 def _iteration(
