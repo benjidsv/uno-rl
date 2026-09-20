@@ -147,7 +147,7 @@ class ParallelCollector:
     def collect(self, manifest: Manifest, actor: Actor, critic_spec, behavior_version: int, timeout: float = 600.0) -> tuple[Rollout, Stats]:
         rs = NAMED[self.cfg.ruleset]
         actor_spec = spec(rs, self.cfg.arm)
-        builder = Builder(actor_spec, critic_spec, behavior_version)
+        builder = Builder(actor_spec, critic_spec, behavior_version, decision_capacity=max(1024, len(manifest) * 16))
         stats = Stats()
         t0 = time.perf_counter()
         by_id = {e.episode_id: e for e in manifest.episodes}

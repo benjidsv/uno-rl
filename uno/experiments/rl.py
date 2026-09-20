@@ -322,7 +322,7 @@ def cmd_experiment(arm: str = ARM_A, seed: int = 0) -> None:
             "entropy_coef": 0.01,
             "normalize_advantages": True,
             "actor_grad_norm": 10.0,
-            # gradients are scaled by decisions/games, so roughly x15-20. default is 0.6 but that destroys the learning
+            # decision-mean PPO gradients; tune the cap independently of rollout length
             "actor_epochs": 4,
             "actor_lr": 6e-4,
         },
@@ -346,11 +346,11 @@ def cmd_overnight(arm: str = ARM_B, seed: int = 0) -> None:
         evaluation_fraction=0.016,
         tracking_study_id="overnight-experiment",
         tracking_kind="overnight-data",
-        mlflow_prefix="bigchungus",
+        mlflow_prefix="test",
         optim_overrides={
             "normalize_advantages": True,
             "actor_grad_norm": 10.0,
-            # gradients are scaled by decisions/games, so roughly x15-20. default is 0.6 but that destroys the learning
+            # decision-mean PPO gradients; tune the cap independently of rollout length
             "actor_epochs": 4,
             "actor_lr": 6e-4,
             "entropy_coef": 0.01,

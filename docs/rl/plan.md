@@ -102,9 +102,9 @@ input to reproduce each decision. Freeze the behavior policy for a rollout batch
 
 Distinguish true terminal games (including the rule-defined action cap) from a
 collector cutoff. Start with complete episodes; do not assign zero terminal value
-to an unfinished episode. Declare actor-loss normalization: the reference averages
-summed decision contributions over games; a flat decision average has a different
-scale. Keep this choice consistent in the exact-gradient comparison. Disable
+to an unfinished episode. Declare actor-loss normalization: use the ordinary mean
+over learner decisions. Keep this choice consistent in the exact-gradient
+comparison. Disable
 advantage normalization and entropy when testing the unregularized gradient, then
 test any enabled normalization/regularization as its own transformation.
 

@@ -43,7 +43,7 @@ from functools import cache
 import numpy as np
 
 from uno.game.engine import Phase
-from uno.game.observe import Observation, discard_from_public
+from uno.game.observe import Observation, batch_l1_observations
 from uno.game.rules import Kind, Ruleset
 from uno.rl.evidence import AGE_BINS, COUNTER_CAP, MULTIPLICITY_CAP, Evidence
 from uno.rl.layout import Layout, layout
@@ -181,34 +181,79 @@ def legal_mask(rs: Ruleset, obs: Observation) -> np.ndarray:
     pinned states on several rulesets, which is stage 1's first acceptance check
     (pipeline plan section 13); it is not asserted to be true by construction.
     """
-    lay = layout(rs)
-    mask = np.zeros(rs.num_actions, dtype=bool)
-    if obs.phase is Phase.AFTER_DRAW:
-        mask[list(rs.play_actions[obs.drawn])] = True
-        mask[rs.pass_action] = True
-        return mask
-    playable = lay.playable[obs.top, obs.current_color]
-    any_play = False
-    for t in sorted(set(obs.hand)):
-        if playable[t]:
-            mask[list(rs.play_actions[t])] = True
-            any_play = True
-    if not rs.forced_play or not any_play:
-        mask[rs.draw_action] = True
-    return mask
+    return legal_masks(rs, [obs])[0]
+
+
+@cache
+def _play_action_matrix(rs: Ruleset) -> np.ndarray:
+    """Map card types to their static play-action rows once per ruleset."""
+    out = np.zeros((rs.num_types, rs.num_actions), dtype=bool)
+    for card_type, actions in enumerate(rs.play_actions):
+        out[card_type, list(actions)] = True
+    return out
 
 
 def legal_masks(rs: Ruleset, observations) -> np.ndarray:
-    return np.stack([legal_mask(rs, o) for o in observations]) if observations else np.zeros((0, rs.num_actions), dtype=bool)
+    """Legal action masks for a batch of observations.
+
+    This uses only the actor-visible position fields.  In particular, it does
+    not reconstruct public history, inspect opponent hands, or enumerate each
+    observation's distinct hand in Python.
+    """
+    n = len(observations)
+    if not n:
+        return np.zeros((0, rs.num_actions), dtype=bool)
+
+    hands = _batch_multiplicities((o.hand for o in observations), n, rs.num_types) > 0
+    top = np.fromiter((o.top for o in observations), dtype=np.int64, count=n)
+    current_color = np.fromiter((o.current_color for o in observations), dtype=np.int64, count=n)
+    after_draw = np.fromiter((o.phase is Phase.AFTER_DRAW for o in observations), dtype=bool, count=n)
+    drawn = np.full(n, -1, dtype=np.int64)
+    drawn_rows = after_draw
+    if drawn_rows.any():
+        drawn[drawn_rows] = [o.drawn for o in observations if o.phase is Phase.AFTER_DRAW]
+
+    action_by_type = _play_action_matrix(rs)
+    mask = np.zeros((n, rs.num_actions), dtype=bool)
+    if drawn_rows.any():
+        mask[drawn_rows] = action_by_type[drawn[drawn_rows]]
+        mask[drawn_rows, rs.pass_action] = True
+
+    turn_rows = ~after_draw
+    if turn_rows.any():
+        playable = layout(rs).playable[top[turn_rows], current_color[turn_rows]]
+        play_types = hands[turn_rows] & playable
+        play_actions = np.einsum("nt,ta->na", play_types, action_by_type, optimize=True)
+        mask[turn_rows] = play_actions
+        if not rs.forced_play:
+            mask[turn_rows, rs.draw_action] = True
+        else:
+            mask[turn_rows, rs.draw_action] = ~play_types.any(axis=1)
+    return mask
 
 
 # -- extraction ----------------------------------------------------------------
 
 
-def _multiplicities(cards, n_types: int) -> np.ndarray:
-    out = np.zeros(n_types, dtype=np.float64)
-    if cards:
-        np.add.at(out, np.asarray(cards, dtype=np.int64), 1.0)
+def _batch_multiplicities(rows, n: int, n_types: int) -> np.ndarray:
+    """Count ragged card rows in one indexed add.
+
+    The old extractor called ``_multiplicities`` once for every observation.  A
+    flat card array plus row indices lets NumPy do the same work in one pass;
+    this is especially useful for the discard and critic-hand blocks, which are
+    otherwise rebuilt independently for every row.
+    """
+    rows = list(rows)
+    out = np.zeros((n, n_types), dtype=np.float64)
+    total = sum(map(len, rows))
+    if total:
+        cards = np.fromiter((card for row in rows for card in row), dtype=np.int64, count=total)
+        row_ids = np.fromiter(
+            (i for i, row in enumerate(rows) for _ in row),
+            dtype=np.int64,
+            count=total,
+        )
+        np.add.at(out, (row_ids, cards), 1.0)
     return out
 
 
@@ -232,8 +277,15 @@ def extract(sp: Spec, observations, evidences=None) -> Features:
     if sp.has_evidence and evidences is None:
         raise ValueError(f"arm {sp.arm} needs an Evidence per row")
 
+    # ``batch_l1_observations`` is the same intermediate representation used by
+    # the optimized observation path: hands are already multiplicities and all
+    # scalar position fields are contiguous arrays.  The critic has the same L1
+    # position, plus its separate L2 hand block below.
+    l1 = batch_l1_observations(rs, [o.info_state for o in observations])
+    discard_counts = _batch_multiplicities(l1.discard, n, rs.num_types)
+
     grid, wild_type = lay.grid_type, lay.wild_type
-    type_color, type_slot, type_wild = lay.type_color, lay.type_slot, lay.type_wild
+    type_color = lay.type_color
     deck = lay.deck_counts
     max_copies = float(deck.max())
     grid_tokens = grid.reshape(-1)  # token index c*slots+s holds type grid[c, s]
@@ -245,60 +297,67 @@ def extract(sp: Spec, observations, evidences=None) -> Features:
     token_color = np.full(n_tok, -1, dtype=np.int64)
     token_color[: n_col * lay.slots] = np.repeat(np.arange(n_col), lay.slots)
 
+    hand = l1.hands[:, order]
+    disc = discard_counts[:, order]
+    tok[:, :, TOK_HAND] = hand / deck[order]
+    tok[:, :, TOK_IN_HAND] = hand > 0
+    tok[:, :, TOK_DISCARD] = disc / deck[order]
+    tok[np.arange(n), token_of_type[l1.top], TOK_IS_TOP] = 1.0
+    drawn_rows = l1.drawn >= 0
+    tok[drawn_rows, token_of_type[l1.drawn[drawn_rows]], TOK_IS_DRAWN] = 1.0
+    tok[:, :, TOK_PLAYABLE] = lay.playable[l1.top, l1.current_color][:, order]
+    tok[:, :, TOK_COPIES] = deck[order] / max_copies
+    tok[:, :, TOK_IS_WILD] = is_wild_token
+    grid_tokens = n_col * lay.slots
+    tok[:, :grid_tokens, TOK_CUR_COLOR] = token_color[:grid_tokens][None, :] == l1.current_color[:, None]
+    top_color = type_color[l1.top]
+    tok[:, :grid_tokens, TOK_TOP_COLOR] = (
+        (top_color[:, None] >= 0) & (token_color[:grid_tokens][None, :] == top_color[:, None])
+    )
+
+    col[:, :, COL_CUR] = np.arange(n_col)[None, :] == l1.current_color[:, None]
+    has_top_color = top_color >= 0
+    col[np.arange(n)[has_top_color], top_color[has_top_color], COL_TOP] = 1.0
+    drawn_color = np.full(n, -1, dtype=np.int64)
+    drawn_color[drawn_rows] = type_color[l1.drawn[drawn_rows]]
+    has_drawn_color = drawn_color >= 0
+    col[np.arange(n)[has_drawn_color], drawn_color[has_drawn_color], COL_DRAWN] = 1.0
+    col[:, :, COL_HAND] = hand[:, :grid_tokens].reshape(n, n_col, lay.slots).sum(2) / rs.hand_size
+    col[:, :, COL_DISCARD] = disc[:, :grid_tokens].reshape(n, n_col, lay.slots).sum(2) / rs.deck_size
+
+    glob[:, GLOB_HAND] = hand.sum(1) / rs.hand_size
+    glob[:, GLOB_OPP_HAND] = l1.opp_hand_size / rs.hand_size
+    glob[:, GLOB_PILE] = l1.pile_size / rs.deck_size
+    glob[:, GLOB_PILE_EMPTY] = l1.pile_size == 0
+    if rs.max_turns:
+        glob[:, GLOB_TURN] = l1.turn / rs.max_turns
+    glob[:, GLOB_RESHUFFLES] = np.minimum(
+        np.fromiter((sum(ev[0] == "reshuffle" for ev in o.public) for o in observations), dtype=np.int64, count=n),
+        3,
+    ) / 3.0
+    glob[:, GLOB_AFTER_DRAW] = l1.after_draw
+    glob[:, GLOB_HAS_DRAWN] = drawn_rows
+    glob[:, GLOB_SEAT] = l1.seat == 0
+    top_kind = np.fromiter((int(rs.card_types[t].kind) for t in l1.top), dtype=np.int64, count=n)
+    glob[np.arange(n), GLOB_TOP_KIND + top_kind] = 1.0
+    drawn_kind = np.full(n, -1, dtype=np.int64)
+    drawn_kind[drawn_rows] = [int(rs.card_types[t].kind) for t in l1.drawn[drawn_rows]]
+    has_drawn_kind = drawn_kind >= 0
+    glob[np.arange(n)[has_drawn_kind], GLOB_DRAWN_KIND + drawn_kind[has_drawn_kind]] = 1.0
+    glob[:, GLOB_TOP_WILD] = [rs.card_types[t].is_wild for t in l1.top]
+    glob[:, GLOB_DISCARD] = np.fromiter(map(len, l1.discard), dtype=np.int64, count=n) / rs.deck_size
+
+    if sp.has_opponent:
+        if any(o.opp_hand is None for o in observations):
+            raise ValueError("the critic needs an L2 observation carrying opp_hand")
+        opp = _batch_multiplicities((o.opp_hand for o in observations), n, rs.num_types)[:, order]
+        tok[:, :, TOK_OPP_HAND] = opp / deck[order]
+        tok[:, :, TOK_OPP_IN_HAND] = opp > 0
+        col[:, :, COL_OPP_HAND] = opp[:, :grid_tokens].reshape(n, n_col, lay.slots).sum(2) / rs.hand_size
+
     for i, obs in enumerate(observations):
-        t, c, g = tok[i], col[i], glob[i]
-        hand = _multiplicities(obs.hand, rs.num_types)[order]
-        discard_cards = discard_from_public(obs.public)
-        disc = _multiplicities(discard_cards, rs.num_types)[order]
-        t[:, TOK_HAND] = hand / deck[order]
-        t[:, TOK_IN_HAND] = hand > 0
-        t[:, TOK_DISCARD] = disc / deck[order]
-        t[token_of_type[obs.top], TOK_IS_TOP] = 1.0
-        if obs.drawn is not None:
-            t[token_of_type[obs.drawn], TOK_IS_DRAWN] = 1.0
-        t[:, TOK_PLAYABLE] = lay.playable[obs.top, obs.current_color][order]
-        t[:, TOK_COPIES] = deck[order] / max_copies
-        t[:, TOK_IS_WILD] = is_wild_token
-        t[: n_col * lay.slots, TOK_CUR_COLOR] = (token_color[: n_col * lay.slots] == obs.current_color)
-        top_color = int(type_color[obs.top])
-        if top_color >= 0:
-            t[: n_col * lay.slots, TOK_TOP_COLOR] = (token_color[: n_col * lay.slots] == top_color)
-
-        c[:, COL_CUR] = np.arange(n_col) == obs.current_color
-        if top_color >= 0:
-            c[top_color, COL_TOP] = 1.0
-        if obs.drawn is not None and type_color[obs.drawn] >= 0:
-            c[int(type_color[obs.drawn]), COL_DRAWN] = 1.0
-        grid_hand = hand[: n_col * lay.slots].reshape(n_col, lay.slots)
-        grid_disc = disc[: n_col * lay.slots].reshape(n_col, lay.slots)
-        c[:, COL_HAND] = grid_hand.sum(1) / rs.hand_size
-        c[:, COL_DISCARD] = grid_disc.sum(1) / rs.deck_size
-
-        g[GLOB_HAND] = len(obs.hand) / rs.hand_size
-        g[GLOB_OPP_HAND] = obs.opp_hand_size / rs.hand_size
-        g[GLOB_PILE] = obs.pile_size / rs.deck_size
-        g[GLOB_PILE_EMPTY] = obs.pile_size == 0
-        g[GLOB_TURN] = obs.turn / rs.max_turns if rs.max_turns else 0.0
-        reshuffles = sum(1 for ev in obs.public if ev[0] == "reshuffle")
-        g[GLOB_RESHUFFLES] = min(reshuffles, 3) / 3.0
-        g[GLOB_AFTER_DRAW] = obs.phase is Phase.AFTER_DRAW
-        g[GLOB_HAS_DRAWN] = obs.drawn is not None
-        g[GLOB_SEAT] = obs.seat == 0
-        g[GLOB_TOP_KIND + int(rs.card_types[obs.top].kind)] = 1.0
-        if obs.drawn is not None:
-            g[GLOB_DRAWN_KIND + int(rs.card_types[obs.drawn].kind)] = 1.0
-        g[GLOB_TOP_WILD] = rs.card_types[obs.top].is_wild
-        g[GLOB_DISCARD] = len(discard_cards) / rs.deck_size
-
         if sp.has_evidence:
-            _evidence_row(sp, obs, evidences[i], t, c, g, token_of_type, type_color)
-        if sp.has_opponent:
-            if obs.opp_hand is None:
-                raise ValueError("the critic needs an L2 observation carrying opp_hand")
-            opp = _multiplicities(obs.opp_hand, rs.num_types)[order]
-            t[:, TOK_OPP_HAND] = opp / deck[order]
-            t[:, TOK_OPP_IN_HAND] = opp > 0
-            c[:, COL_OPP_HAND] = opp[: n_col * lay.slots].reshape(n_col, lay.slots).sum(1) / rs.hand_size
+            _evidence_row(sp, obs, evidences[i], tok[i], col[i], glob[i], token_of_type, type_color)
 
     out = Features(tok.astype(np.float32), col.astype(np.float32), glob.astype(np.float32))
     out.check_finite()

@@ -685,9 +685,14 @@ def test_a_real_mlflow_run_records_tags_params_metrics_and_artifacts(tmp_path):
         "timing/collection_total_seconds",
         "timing/update_total_seconds",
         "evaluation/score_league_mean",
+        "evalbehavior/game_draw_rate",
+        "rollout/games",
+        "rollout/reward_mean",
+        "rollout/engine_length_mean",
     } <= metric_names
     assert all(name.count("/") == 1 for name in metric_names)
     assert not any(name.startswith("diagnostic/") for name in metric_names)
+    assert not any(name.startswith("evaluation/behavior_") for name in metric_names)
     assert "surrogate" not in metric_names  # flat names remain CSV-only
     steps = [
         m.step

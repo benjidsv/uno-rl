@@ -114,21 +114,73 @@ def estimate_bytes(actor_spec: Spec, critic_spec: Spec, decisions: int, games: i
 
 
 class Builder:
-    """Accumulates decisions per episode, then assembles them in logical ID order.
+    """Writes decisions into preallocated arrays, then orders them by episode.
 
     Completion order is deliberately not the storage order: the manifest fixes
     which games exist and `finish` sorts by `episode_id`, so a rollout cannot
     inherit a selection effect from which worker finished first (section 3).
+
+    ``decision_capacity`` is an initial sizing hint.  The arrays grow geometrically
+    only when an iteration exceeds that hint; ordinary decisions never create a
+    Python list entry or a per-row tuple.
     """
 
-    def __init__(self, actor_spec: Spec, critic_spec: Spec, behavior_version: int) -> None:
+    def __init__(self, actor_spec: Spec, critic_spec: Spec, behavior_version: int, decision_capacity: int = 1024) -> None:
         self.actor_spec, self.critic_spec, self.behavior_version = actor_spec, critic_spec, behavior_version
-        self._rows: dict[int, list[tuple]] = {}
+        if decision_capacity < 1:
+            raise ValueError("decision_capacity must be positive")
+        self._capacity = decision_capacity
+        self._n_rows = 0
+        self._arrays: dict[str, np.ndarray] | None = None
         self._episodes: dict[int, dict] = {}
         self._payloads: list[dict] = []
 
     def add_decision(self, episode_id: int, decision_index: int, actor: Features, critic: Features, mask: np.ndarray, action: int, old_logp: float, set_id: int = -1) -> None:
-        self._rows.setdefault(episode_id, []).append((decision_index, actor, critic, mask, action, old_logp, set_id))
+        if self._payloads:
+            raise ValueError("cannot mix row-wise and bulk rollout ingestion")
+        if len(actor) != 1 or len(critic) != 1:
+            raise ValueError("add_decision expects one actor and critic feature row")
+        self._ensure_capacity(self._n_rows + 1, actor, critic)
+        assert self._arrays is not None
+        i = self._n_rows
+        self._arrays["actor_tok"][i] = actor.tok[0]
+        self._arrays["actor_col"][i] = actor.col[0]
+        self._arrays["actor_glob"][i] = actor.glob[0]
+        self._arrays["critic_tok"][i] = critic.tok[0]
+        self._arrays["critic_col"][i] = critic.col[0]
+        self._arrays["critic_glob"][i] = critic.glob[0]
+        self._arrays["masks"][i] = mask
+        self._arrays["actions"][i] = action
+        self._arrays["old_logp"][i] = old_logp
+        self._arrays["episode_id"][i] = episode_id
+        self._arrays["decision_index"][i] = decision_index
+        self._arrays["set_id"][i] = set_id
+        self._n_rows += 1
+
+    def _ensure_capacity(self, required: int, actor: Features, critic: Features) -> None:
+        if self._arrays is not None and required <= self._capacity:
+            return
+        old = self._arrays
+        while self._capacity < required:
+            self._capacity *= 2
+        n = 0 if old is None else self._n_rows
+        self._arrays = {
+            "actor_tok": np.empty((self._capacity, *actor.tok.shape[1:]), dtype=np.float32),
+            "actor_col": np.empty((self._capacity, *actor.col.shape[1:]), dtype=np.float32),
+            "actor_glob": np.empty((self._capacity, *actor.glob.shape[1:]), dtype=np.float32),
+            "critic_tok": np.empty((self._capacity, *critic.tok.shape[1:]), dtype=np.float32),
+            "critic_col": np.empty((self._capacity, *critic.col.shape[1:]), dtype=np.float32),
+            "critic_glob": np.empty((self._capacity, *critic.glob.shape[1:]), dtype=np.float32),
+            "masks": np.empty((self._capacity, self.actor_spec.rs.num_actions), dtype=bool),
+            "actions": np.empty(self._capacity, dtype=np.int32),
+            "old_logp": np.empty(self._capacity, dtype=np.float32),
+            "episode_id": np.empty(self._capacity, dtype=np.int64),
+            "decision_index": np.empty(self._capacity, dtype=np.int32),
+            "set_id": np.empty(self._capacity, dtype=np.int64),
+        }
+        if old is not None:
+            for name, array in self._arrays.items():
+                array[:n] = old[name][:n]
 
     def finish_episode(self, episode, terminal_return: float, end_reason: str, engine_decisions: int) -> None:
         if episode.episode_id in self._episodes:
@@ -144,7 +196,7 @@ class Builder:
         This avoids retaining a Python tuple plus feature/mask views for every
         decision received from a worker; completion order is still discarded.
         """
-        if self._rows:
+        if self._n_rows:
             raise ValueError("cannot mix row-wise and bulk rollout ingestion")
         for i, eid in enumerate(payload["episode_id"].tolist()):
             eid = int(eid)
@@ -164,25 +216,39 @@ class Builder:
         ids = sorted(self._episodes)
         if expected is not None and len(ids) != expected:
             raise ValueError(f"{len(ids)} episodes completed, {expected} were assigned")
-        rows: list[tuple] = []
         offsets, counts = [], []
+        ids_in_rows = None if self._arrays is None else self._arrays["episode_id"][:self._n_rows]
+        decisions_in_rows = None if self._arrays is None else self._arrays["decision_index"][:self._n_rows]
+        ordered: list[np.ndarray] = []
+        if ids_in_rows is not None:
+            storage_order = np.lexsort((decisions_in_rows, ids_in_rows))
+            sorted_ids = ids_in_rows[storage_order]
+        else:
+            storage_order = sorted_ids = np.zeros(0, dtype=np.int64)
+        running = 0
         for eid in ids:
-            got = sorted(self._rows.get(eid, []), key=lambda r: r[0])
-            if [r[0] for r in got] != list(range(len(got))):
+            start = int(np.searchsorted(sorted_ids, eid, side="left"))
+            stop = int(np.searchsorted(sorted_ids, eid, side="right"))
+            row_ids = storage_order[start:stop]
+            got = decisions_in_rows[row_ids] if decisions_in_rows is not None else np.zeros(0, dtype=np.int32)
+            if not np.array_equal(got, np.arange(len(got), dtype=np.int32)):
                 raise ValueError(f"episode {eid} has a gap or a duplicate in its decision sequence")
-            offsets.append(len(rows))
+            offsets.append(running)
             counts.append(len(got))
-            rows += got
-        t = len(rows)
+            running += len(got)
+            ordered.append(row_ids)
+        row_order = np.concatenate(ordered) if ordered else np.zeros(0, dtype=np.int64)
+        t = len(row_order)
         n_actions = self.actor_spec.rs.num_actions
         if t:
+            assert self._arrays is not None
             actor = Features(
-                np.concatenate([r[1].tok for r in rows]), np.concatenate([r[1].col for r in rows]), np.concatenate([r[1].glob for r in rows])
+                self._arrays["actor_tok"][row_order], self._arrays["actor_col"][row_order], self._arrays["actor_glob"][row_order]
             )
             critic = Features(
-                np.concatenate([r[2].tok for r in rows]), np.concatenate([r[2].col for r in rows]), np.concatenate([r[2].glob for r in rows])
+                self._arrays["critic_tok"][row_order], self._arrays["critic_col"][row_order], self._arrays["critic_glob"][row_order]
             )
-            masks = np.stack([r[3] for r in rows])
+            masks = self._arrays["masks"][row_order]
         else:
             lay = self.actor_spec.layout
             empty = lambda sp: Features(  # noqa: E731
@@ -193,11 +259,11 @@ class Builder:
         out = Rollout(
             actor_spec=self.actor_spec, critic_spec=self.critic_spec, behavior_version=self.behavior_version,
             actor=actor, critic=critic, masks=masks,
-            actions=np.asarray([r[4] for r in rows], dtype=np.int32),
-            old_logp=np.asarray([r[5] for r in rows], dtype=np.float32),
+            actions=np.zeros(0, np.int32) if not t else self._arrays["actions"][row_order],
+            old_logp=np.zeros(0, np.float32) if not t else self._arrays["old_logp"][row_order],
             episode=np.repeat(np.arange(len(ids), dtype=np.int32), counts) if ids else np.zeros(0, np.int32),
-            decision_index=np.asarray([r[0] for r in rows], dtype=np.int32),
-            set_id=np.asarray([r[6] for r in rows], dtype=np.int64),
+            decision_index=np.zeros(0, np.int32) if not t else self._arrays["decision_index"][row_order],
+            set_id=np.zeros(0, np.int64) if not t else self._arrays["set_id"][row_order],
             episode_id=np.asarray(ids, dtype=np.int64),
             deal_seed=np.asarray([m["episode"].deal_seed for m in meta], dtype=np.int64),
             opponent=tuple(m["episode"].opponent for m in meta),

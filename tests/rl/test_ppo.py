@@ -1,8 +1,7 @@
 """Stage 2 acceptance for the reference learner (docs/rl/pipeline-plan.md section 13).
 
-Frozen old/new probability agreement, the game-average-sum weighting under
-unequal game lengths and a partial final minibatch, the detached baseline, and
-replayable seeds.
+Frozen old/new probability agreement, decision-mean weighting under unequal game
+lengths and a partial final minibatch, the detached baseline, and replayable seeds.
 """
 
 from __future__ import annotations
@@ -137,7 +136,7 @@ def test_kl_keeps_the_collection_policy_as_its_frozen_reference():
         parameter = actor.score[-1].weight
         parameter.add_(torch.linspace(0.0, 0.1, parameter.numel()).reshape_as(parameter))
     new_logp, _ = ppo.new_log_probs(actor, rollout.actor, rollout.masks, rollout.actions, 1.0, "cpu")
-    expected = 0.5 * np.mean((np.exp(new_logp.detach().numpy() - old_logp) - 1.0) ** 2)
+    expected = 0.5 * np.mean((new_logp.detach().numpy() - old_logp) ** 2)
     assert ppo.rollout_kl(actor, rollout, Optim()) == pytest.approx(expected, rel=1e-5, abs=1e-10)
     assert np.array_equal(rollout.old_logp, old_logp)
 
@@ -185,19 +184,19 @@ def test_advantage_normalization_is_global_and_actor_loss_does_not_re_normalize_
     index = np.arange(min(7, rollout.n_decisions))
     normalized = Optim(normalize_advantages=True)
     plain = Optim(normalize_advantages=False)
-    loss_normalized, _ = ppo.actor_loss(actor, rollout, index, global_adv, 1.0, normalized)
-    loss_plain, _ = ppo.actor_loss(actor, rollout, index, global_adv, 1.0, plain)
+    loss_normalized, _ = ppo.actor_loss(actor, rollout, index, global_adv, normalized)
+    loss_plain, _ = ppo.actor_loss(actor, rollout, index, global_adv, plain)
     assert loss_normalized == loss_plain
 
 
-def test_entropy_bonus_has_the_same_game_average_scale_as_the_surrogate():
+def test_entropy_bonus_uses_the_decision_mean_scale():
     actor, critic, rollout, _, _ = setup(rs=TOY2_SKIP, games_per_cell=5)
     adv = _adv(critic, rollout)
     optim = Optim(entropy_coef=0.1, normalize_advantages=False)
     index = np.arange(min(11, rollout.n_decisions))
-    loss_one, _ = ppo.actor_loss(actor, rollout, index, adv, 1.0, optim)
-    loss_two, _ = ppo.actor_loss(actor, rollout, index, adv, 2.0, optim)
-    assert float(loss_two.detach()) == pytest.approx(2.0 * float(loss_one.detach()))
+    loss, _ = ppo.actor_loss(actor, rollout, index, adv, optim)
+    plain, _ = ppo.actor_loss(actor, rollout, index, adv, Optim(entropy_coef=0.0))
+    assert float(loss.detach()) != pytest.approx(float(plain.detach()))
 
 
 def test_gamma_discounts_terminal_returns_by_remaining_learner_decisions():
@@ -225,7 +224,7 @@ def test_minibatch_gradient_sums_to_the_full_batch_gradient():
     actor, critic, rollout, _, _ = setup(rs=TOY2_SKIP, games_per_cell=5)
     adv = _adv(critic, rollout)
     optim = Optim(entropy_coef=0.0, normalize_advantages=False)
-    t, g = rollout.n_decisions, rollout.n_games
+    t = rollout.n_decisions
     size = next(k for k in range(5, t) if t % k)  # guarantee a partial final minibatch
     index = np.arange(t)
     full = ppo.weighted_gradient(actor, rollout, adv, [index], optim)
@@ -241,16 +240,13 @@ def test_game_lengths_are_unequal_in_that_check():
     assert len(set(rollout.learner_decisions.tolist())) > 1
 
 
-def test_the_objective_is_a_game_average_sum_not_a_decision_mean():
-    """Doubling one game's decisions must move the objective, which a decision mean
-    would hide; and the scale is T/G, not 1."""
+def test_the_objective_is_a_decision_mean():
+    """The actor objective is the ordinary mean over learner decisions."""
     actor, critic, rollout, _, _ = setup()
     adv = _adv(critic, rollout)
-    t, g = rollout.n_decisions, rollout.n_games
+    t = rollout.n_decisions
     index = np.arange(t)
-    _, diag_scaled = ppo.actor_loss(actor, rollout, index, adv, t / g, Optim())
-    _, diag_mean = ppo.actor_loss(actor, rollout, index, adv, 1.0, Optim())
-    assert abs(diag_scaled["surrogate"] - (t / g) * diag_mean["surrogate"]) < 1e-5
+    _, diag_mean = ppo.actor_loss(actor, rollout, index, adv, Optim())
     # at the collection policy the ratio is 1, so the surrogate is the mean advantage
     assert abs(diag_mean["surrogate"] - float(adv.mean())) < 1e-4
 
@@ -258,7 +254,7 @@ def test_the_objective_is_a_game_average_sum_not_a_decision_mean():
 def test_the_baseline_is_detached_from_the_actor_graph():
     actor, critic, rollout, _, _ = setup()
     adv = _adv(critic, rollout)
-    loss, _ = ppo.actor_loss(actor, rollout, np.arange(rollout.n_decisions), adv, 1.0, Optim())
+    loss, _ = ppo.actor_loss(actor, rollout, np.arange(rollout.n_decisions), adv, Optim())
     loss.backward()
     assert all(p.grad is None for p in critic.parameters())
     assert any(p.grad is not None and float(p.grad.abs().sum()) > 0 for p in actor.parameters())

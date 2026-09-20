@@ -5,17 +5,14 @@ the learner's terminal return `R_g` in `[-1, 1]`:
 
     A_gt = R_g - V_old(x_gt),  r_gt = exp(logp_new - logp_old)
 
-and the actor **maximizes the game-average sum**
+and the actor maximizes the decision-mean PPO surrogate
 
-    (1 / G) * sum_g sum_t min(r_gt * A_gt, clip(r_gt, 1 - eps, 1 + eps) * A_gt).
+    mean_t min(r_gt * A_gt, clip(r_gt, 1 - eps, 1 + eps) * A_gt).
 
-With uniformly shuffled decision minibatches, a minibatch's mean surrogate is
-multiplied by `T / G` -- the complete rollout's decision and game counts -- which
-preserves the full-batch objective's scale in expectation. Nothing divides a
-game's contribution by its length, nothing normalizes by a minibatch's own game
-count, and this is not a flat decision-mean loss in disguise. `weighted_gradient`
-and `tests/rl/test_ppo.py` pin that equality exactly, including unequal game
-lengths and a final partial minibatch.
+With uniformly shuffled decision minibatches, each minibatch uses its ordinary
+decision mean. `weighted_gradient` and `tests/rl/test_ppo.py` pin equality with
+the full decision-mean gradient, including unequal game lengths and a final
+partial minibatch.
 
 The critic is **frozen before the batch is fitted**: advantages are computed once
 from `V_old`, detached, and reused for every PPO epoch. They are not recomputed
@@ -27,8 +24,8 @@ uses PPO's clipped value loss around the frozen pre-update values.
 
 The KL diagnostic is sampled on the collection policy's own actions, not an
 exact sum over the current policy's full legal-action distribution. The actor
-early-stop threshold uses the nonnegative quadratic approximation
-`0.5 * mean((r - 1)^2)` on each minibatch before its optimizer step; critic
+early-stop threshold uses the nonnegative log-space K2 approximation
+`0.5 * mean(log_ratio^2)` on each minibatch before its optimizer step; critic
 fitting always completes.
 """
 
@@ -157,10 +154,15 @@ def discounted_returns(rollout: Rollout, gamma: float) -> np.ndarray:
 # -- the objective ---------------------------------------------------------------
 
 
-def surrogate(log_ratio: torch.Tensor, adv: torch.Tensor, clip: float, scale: float) -> torch.Tensor:
-    """`scale * mean(min(r A, clip(r) A))`; `scale` is `T / G` for a minibatch."""
+def surrogate(log_ratio: torch.Tensor, adv: torch.Tensor, clip: float) -> torch.Tensor:
+    """`mean(min(r A, clip(r) A))` over learner decisions."""
     r = torch.exp(log_ratio)
-    return scale * torch.minimum(r * adv, torch.clamp(r, 1 - clip, 1 + clip) * adv).mean()
+    return torch.minimum(r * adv, torch.clamp(r, 1 - clip, 1 + clip) * adv).mean()
+
+
+def _approx_kl_k2(log_ratio: torch.Tensor) -> torch.Tensor:
+    """The sampled, nonnegative log-space K2 approximation to KL."""
+    return 0.5 * log_ratio.square().mean()
 
 
 def new_log_probs(actor, features: Features, masks: np.ndarray, actions: np.ndarray, temperature: float, device: str, set_ids: np.ndarray | None = None) -> tuple[torch.Tensor, torch.Tensor]:
@@ -199,7 +201,7 @@ def _new_log_probs_tensors(
 
 
 def actor_loss(
-    actor: Actor, rollout: Rollout, index: np.ndarray, adv: np.ndarray, scale: float, optim: Optim, device: str = "cpu"
+    actor: Actor, rollout: Rollout, index: np.ndarray, adv: np.ndarray, optim: Optim, device: str = "cpu"
 ) -> tuple[torch.Tensor, dict]:
     """The negated surrogate for one minibatch, with its diagnostics."""
     feats = rollout.actor[index]
@@ -210,17 +212,17 @@ def actor_loss(
     old = torch.from_numpy(rollout.old_logp[index].astype(np.float32)).to(device)
     a = torch.from_numpy(adv[index].astype(np.float32)).to(device)
     log_ratio = logp - old
-    obj = surrogate(log_ratio, a, optim.clip, scale)
+    obj = surrogate(log_ratio, a, optim.clip)
     loss = -obj
     if optim.entropy_coef:
         assert entropy is not None
-        loss = loss - scale * optim.entropy_coef * entropy.mean()
+        loss = loss - optim.entropy_coef * entropy.mean()
     with torch.no_grad():
         r = torch.exp(log_ratio)
         diag = {
             "surrogate": float(obj),
             "entropy": float(entropy.mean()),
-            "approx_kl": float(0.5 * ((r - 1.0) ** 2).mean()),
+            "approx_kl": float(_approx_kl_k2(log_ratio)),
             "clip_fraction": float(((r - 1.0).abs() > optim.clip).float().mean()),
             "max_abs_log_ratio": float(log_ratio.abs().max()),
         }
@@ -272,7 +274,7 @@ def _prepare_rollout(
     )
 
 
-def _prepared_actor_loss(actor, prepared: _PreparedRollout, index: np.ndarray, rows: torch.Tensor, scale: float, optim: Optim) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+def _prepared_actor_loss(actor, prepared: _PreparedRollout, index: np.ndarray, rows: torch.Tensor, optim: Optim) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     set_ids = None if prepared.actor_set_ids is None else prepared.actor_set_ids[index]
     logp, entropy = _new_log_probs_tensors(
         actor,
@@ -281,15 +283,14 @@ def _prepared_actor_loss(actor, prepared: _PreparedRollout, index: np.ndarray, r
         need_entropy=bool(optim.entropy_coef),
     )
     log_ratio = logp - prepared.old_logp[rows]
-    obj = surrogate(log_ratio, prepared.advantages[rows], optim.clip, scale)
+    obj = surrogate(log_ratio, prepared.advantages[rows], optim.clip)
     loss = -obj
     if optim.entropy_coef:
         assert entropy is not None
-        loss = loss - scale * optim.entropy_coef * entropy.mean()
+        loss = loss - optim.entropy_coef * entropy.mean()
     with torch.no_grad():
-        ratio = torch.exp(log_ratio)
         diag = {
-            "approx_kl": 0.5 * ((ratio - 1.0) ** 2).mean(),
+            "approx_kl": _approx_kl_k2(log_ratio),
         }
     return loss, diag
 
@@ -297,14 +298,14 @@ def _prepared_actor_loss(actor, prepared: _PreparedRollout, index: np.ndarray, r
 def weighted_gradient(actor: Actor, rollout: Rollout, adv: np.ndarray, batches, optim: Optim, device: str = "cpu") -> list[torch.Tensor]:
     """`sum_k (|mb_k| / T) * grad_k`, which equals the full-batch gradient exactly.
 
-    Exposed because that identity is the acceptance check for the game-summed
+    Exposed because that identity is the acceptance check for the decision-mean
     objective, not because the training loop uses it: training takes one optimizer
     step per minibatch.
     """
-    t, g = rollout.n_decisions, rollout.n_games
+    t = rollout.n_decisions
     total = [torch.zeros_like(p) for p in actor.parameters()]
     for index in batches:
-        loss, _ = actor_loss(actor, rollout, index, adv, t / g, optim, device)
+        loss, _ = actor_loss(actor, rollout, index, adv, optim, device)
         actor.zero_grad(set_to_none=True)
         loss.backward()
         for acc, p in zip(total, actor.parameters()):
@@ -331,10 +332,9 @@ def rollout_actor_diagnostics(
 
     These values describe one coherent policy, unlike an average over optimizer
     steps whose minibatches were evaluated under changing parameters. The
-    surrogate uses the frozen rollout advantages and the same game-average-sum
-    scale as the objective. With advantage normalization enabled, its diagnostic
-    normalization is rollout-wide; the shipped configuration leaves normalization
-    disabled.
+    surrogate uses the frozen rollout advantages and the decision-mean objective.
+    With advantage normalization enabled, its diagnostic normalization is
+    rollout-wide; the shipped configuration leaves normalization disabled.
     """
     if adv is not None and len(adv) != rollout.n_decisions:
         raise ValueError("rollout diagnostics need one advantage per decision")
@@ -354,7 +354,7 @@ def rollout_actor_diagnostics(
         # never recompute the reference from the actor being trained.
         log_ratio = logp - torch.from_numpy(rollout.old_logp[sl].astype(np.float32)).to(device)
         r = torch.exp(log_ratio)
-        kl_total += float((0.5 * (r - 1.0) ** 2).sum())
+        kl_total += float((0.5 * log_ratio.square()).sum())
         entropy_total += float(entropy.sum())
         legal_count = rollout.masks[sl].sum(axis=1).astype(np.float64)
         max_entropy = np.log(np.maximum(legal_count, 1.0))
@@ -374,9 +374,8 @@ def rollout_actor_diagnostics(
                 ).sum()
             )
         n += len(logp)
-    scale = rollout.n_decisions / rollout.n_games if rollout.n_games else 0.0
     return {
-        "surrogate": scale * surrogate_total / n if n and diagnostic_adv is not None else 0.0,
+        "surrogate": surrogate_total / n if n and diagnostic_adv is not None else 0.0,
         "entropy": entropy_total / n if n else 0.0,
         "legal_actions": legal_actions_total / n if n else 0.0,
         "max_entropy": max_entropy_total / n if n else 0.0,
@@ -389,7 +388,7 @@ def rollout_actor_diagnostics(
 
 
 def rollout_kl(actor: Actor, rollout: Rollout, optim: Optim, device: str = "cpu", chunk: int = FORWARD_CHUNK) -> float:
-    """`0.5 * mean((r - 1)^2)` over the whole rollout: sampled and approximate."""
+    """`0.5 * mean(log_ratio^2)` over the whole rollout: sampled and approximate."""
     return rollout_actor_diagnostics(actor, rollout, optim, device=device, chunk=chunk)["approx_kl"]
 
 
@@ -441,7 +440,7 @@ def update(
     training data is discarded by the caller afterwards.
     """
     stats = UpdateStats()
-    t, g = rollout.n_decisions, rollout.n_games
+    t = rollout.n_decisions
     if t == 0:
         return stats
     actor_tensor_data = to_tensors(rollout.actor, device)
@@ -460,7 +459,6 @@ def update(
     stats.critic_pre_update_ev = _explained_variance(rets, values)
 
     size = min(optim.minibatch, t)
-    scale = t / g
     prepared = _prepare_rollout(rollout, adv, rets, values, device, actor_tensor_data, critic_tensor_data)
 
     started = time.perf_counter()
@@ -473,7 +471,7 @@ def update(
         epoch_rows = 0
         for index in _minibatches(rng, t, size):
             rows = torch.from_numpy(index.astype(np.int64)).to(device)
-            loss, minibatch_diag = _prepared_actor_loss(actor, prepared, index, rows, scale, optim)
+            loss, minibatch_diag = _prepared_actor_loss(actor, prepared, index, rows, optim)
             # This uses the forward pass already needed for the loss. It sees
             # KL accumulated from prior steps, and stops before applying the
             # next step, avoiding an extra forward pass for the stop decision.

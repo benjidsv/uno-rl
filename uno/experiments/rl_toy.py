@@ -114,8 +114,8 @@ def gradient_check(ruleset: str = "TOY", opponent: str = "heuristic", games: int
     optim = Optim(entropy_coef=0.0, normalize_advantages=False)
     ppo_grad = torch.cat([t.reshape(-1) for t in ppo.weighted_gradient(actor, rollout, adv, [np.arange(rollout.n_decisions)], optim)])
     # `weighted_gradient` differentiates the *loss*, which is minus the objective; the
-    # objective's gradient at r = 1 is the game-average sum of grad log p weighted by
-    # the same advantages, which is exactly `sampled_gradient`'s mean over games.
+    # objective's gradient at r = 1 is the decision-mean score-function gradient
+    # weighted by the same advantages, matching `sampled_gradient`'s aggregate.
     _, ref_mean = exact.sampled_gradient(actor, rollout, baseline=values)
     reference = -ref_mean
     ppo_identity = float((ppo_grad - reference).norm() / max(float(reference.norm()), 1e-12))

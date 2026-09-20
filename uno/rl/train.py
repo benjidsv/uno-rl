@@ -91,6 +91,30 @@ _TRAIN_MLFLOW_PATHS = {
     "advantage_std": "batch/advantage_std",
     "return_mean": "batch/return_mean",
     "return_std": "batch/return_std",
+    # Current on-policy rollout summaries.
+    "rollout_games": "rollout/games",
+    "rollout_learner_decisions": "rollout/learner_decisions",
+    "rollout_engine_decisions": "rollout/engine_decisions",
+    "rollout_reward_mean": "rollout/reward_mean",
+    "rollout_reward_std": "rollout/reward_std",
+    "rollout_score_mean": "rollout/score_mean",
+    "rollout_score_std": "rollout/score_std",
+    "rollout_win_rate": "rollout/win_rate",
+    "rollout_draw_rate": "rollout/draw_rate",
+    "rollout_loss_rate": "rollout/loss_rate",
+    "rollout_cap_rate": "rollout/cap_rate",
+    "rollout_engine_length_mean": "rollout/engine_length_mean",
+    "rollout_engine_length_std": "rollout/engine_length_std",
+    "rollout_engine_length_min": "rollout/engine_length_min",
+    "rollout_engine_length_p50": "rollout/engine_length_p50",
+    "rollout_engine_length_p90": "rollout/engine_length_p90",
+    "rollout_engine_length_max": "rollout/engine_length_max",
+    "rollout_learner_length_mean": "rollout/learner_length_mean",
+    "rollout_learner_length_std": "rollout/learner_length_std",
+    "rollout_learner_length_min": "rollout/learner_length_min",
+    "rollout_learner_length_p50": "rollout/learner_length_p50",
+    "rollout_learner_length_p90": "rollout/learner_length_p90",
+    "rollout_learner_length_max": "rollout/learner_length_max",
     # End-to-end and stage performance.
     "collect_s": "timing/collection_total_seconds",
     "update_s": "timing/update_total_seconds",
@@ -178,7 +202,7 @@ def _evaluation_mlflow_metrics(metrics: dict, result: ev.PanelResult) -> dict:
             for opponent, seat in result.cells
         },
         **{
-            f"dev_{name}": f"evaluation/behavior_{name}"
+            f"dev_{name}": f"evalbehavior/{name}"
             for name in result.behavior.as_dict()
         },
     }
@@ -468,6 +492,7 @@ def _iteration(
     per_cell = _cell_scores(rollout)
     return stats, {
         **timings,
+        **_rollout_metrics(rollout),
         **per_cell,
         **{f"end_{k}": v for k, v in cstats.ends.items()},
     }
@@ -490,6 +515,47 @@ def _cell_scores(rollout) -> dict:
         else 0.0
     )
     return out
+
+
+def _rollout_metrics(rollout) -> dict:
+    """Per-update summaries of the completed on-policy episodes."""
+    rewards = np.asarray(rollout.terminal_return, dtype=np.float64)
+    scores = (rewards + 1.0) / 2.0
+    engine = np.asarray(rollout.engine_decisions, dtype=np.float64)
+    learner = np.asarray(rollout.learner_decisions, dtype=np.float64)
+
+    def summary(values: np.ndarray, prefix: str) -> dict:
+        if not len(values):
+            return {
+                f"{prefix}_mean": 0.0, f"{prefix}_std": 0.0,
+                f"{prefix}_min": 0.0, f"{prefix}_p50": 0.0,
+                f"{prefix}_p90": 0.0, f"{prefix}_max": 0.0,
+            }
+        return {
+            f"{prefix}_mean": float(values.mean()),
+            f"{prefix}_std": float(values.std()),
+            f"{prefix}_min": float(values.min()),
+            f"{prefix}_p50": float(np.quantile(values, 0.50)),
+            f"{prefix}_p90": float(np.quantile(values, 0.90)),
+            f"{prefix}_max": float(values.max()),
+        }
+
+    n = len(rewards)
+    return {
+        "rollout_games": rollout.n_games,
+        "rollout_learner_decisions": rollout.n_decisions,
+        "rollout_engine_decisions": int(engine.sum()),
+        "rollout_reward_mean": float(rewards.mean()) if n else 0.0,
+        "rollout_reward_std": float(rewards.std()) if n else 0.0,
+        "rollout_score_mean": float(scores.mean()) if n else 0.0,
+        "rollout_score_std": float(scores.std()) if n else 0.0,
+        "rollout_win_rate": float(np.mean(rewards > 0.0)) if n else 0.0,
+        "rollout_draw_rate": float(np.mean(rewards == 0.0)) if n else 0.0,
+        "rollout_loss_rate": float(np.mean(rewards < 0.0)) if n else 0.0,
+        "rollout_cap_rate": float(np.mean(np.asarray(rollout.end_reason) == "cap")) if n else 0.0,
+        **summary(engine, "rollout_engine_length"),
+        **summary(learner, "rollout_learner_length"),
+    }
 
 
 def evaluate_now(run: Run) -> ev.PanelResult:

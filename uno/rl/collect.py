@@ -160,7 +160,7 @@ def collect(
     """
     rs = actor.rs
     spec = actor.spec
-    builder = Builder(spec, critic_spec, behavior_version)
+    builder = Builder(spec, critic_spec, behavior_version, decision_capacity=max(1024, len(manifest) * 16))
     stats = Stats()
     t0 = time.perf_counter()
 

@@ -273,16 +273,13 @@ For game `g` and learner decision `t`, use learner return `R_g` in `[-1, 1]` and
 `A_gt = R_g - V_old(x_gt)`. Freeze the critic before fitting the current batch and
 detach `A_gt`. Define ratio `r_gt = exp(logp_new - logp_old)`.
 
-The actor maximizes the **game-average sum**:
+The actor maximizes the **decision-mean PPO surrogate**:
 
-`(1/G) * sum_g sum_t min(r_gt * A_gt, clip(r_gt, 1-eps, 1+eps) * A_gt)`.
+`mean_t min(r_gt * A_gt, clip(r_gt, 1-eps, 1+eps) * A_gt)`.
 
-With uniformly shuffled decision minibatches, multiply their mean surrogate by
-`T/G`, where `T` and `G` are the complete rollout's decision and game counts. This
-preserves the full-batch objective's scale in expectation. Do not divide each
-game's contribution by its length, normalize separately by minibatch game counts,
-or silently replace this with a flat decision-mean loss. Test minibatch/full-batch
-gradient agreement, including unequal game lengths and final partial minibatches.
+With uniformly shuffled decision minibatches, use the ordinary minibatch decision
+mean. Test minibatch/full-batch gradient agreement, including unequal game lengths
+and final partial minibatches.
 
 Critic loss is a decision-mean MSE, optimized separately. Report raw entropy in
 nats together with mean legal-action count, the local ceiling `log(|A(s)|)`,
@@ -309,9 +306,9 @@ from the unregularized return gradient. Advantage normalization starts disabled.
 | Value clipping / LR schedule | None initially |
 | Actor early stop | Minibatch approximate KL above `0.02`, checked before each optimizer step |
 
-For the KL diagnostic use sampled old-policy actions and the nonnegative quadratic
-approximation `0.5 * mean((r - 1)^2)`; also log clip fraction and maximum absolute
-log-ratio.
+For the KL diagnostic use sampled old-policy actions and the nonnegative log-space
+K2 approximation `0.5 * mean(log_ratio^2)`; also log clip fraction and maximum
+absolute log-ratio.
 After each actor epoch, compute surrogate, entropy, KL, ratio-clip fraction and
 maximum absolute log-ratio over the complete rollout under that epoch's final
 policy. Use the current optimizer minibatch's approximate KL for the early-stop
@@ -321,9 +318,8 @@ forward pass. Do not report the last optimizer minibatch as an update aggregate.
 This is a sampled diagnostic, not an exact KL guarantee. Complete critic fitting
 even if actor epochs stop early. Log actual optimizer steps and epochs used.
 
-The game-summed actor objective may have larger gradients than common
-decision-averaged PPO code. Measure unclipped norm and fraction of clipped updates;
-do this separately for actor and critic. Report critic explained variance both for
+Measure unclipped norm and fraction of clipped updates separately for actor and
+critic. Report critic explained variance both for
 the frozen pre-update critic on the fresh rollout and for the fitted critic on that
 same rollout; the latter measures fit, not next-rollout generalization. Do not
 interpret the proposed learning rate as transferred calibration. For the

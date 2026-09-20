@@ -188,11 +188,12 @@ def gradient(rs: Ruleset, spec: Spec, actor: Actor, opponent_sigma: np.ndarray, 
 def sampled_gradient(actor: Actor, rollout, temperature: float = 1.0, baseline: np.ndarray | None = None) -> tuple[torch.Tensor, torch.Tensor]:
     """Per-game score-function gradients `G_g = sum_t grad log p(a_t) * A_gt`.
 
-    Returns `(per_game, mean)`, both flattened. With `baseline=None` the weight is
+    Returns `(per_game, decision_mean)`, both flattened. With `baseline=None` the weight is
     the raw terminal return, which is the *unregularized* reference the plan asks
     the PPO gradient to match at collection weights; with a baseline it is the
     advantage actually used in training. Keeping the per-game vectors is what gives
-    the comparison a game-level standard error instead of a point estimate.
+    the comparison a game-level standard error instead of a point estimate. The
+    aggregate is the ordinary learner-decision mean, matching PPO.
     """
     from uno.rl.ppo import new_log_probs
 
@@ -208,7 +209,10 @@ def sampled_gradient(actor: Actor, rollout, temperature: float = 1.0, baseline: 
         (logp * torch.from_numpy(weights[rows].astype(np.float32))).sum().backward()
         per_game[i] = torch.cat([(p.grad.reshape(-1) if p.grad is not None else torch.zeros(p.numel())) for p in actor.parameters()])
     actor.zero_grad(set_to_none=True)
-    return per_game, per_game.mean(0)
+    counts = torch.from_numpy(rollout.learner_decisions.astype(np.float32))
+    total = float(counts.sum())
+    decision_mean = (per_game * counts[:, None]).sum(0) / total if total else per_game.sum(0)
+    return per_game, decision_mean
 
 
 @dataclass

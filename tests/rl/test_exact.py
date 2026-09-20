@@ -94,7 +94,7 @@ def test_exact_gradient_matches_a_finite_difference_of_the_exact_value(actor, he
         assert abs(fd - float(flat[idx])) <= 2e-3 * max(1.0, abs(fd)), f"coordinate {idx}: finite difference {fd}, exact {float(flat[idx])}"
 
 
-def test_sampled_gradient_is_per_game_and_sums_to_its_mean(actor):
+def test_sampled_gradient_is_per_game_and_returns_the_decision_mean(actor):
     from uno.rl.collect import collect
     from uno.rl.manifest import DealSchedule, build
 
@@ -103,6 +103,8 @@ def test_sampled_gradient_is_per_game_and_sums_to_its_mean(actor):
     rollout, _ = collect(manifest, ActorPolicy(F.spec(TOY, F.ARM_B), actor), F.spec(TOY, F.ARM_CRITIC), opponents, 0, 0, live_games=16)
     per_game, mean = exact.sampled_gradient(actor, rollout)
     assert per_game.shape[0] == rollout.n_games
-    assert torch.allclose(per_game.mean(0), mean)
-    rows = exact.agreement(per_game, mean)
+    counts = torch.from_numpy(rollout.learner_decisions.astype(np.float32))
+    expected = (per_game * counts[:, None]).sum(0) / counts.sum()
+    assert torch.allclose(expected, mean)
+    rows = exact.agreement(per_game, per_game.mean(0))
     assert rows[0].direction == "exact" and abs(rows[0].z) < 1e-4  # compared with itself

@@ -40,6 +40,22 @@ is reported separately from final scores across seeds; it is never folded into
 `dev_se`. The Stage 8 primary estimand is the paired-seed mean of final-checkpoint
 `B - A` at the equal learner-decision budget.
 
+## Training rollout
+
+The following metrics summarize the completed on-policy games in the current
+update. They are game-weighted unless explicitly identified as counts; they are
+not evaluation metrics and are not used for checkpoint selection.
+
+| Metric | Definition |
+|---|---|
+| `rollout_games`, `rollout_learner_decisions`, `rollout_engine_decisions` | Counts in the current rollout; engine decisions include both players. |
+| `rollout_reward_mean`, `rollout_reward_std` | Population mean/SD of per-game learner returns `R_g` in `[-1, 1]`. |
+| `rollout_score_mean`, `rollout_score_std` | Population mean/SD of per-game scores `S_g = (R_g + 1)/2`. |
+| `rollout_win_rate`, `rollout_draw_rate`, `rollout_loss_rate` | Fractions of current rollout games with positive, zero, or negative learner return. |
+| `rollout_cap_rate` | Fraction of games ending at the ruleset action cap. |
+| `rollout_engine_length_*` | Summary statistics of per-game engine-decision counts: mean, population SD, minimum, p50, p90, and maximum. |
+| `rollout_learner_length_*` | The same summary statistics for per-game learner-decision counts. |
+
 ## Optimization diagnostics
 
 All actor distribution diagnostics are recomputed after the update over every
@@ -49,7 +65,7 @@ decision in that rollout, under one coherent final policy. Write
 
 | Metric | Definition |
 |---|---|
-| `surrogate` | `(T/G) * mean_t[min(r_t A_t, clip(r_t, 1-eps, 1+eps) A_t)]`; game-average-sum units. |
+| `surrogate` | `mean_t[min(r_t A_t, clip(r_t, 1-eps, 1+eps) A_t)]`; decision-mean units. |
 | `policy_loss` | `-surrogate`, matching the actor's return objective as a minimized loss; entropy regularization is currently zero. |
 | `entropy` | Mean legal-action policy entropy per learner decision, in nats. |
 | `legal_actions` | Mean number of legal actions per learner decision. |
@@ -64,7 +80,7 @@ to effective supports of about `1.49`, `1.35`, and `1.22` actions, respectively.
 Because UNO states have different legal-action counts, use `normalized_entropy`
 and `legal_actions` together when judging whether a falling entropy reflects
 stronger preferences or simply more forced/low-choice decisions.
-| `approx_kl` | Sample mean `0.5 * (r_t - 1)^2`; nonnegative sampled diagnostic, not exact KL. |
+| `approx_kl` | Sample mean `0.5 * log_ratio_t^2` (K2); nonnegative sampled diagnostic, not exact KL. |
 | `clip_fraction` | Fraction of rollout decisions with `abs(r_t - 1) > eps`. |
 | `max_abs_log_ratio` | Maximum `abs(log r_t)` over the rollout. |
 | `actor_grad_norm`, `critic_grad_norm` | Mean pre-clipping global gradient norm over that update's optimizer steps. |
@@ -81,7 +97,9 @@ stronger preferences or simply more forced/low-choice decisions.
 ## Evaluation behavior
 
 `dev_<name>` applies the following whole-panel summary to the evaluated actor.
-The same names in panel-sizing output are also recorded for the reference policy.
+MLflow names these metrics under `evalbehavior/<name>` so behavior diagnostics
+remain separate from evaluation scores and optimization metrics. The same names
+in panel-sizing output are also recorded for the reference policy.
 
 | `<name>` | Definition |
 |---|---|
