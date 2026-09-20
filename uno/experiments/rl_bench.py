@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.utils.benchmark as benchmark
+from tqdm import tqdm
 
 from uno.rl import ppo
 from uno.rl.config import Collection, Config, Evaluation, Optim
@@ -85,6 +86,14 @@ def main():
     }
 
     device = resolve_device(args.device)
+    
+    pbar = tqdm(total=len(args.workers) * len(args.minibatches), desc="Sweeping Benchmarks")
+    def safe_print(msg=""):
+        pbar.write(str(msg))
+    
+    # Override print locally to keep the progress bar clean
+    print = safe_print
+    
     print(f"Resolved device: {device}")
 
     for w in args.workers:
@@ -260,10 +269,14 @@ def main():
                 print(
                     f"Update throughput: {update_throughput:,.0f} presentations/s (rollout_size * epochs / update_t)"
                 )
+                
+                pbar.update(1)
 
         finally:
             if collector is not None:
                 collector.close()
+                
+    pbar.close()
 
 
 if __name__ == "__main__":
