@@ -157,13 +157,11 @@ def _training_mlflow_metrics(metrics: dict, run: "Run") -> dict:
         else:
             path = _TRAIN_MLFLOW_PATHS.get(name, f"diagnostic/{name}")
         grouped[path] = value
-    grouped.update(
-        {
-            target: metrics[source]
-            for source, target in _PRIMARY_TRAIN_METRICS.items()
-            if source in metrics
-        }
-    )
+    grouped.update({
+        target: metrics[source]
+        for source, target in _PRIMARY_TRAIN_METRICS.items()
+        if source in metrics
+    })
     return grouped
 
 
@@ -185,8 +183,7 @@ def _evaluation_mlflow_metrics(metrics: dict, result: ev.PanelResult) -> dict:
         },
     }
     grouped = {
-        paths.get(name, f"diagnostic/{name}"): value
-        for name, value in metrics.items()
+        paths.get(name, f"diagnostic/{name}"): value for name, value in metrics.items()
     }
     grouped["primary/dev_score"] = metrics["dev_league_mean"]
     return grouped
@@ -260,6 +257,7 @@ def start_tracker(
     phase: str = "diagnostic",
     kind: str = "train",
     store_root=None,
+    mlflow_prefix: str = "",
 ) -> Tracker:
     cfg = run.config
     tags = {
@@ -278,7 +276,7 @@ def start_tracker(
         params.update({f"lineage_{k}": v for k, v in run.lineage.items()})
     tracker = Tracker(
         run.directory / "tracking",
-        run_name=f"{cfg.arm}-seed{cfg.training_seed}",
+        run_name=f"{mlflow_prefix}_{cfg.arm}-seed{cfg.training_seed}",
         tags=tags,
         params=params,
         store_root=store_root,
@@ -350,7 +348,9 @@ def _synchronize_device(device: str) -> None:
         torch.cuda.synchronize(torch.device(device))
 
 
-def _iteration(run: Run, collector, update_threads: int | None) -> tuple[ppo.UpdateStats, dict]:
+def _iteration(
+    run: Run, collector, update_threads: int | None
+) -> tuple[ppo.UpdateStats, dict]:
     """One complete synchronous iteration. Returns its update stats and timings."""
     cfg = run.config
     rs = cfg.rs
@@ -568,9 +568,7 @@ def _train(
     if run.progress.next_eval_at == 0:
         run.progress.next_eval_at = eval_every
         first = evaluate_now(run)  # the initial policy is a scheduled evaluation point
-        _record_evaluation(
-            run, tracker, first, 0, time.perf_counter() - started
-        )
+        _record_evaluation(run, tracker, first, 0, time.perf_counter() - started)
         last_evaluation, last_evaluation_step = first, 0
         last_dev_score = first.mean
     overrun = 0.0
@@ -640,7 +638,10 @@ def _train(
             while run.progress.next_eval_at <= run.progress.learner_decisions:
                 run.progress.next_eval_at += eval_every
             _record_evaluation(
-                run, tracker, result, run.progress.learner_decisions,
+                run,
+                tracker,
+                result,
+                run.progress.learner_decisions,
                 time.perf_counter() - started,
             )
             _save(run, "latest")
@@ -672,7 +673,10 @@ def _train(
     else:
         final = evaluate_now(run)
         _record_evaluation(
-            run, tracker, final, run.progress.learner_decisions,
+            run,
+            tracker,
+            final,
+            run.progress.learner_decisions,
             time.perf_counter() - started,
         )
     _save(run, "final")
@@ -714,7 +718,10 @@ def _train(
 
 
 def _log_eval(
-    run: Run, tracker: Tracker | None, result: ev.PanelResult, step: int,
+    run: Run,
+    tracker: Tracker | None,
+    result: ev.PanelResult,
+    step: int,
     run_wall_seconds: float,
 ) -> None:
     if tracker is None:
@@ -751,8 +758,7 @@ def _record_evaluation(
     run.eval_history.append((run.progress.update, result.mean))
     _log_eval(run, tracker, result, step, run_wall_seconds)
     improved = (
-        run.progress.best_score is None
-        or result.mean > run.progress.best_score + 1e-6
+        run.progress.best_score is None or result.mean > run.progress.best_score + 1e-6
     )
     if improved:
         run.progress.best_score = result.mean
@@ -810,7 +816,9 @@ def resume(
     saved_league_hash = payload.get("league_hash")
     expected_league_hash = league_hash(cfg.rs, league_name)
     if saved_league_hash is not None and saved_league_hash != expected_league_hash:
-        raise ValueError("checkpoint's league differs: that is an experiment branch, not a resume")
+        raise ValueError(
+            "checkpoint's league differs: that is an experiment branch, not a resume"
+        )
     run = Run(cfg, Path(directory), league_name)
     progress = ckpt.restore(
         payload, cfg, run.actor, run.critic, run.actor_opt, run.critic_opt, cfg.device
@@ -846,9 +854,7 @@ def _carry_best_artifacts(
     source_actor = source_dir / "best_actor.pt"
     if not source_checkpoint.exists() and progress.best_update == progress.update:
         source_checkpoint = resumed_checkpoint
-        candidate = resumed_checkpoint.with_name(
-            resumed_checkpoint.stem + "_actor.pt"
-        )
+        candidate = resumed_checkpoint.with_name(resumed_checkpoint.stem + "_actor.pt")
         source_actor = candidate
     if not source_checkpoint.exists():
         # The score remains valid metadata, but the caller copied no selected

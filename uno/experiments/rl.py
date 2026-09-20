@@ -8,6 +8,7 @@
 `uv run uno rl devsize [RULESET] [ARM] [SEED] [MAX_DEALS/CELL] [TARGET_95_HALFWIDTH] [TORCH_THREADS] [ACTOR_EXPORT]`
 `uv run uno rl pilot [SEED]`                     one-hour full-UNO B pilot preset
 `uv run uno rl ablation [ARM] [SEED]`            Stage 8 equal-data A/B preset
+`uv run uno rl overnight [ARM] [SEED] [MLFLOW_PREFIX]`  long overnight preset
 
 `train` is a **diagnostic** command. It runs the synchronous loop of pipeline plan
 section 3 to a declared learner-decision cap, evaluating on the fixed DEV panel at
@@ -157,6 +158,7 @@ def cmd_train(
     *,
     tracking_study_id: str = "pilot",
     tracking_kind: str = "train",
+    mlflow_prefix: str = "",
     optim_overrides: dict[str, object] | None = None,
 ) -> None:
     if collection_threads < 0 or update_threads < 0:
@@ -200,7 +202,12 @@ def cmd_train(
         ),
         **({"update_torch_threads": update_threads} if update_threads else {}),
     }
-    run.tracker = start_tracker(run, study_id=tracking_study_id, kind=tracking_kind)
+    run.tracker = start_tracker(
+        run,
+        study_id=tracking_study_id,
+        kind=tracking_kind,
+        mlflow_prefix=mlflow_prefix,
+    )
     print(
         f"\n== train {ruleset} arm {arm} seed {seed}: cap {cap:,} learner decisions, {len(run.opponents)} opponents, "
         f"{cfg.collection.games_per_cell} games/cell, minibatch {minibatch}, device {device}, "
@@ -317,8 +324,36 @@ def cmd_experiment(arm: str = ARM_A, seed: int = 0) -> None:
             "actor_grad_norm": 10.0,
             # gradients are scaled by decisions/games, so roughly x15-20. default is 0.6 but that destroys the learning
             "actor_epochs": 4,
-            "actor_lr": 3.7e-5,
-            # to account for T/G scaling, 3*10^-4 * 64/512
+            "actor_lr": 6e-4,
+        },
+    )
+
+
+def cmd_overnight(arm: str = ARM_B, seed: int = 0) -> None:
+    cmd_train(
+        ruleset="FULL_UNO",
+        arm=arm,
+        seed=seed,
+        cap=10_000_000,
+        workers=1,
+        games_per_cell=64,
+        deals_per_cell=256,
+        device="cpu",
+        collection_threads=1,
+        update_threads=6,
+        minibatch=512,
+        time_cap_s=60_000,
+        evaluation_fraction=0.016,
+        tracking_study_id="overnight-experiment",
+        tracking_kind="overnight-data",
+        mlflow_prefix="bigchungus",
+        optim_overrides={
+            "normalize_advantages": True,
+            "actor_grad_norm": 10.0,
+            # gradients are scaled by decisions/games, so roughly x15-20. default is 0.6 but that destroys the learning
+            "actor_epochs": 4,
+            "actor_lr": 6e-4,
+            "entropy_coef": 0.01,
         },
     )
 
@@ -1000,10 +1035,14 @@ def main(argv: list[str]) -> None:
             )
         case "pilot":
             cmd_pilot(*(f(x) for f, x in zip((int,), rest)))
+        case "overnight":
+            cmd_overnight(*(f(x) for f, x in zip((str, int, str), rest)))
         case "ablation":
             cmd_ablation(*(f(x) for f, x in zip((str, int), rest)))
         case "experiment":
             cmd_experiment(*(f(x) for f, x in zip((str, int), rest)))
+        case "overnight":
+            cmd_overnight(*(f(x) for f, x in zip((str, int), rest)))
         case "resume":
             cmd_resume(
                 rest[0],

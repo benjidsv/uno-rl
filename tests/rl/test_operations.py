@@ -459,6 +459,17 @@ def test_ablation_command_refuses_non_feed_forward_arms():
         experiment.cmd_ablation(arm=F.ARM_CRITIC, seed=0)
 
 
+def test_overnight_command_passes_mlflow_prefix(monkeypatch):
+    from uno.experiments import rl as experiment
+
+    captured = {}
+    monkeypatch.setattr(experiment, "cmd_train", lambda **kwargs: captured.update(kwargs))
+    experiment.cmd_overnight(arm=F.ARM_B, seed=3, mlflow_prefix="overnight-")
+    assert captured["mlflow_prefix"] == "overnight-"
+    assert captured["tracking_study_id"] == "overnight-experiment"
+    assert captured["tracking_kind"] == "overnight-data"
+
+
 def test_training_reuses_a_boundary_evaluation_as_the_final_result(tmp_path):
     from uno.rl.train import train
 
