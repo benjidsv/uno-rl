@@ -1,7 +1,7 @@
 """Benchmark PPO collection/update loops with isolated benchmark state.
 
 Key properties:
-- Every minibatch value gets its own Config/Run, so _iteration sees the requested minibatch.
+- Every n_minibatches value gets its own Config/Run, so _iteration sees the requested partition count.
 - Microbenchmark, complete-update benchmark, and full-cycle benchmark use separate Runs.
 - All update benchmarks start from the same actor/critic/optimizer snapshot that generated
   the frozen rollout, avoiding cross-contamination between sweep points.
@@ -55,7 +55,7 @@ def slice_rollout(r: Rollout, size: int) -> Rollout:
 def make_config(
     *,
     workers: int,
-    minibatch: int,
+    n_minibatches: int,
     device,
     ruleset: str,
     arm,
@@ -77,7 +77,7 @@ def make_config(
             workers=workers,
         ),
         evaluation=Evaluation(deals_per_cell=256, every_fraction=0.016),
-        optim=Optim(minibatch=minibatch, **optim_overrides),
+        optim=Optim(n_minibatches=n_minibatches, **optim_overrides),
     )
 
 
@@ -85,14 +85,14 @@ def make_run(
     cfg: Config,
     *,
     workers: int,
-    minibatch: int,
+    n_minibatches: int,
     tag: str,
     root: Path,
     collection_threads: int,
     update_threads: int,
 ) -> Run:
-    """Create a fresh Run whose internal config already has the requested minibatch."""
-    out = root / f"w{workers}_mb{minibatch}_{tag}_{time.time_ns()}"
+    """Create a fresh Run whose internal config already has the requested minibatch count."""
+    out = root / f"w{workers}_nmb{n_minibatches}_{tag}_{time.time_ns()}"
     run = Run(cfg, out, "rulebot")
     run.execution = {
         "collection_torch_threads": collection_threads,
@@ -224,11 +224,12 @@ def main():
         help="List of collection worker counts to sweep.",
     )
     parser.add_argument(
-        "--minibatches",
+        "--n-minibatches",
         type=int,
         nargs="+",
-        default=[512],
-        help="List of PPO minibatch sizes to sweep.",
+        default=[32],
+        dest="n_minibatches",
+        help="List of balanced PPO minibatch counts per epoch to sweep.",
     )
     parser.add_argument(
         "--device",
@@ -260,6 +261,7 @@ def main():
         "actor_epochs": 4,
         "critic_grad_norm": 0.5,
         "critic_lr": 1e-4,
+        "target_kl": None,  # disable stopping only; PPO still computes KL diagnostics
     }
 
     device = resolve_device(args.device)
@@ -271,7 +273,7 @@ def main():
     results = []
 
     pbar = tqdm(
-        total=len(args.workers) * len(args.minibatches),
+        total=len(args.workers) * len(args.n_minibatches),
         desc="Sweeping Benchmarks",
     )
 
@@ -287,11 +289,11 @@ def main():
         print(f" Sweeping workers={workers}")
         print(f"{'=' * 50}")
 
-        # Use the first requested minibatch only for collector/run construction while
+        # Use the first requested minibatch count only for collector/run construction while
         # warming infrastructure. This warmup Run is discarded afterward.
         warm_cfg = make_config(
             workers=workers,
-            minibatch=args.minibatches[0],
+            n_minibatches=args.n_minibatches[0],
             device=device,
             ruleset=ruleset,
             arm=arm,
@@ -309,7 +311,7 @@ def main():
             warm_run = make_run(
                 warm_cfg,
                 workers=workers,
-                minibatch=args.minibatches[0],
+                n_minibatches=args.n_minibatches[0],
                 tag="warmup",
                 root=root,
                 collection_threads=collection_threads,
@@ -323,7 +325,7 @@ def main():
             # then collect the frozen rollout from exactly this policy state.
             base_cfg = make_config(
                 workers=workers,
-                minibatch=args.minibatches[0],
+                n_minibatches=args.n_minibatches[0],
                 device=device,
                 ruleset=ruleset,
                 arm=arm,
@@ -335,7 +337,7 @@ def main():
             base_run = make_run(
                 base_cfg,
                 workers=workers,
-                minibatch=args.minibatches[0],
+                n_minibatches=args.n_minibatches[0],
                 tag="baseline",
                 root=root,
                 collection_threads=collection_threads,
@@ -349,12 +351,12 @@ def main():
             print(f"Collected rollout of size {rollout_size} decisions.")
             del base_run
 
-            for mb in args.minibatches:
-                print(f"\n--- Benchmarking minibatch={mb} (workers={workers}) ---")
+            for nmb in args.n_minibatches:
+                print(f"\n--- Benchmarking n_minibatches={nmb} (workers={workers}) ---")
 
                 cfg = make_config(
                     workers=workers,
-                    minibatch=mb,
+                    n_minibatches=nmb,
                     device=device,
                     ruleset=ruleset,
                     arm=arm,
@@ -369,19 +371,21 @@ def main():
                 # Each repeat gets a fresh Run restored to the same baseline, so
                 # timeit-style repeated optimizer mutations cannot contaminate it.
                 # -------------------------------------------------------------
-                mb_rollout = slice_rollout(rollout, mb)
+                effective_nmb = max(1, min(nmb, rollout_size))
+                micro_rows = (rollout_size + effective_nmb - 1) // effective_nmb
+                mb_rollout = slice_rollout(rollout, micro_rows)
                 mb_optim = replace(
                     cfg.optim,
                     actor_epochs=1,
                     critic_epochs=1,
-                    minibatch=min(mb, mb_rollout.n_decisions),
+                    n_minibatches=1,
                 )
                 micro_times = []
                 for rep in range(args.micro_repeats):
                     micro_run = make_run(
                         cfg,
                         workers=workers,
-                        minibatch=mb,
+                        n_minibatches=nmb,
                         tag=f"micro{rep}",
                         root=root,
                         collection_threads=collection_threads,
@@ -407,7 +411,7 @@ def main():
                 update_run = make_run(
                     cfg,
                     workers=workers,
-                    minibatch=mb,
+                    n_minibatches=nmb,
                     tag="update",
                     root=root,
                     collection_threads=collection_threads,
@@ -436,13 +440,13 @@ def main():
 
                 # -------------------------------------------------------------
                 # Benchmark 3: full collect + update cycle.
-                # Crucially, this Run is CONSTRUCTED WITH cfg.optim.minibatch=mb,
+                # Crucially, this Run is CONSTRUCTED WITH cfg.optim.n_minibatches=nmb,
                 # so _iteration cannot silently keep using the first sweep value.
                 # -------------------------------------------------------------
                 cycle_run = make_run(
                     cfg,
                     workers=workers,
-                    minibatch=mb,
+                    n_minibatches=nmb,
                     tag="cycle",
                     root=root,
                     collection_threads=collection_threads,
@@ -485,7 +489,7 @@ def main():
                 )
 
                 print(
-                    f"1 Minibatch ({mb_rollout.n_decisions} decisions): {mb_time:.4f}s"
+                    f"1 Minibatch (~{mb_rollout.n_decisions} decisions; {nmb} per epoch): {mb_time:.4f}s"
                 )
                 print(
                     f"1 Complete Update ({rollout_size} decisions, "
@@ -511,9 +515,10 @@ def main():
 
                 row = {
                     "workers": workers,
-                    "minibatch": mb,
+                    "n_minibatches": nmb,
                     "frozen_rollout_decisions": rollout_size,
                     "micro_minibatch_decisions": mb_rollout.n_decisions,
+                    "approx_decisions_per_minibatch": rollout_size / effective_nmb,
                     "micro_median_s": mb_time,
                     "complete_update_s": update_time,
                     "cycle_unique_decisions": cycle_rollout_size,

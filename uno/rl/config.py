@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field, replace
 from uno.game.rules import NAMED, Ruleset
 from uno.rl.features import ARM_B, SCHEMA_VERSION
 
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -37,12 +37,14 @@ class Optim:
     clip: float = 0.2
     actor_epochs: int = 4
     critic_epochs: int = 4
-    minibatch: int = 512  # decisions, or the whole rollout if smaller
+    n_minibatches: int = 32  # balanced shuffled partitions per PPO epoch
     normalize_advantages: bool = False
     entropy_coef: float = 0.0  # 0.001 is a conditional exploration diagnostic
     actor_grad_norm: float = 0.5
     critic_grad_norm: float = 0.5
-    target_kl: float = 0.02  # sampled minibatch KL, checked before each actor step
+    target_kl: float | None = (
+        0.02  # None disables early stopping; KL diagnostics are still computed
+    )
     temperature: float = 1.0
     value_clip: float | None = None  # no value clipping and no LR schedule initially
 
@@ -140,6 +142,11 @@ def algorithm_hash(resolved: dict) -> str:
 
 
 __all__ = [
-    "CONFIG_VERSION", "Collection", "Config", "Evaluation", "Optim",
-    "algorithm_hash", "algorithm_resolved",
+    "CONFIG_VERSION",
+    "Collection",
+    "Config",
+    "Evaluation",
+    "Optim",
+    "algorithm_hash",
+    "algorithm_resolved",
 ]
