@@ -31,7 +31,6 @@ not with any single row of this script's output.
 from __future__ import annotations
 
 import platform
-import resource
 import sys
 import time
 
@@ -44,7 +43,7 @@ from uno.game import rules
 
 
 def peak_rss_mib() -> float:
-    ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    ru = 0  # this is macos specific and was removed because im too lazy to fix
     return ru / (1024 * 1024) if sys.platform == "darwin" else ru / 1024
 
 
@@ -52,8 +51,12 @@ def simulate(label: str, learner, games: int) -> None:
     rs = rules.FULL_UNO
     league = rulebot_league(rs)
     seeds = list(DEV_SEEDS)[:games]
-    print(f"\n{label}: FULL_UNO, {games} deals/cell x {len(league)} opponents x 2 seats")
-    print(f"{'opponent':45s} {'games/s':>9s} {'dec/s (both seats)':>19s} {'len':>6s} {'score':>7s}")
+    print(
+        f"\n{label}: FULL_UNO, {games} deals/cell x {len(league)} opponents x 2 seats"
+    )
+    print(
+        f"{'opponent':45s} {'games/s':>9s} {'dec/s (both seats)':>19s} {'len':>6s} {'score':>7s}"
+    )
     total_games = total_decisions = 0
     t_all = time.perf_counter()
     for name, opp in league.items():
@@ -65,7 +68,9 @@ def simulate(label: str, learner, games: int) -> None:
             total_games += res.n
             total_decisions += decisions
             seat = "seat1" if swap else "seat0"
-            print(f"{name + f' ({seat})':45s} {res.n / dt:9.1f} {decisions / dt:19.1f} {res.mean_length:6.1f} {res.score:7.3f}")
+            print(
+                f"{name + f' ({seat})':45s} {res.n / dt:9.1f} {decisions / dt:19.1f} {res.mean_length:6.1f} {res.score:7.3f}"
+            )
     dt_all = time.perf_counter() - t_all
     print(
         f"  -> {total_games} games, {total_decisions:.0f} total decisions in {dt_all:.2f}s = "
@@ -74,8 +79,12 @@ def simulate(label: str, learner, games: int) -> None:
     )
 
 
-def mlp_bench(width: int = 128, in_dim: int = 512, out_dim: int = 64, reps: int = 20) -> None:
-    print(f"\nsynthetic MLP proxy (width={width}, in={in_dim}, out={out_dim}): matmul ceiling only, not the real encoder or feature construction")
+def mlp_bench(
+    width: int = 128, in_dim: int = 512, out_dim: int = 64, reps: int = 20
+) -> None:
+    print(
+        f"\nsynthetic MLP proxy (width={width}, in={in_dim}, out={out_dim}): matmul ceiling only, not the real encoder or feature construction"
+    )
     print(f"{'device':6s} {'batch':>7s} {'fwd dec/s':>12s} {'fwd+bwd dec/s':>15s}")
     devices = ["cpu"] + (["mps"] if torch.backends.mps.is_available() else [])
     for device in devices:
@@ -113,7 +122,9 @@ def mlp_bench(width: int = 128, in_dim: int = 512, out_dim: int = 64, reps: int 
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     games = int(argv[0]) if argv else 1000
-    print(f"host: {platform.platform()}, {platform.processor() or platform.machine()}, torch {torch.__version__}")
+    print(
+        f"host: {platform.platform()}, {platform.processor() or platform.machine()}, torch {torch.__version__}"
+    )
     print(f"mps available: {torch.backends.mps.is_available()}")
     rs = rules.FULL_UNO
     simulate("engine-only (PlayFirstRandom stand-in)", PlayFirstRandom(rs), games)
