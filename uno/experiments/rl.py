@@ -30,8 +30,6 @@ import math
 import os
 import platform
 import re
-import resource
-import subprocess
 import threading
 import time
 from dataclasses import replace
