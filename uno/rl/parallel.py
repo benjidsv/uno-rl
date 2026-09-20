@@ -137,8 +137,20 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
     actor = Actor(actor_spec, cfg.width, cfg.blocks)
     policy = ActorPolicy(actor_spec, actor)
     opponents = league(rs, cfg.league)
+    
+    # On Windows, shared memory is tied to process handles. If a worker closes
+    # its handle before the coordinator opens it, the OS destroys the memory block.
+    # We accumulate handles and close them at the start of the next iteration,
+    # long after the coordinator is guaranteed to have mapped and unlinked them.
+    handles_to_close: list[shared_memory.SharedMemory] = []
+
     while True:
         message = ctl.get()
+        
+        for shm in handles_to_close:
+            shm.close()
+        handles_to_close.clear()
+
         if message[0] == STOP:
             return
         _, version, state = message
@@ -162,13 +174,17 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
                 results.put(("bundle", bundle_id, payload, stats))
                 sent = True
             finally:
-                for shm in handles:
-                    shm.close()
-                    if not sent:
+                if not sent:
+                    # If we failed to send, we must clean up ourselves
+                    for shm in handles:
+                        shm.close()
                         try:
                             shm.unlink()
                         except FileNotFoundError:
                             pass
+                else:
+                    # Delay closing handles until the next iteration to avoid Windows destroying them prematurely
+                    handles_to_close.extend(handles)
             queue_put_seconds += time.perf_counter() - started
             del rollout, payload, handles
 
