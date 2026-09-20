@@ -287,6 +287,24 @@ def test_update_reports_steps_epochs_and_kl_and_fits_the_critic_to_completion():
     assert stats.critic_update_seconds > 0
 
 
+def test_actor_kl_early_stop_is_checked_before_each_minibatch_step():
+    actor, critic, rollout, _, _ = setup()
+    optim = Optim(actor_epochs=4, critic_epochs=1, minibatch=8, target_kl=0.0)
+    stats = ppo.update(
+        actor,
+        critic,
+        torch.optim.Adam(actor.parameters(), lr=1e-2),
+        torch.optim.Adam(critic.parameters(), lr=1e-3),
+        rollout,
+        optim,
+        0,
+        0,
+    )
+    assert stats.early_stopped
+    assert stats.actor_epochs == 1
+    assert stats.actor_steps < int(np.ceil(rollout.n_decisions / optim.minibatch))
+
+
 def test_update_is_reproducible_given_the_same_streams():
     def run():
         actor, critic, rollout, _, _ = setup(seed=7)

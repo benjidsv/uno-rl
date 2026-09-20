@@ -70,7 +70,7 @@ stronger preferences or simply more forced/low-choice decisions.
 | `actor_grad_norm`, `critic_grad_norm` | Mean pre-clipping global gradient norm over that update's optimizer steps. |
 | `actor_clipped_fraction`, `critic_clipped_fraction` | Fraction of optimizer steps whose pre-clipping norm exceeded that model's norm cap. |
 | `actor_epochs`, `critic_epochs`; `actor_steps`, `critic_steps` | Epochs and minibatch optimizer steps completed in this update. Actor epochs may stop on KL; critic epochs still complete. |
-| `early_stopped` | `1` iff actor epochs stopped because rollout-wide `approx_kl > target_kl`; else `0`. |
+| `early_stopped` | `1` iff actor minibatch KL exceeded `target_kl` before an actor optimizer step; else `0`. |
 | `critic_mse` | Decision-mean MSE against undiscounted terminal `R_g`, averaged over the final critic epoch. |
 | `value_loss` | Alias of `critic_mse`, provided under the conventional value-learning name. |
 | `critic_pre_update_ev` | `1 - Var(R-V_old)/Var(R)` over decisions before fitting. |

@@ -25,10 +25,11 @@ TD, no GAE, no bootstrapping (contract section 3). A non-unit gamma applies
 decision-step discounting to the terminal return, and `value_clip` optionally
 uses PPO's clipped value loss around the frozen pre-update values.
 
-The KL number reported here is the sampled, nonnegative estimate
-`mean((r - 1) - log r)` over the collection policy's own actions. It is a
-diagnostic, not an exact KL guarantee, and its threshold stops **actor** epochs
-only: critic fitting always completes.
+The KL diagnostic is sampled on the collection policy's own actions, not an
+exact sum over the current policy's full legal-action distribution. The actor
+early-stop threshold uses the standard sampled approximation
+`mean((r - 1) - log r)` on each minibatch before its optimizer step; critic
+fitting always completes.
 """
 
 from __future__ import annotations
@@ -189,6 +190,7 @@ def actor_loss(
         diag = {
             "surrogate": float(obj),
             "entropy": float(entropy.mean()),
+            "approx_kl": float(((r - 1.0) - log_ratio).mean()),
             "clip_fraction": float(((r - 1.0).abs() > optim.clip).float().mean()),
             "max_abs_log_ratio": float(log_ratio.abs().max()),
         }
@@ -288,7 +290,7 @@ def rollout_actor_diagnostics(
 
 
 def rollout_kl(actor: Actor, rollout: Rollout, optim: Optim, device: str = "cpu", chunk: int = FORWARD_CHUNK) -> float:
-    """`mean((r - 1) - log r)` over the whole rollout: nonnegative, and sampled."""
+    """`mean((r - 1) - log r)` over the whole rollout: sampled and approximate."""
     return rollout_actor_diagnostics(actor, rollout, optim, device=device, chunk=chunk)["approx_kl"]
 
 
@@ -364,7 +366,13 @@ def update(
     for epoch in range(optim.actor_epochs):
         rng = generator(training_seed, MINIBATCH, "actor", update_index, epoch)
         for index in _minibatches(rng, t, size):
-            loss, _ = actor_loss(actor, rollout, index, adv, scale, optim, device)
+            loss, minibatch_diag = actor_loss(actor, rollout, index, adv, scale, optim, device)
+            # This uses the forward pass already needed for the loss. It sees
+            # KL accumulated from prior steps, and stops before applying the
+            # next step, avoiding an extra forward pass for the stop decision.
+            if minibatch_diag["approx_kl"] > optim.target_kl:
+                stats.early_stopped = True
+                break
             actor_opt.zero_grad(set_to_none=True)
             loss.backward()
             norm = float(torch.nn.utils.clip_grad_norm_(actor.parameters(), optim.actor_grad_norm))
@@ -386,8 +394,7 @@ def update(
         stats.clip_fraction = diagnostic["clip_fraction"]
         stats.max_abs_log_ratio = diagnostic["max_abs_log_ratio"]
         stats.kl_per_epoch.append(stats.approx_kl)
-        if stats.approx_kl > optim.target_kl:
-            stats.early_stopped = True
+        if stats.early_stopped:
             break
     if stats.actor_steps:
         stats.actor_grad_norm /= stats.actor_steps

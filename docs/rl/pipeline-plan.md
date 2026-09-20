@@ -307,15 +307,18 @@ from the unregularized return gradient. Advantage normalization starts disabled.
 | Actor / critic gradient norm cap | `0.5` / `0.5`, separately |
 | Precision / temperature | FP32 / 1 |
 | Value clipping / LR schedule | None initially |
-| Actor early stop | Rollout-mean approximate KL above `0.02`, checked after each epoch |
+| Actor early stop | Minibatch approximate KL above `0.02`, checked before each optimizer step |
 
 For the KL diagnostic use sampled old-policy actions and the nonnegative estimate
 `mean((r - 1) - log(r))`; also log clip fraction and maximum absolute log-ratio.
 After each actor epoch, compute surrogate, entropy, KL, ratio-clip fraction and
 maximum absolute log-ratio over the complete rollout under that epoch's final
-policy. Do not report the last optimizer minibatch as an update aggregate. This is
-a sampled diagnostic, not an exact KL guarantee. Complete critic fitting even if
-actor epochs stop early. Log actual optimizer steps and epochs used.
+policy. Use the current optimizer minibatch's approximate KL for the early-stop
+decision before its optimizer step, reusing the loss forward pass. Thus a
+high-variance minibatch stops the actor before the next update without an extra
+forward pass. Do not report the last optimizer minibatch as an update aggregate.
+This is a sampled diagnostic, not an exact KL guarantee. Complete critic fitting
+even if actor epochs stop early. Log actual optimizer steps and epochs used.
 
 The game-summed actor objective may have larger gradients than common
 decision-averaged PPO code. Measure unclipped norm and fraction of clipped updates;

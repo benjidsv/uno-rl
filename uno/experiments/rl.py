@@ -298,7 +298,7 @@ def cmd_experiment(arm: str = ARM_A, seed: int = 0) -> None:
         ruleset="FULL_UNO",
         arm=arm,
         seed=seed,
-        cap=120_000,
+        cap=1_000_000,
         workers=1,
         games_per_cell=64,
         deals_per_cell=256,
@@ -307,7 +307,7 @@ def cmd_experiment(arm: str = ARM_A, seed: int = 0) -> None:
         update_threads=6,
         minibatch=512,
         time_cap_s=7_500,
-        evaluation_fraction=1.0,
+        evaluation_fraction=0.25,
         tracking_study_id="entropy-experiment",
         tracking_kind="experiment-data",
         optim_overrides={
@@ -316,8 +316,9 @@ def cmd_experiment(arm: str = ARM_A, seed: int = 0) -> None:
             "normalize_advantages": True,
             "actor_grad_norm": 10.0,
             # gradients are scaled by decisions/games, so roughly x15-20. default is 0.6 but that destroys the learning
-            "actor_epochs": 100,
-            "actor_lr": 1e-3,
+            "actor_epochs": 4,
+            "actor_lr": 3.7e-5,
+            # to account for T/G scaling, 3*10^-4 * 64/512
         },
     )
 

@@ -42,7 +42,7 @@ class Optim:
     entropy_coef: float = 0.0  # 0.001 is a conditional exploration diagnostic
     actor_grad_norm: float = 0.5
     critic_grad_norm: float = 0.5
-    target_kl: float = 0.02  # rollout-mean approximate KL, checked after each epoch
+    target_kl: float = 0.02  # sampled minibatch KL, checked before each actor step
     temperature: float = 1.0
     value_clip: float | None = None  # no value clipping and no LR schedule initially
 
