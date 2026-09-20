@@ -309,8 +309,9 @@ from the unregularized return gradient. Advantage normalization starts disabled.
 | Value clipping / LR schedule | None initially |
 | Actor early stop | Minibatch approximate KL above `0.02`, checked before each optimizer step |
 
-For the KL diagnostic use sampled old-policy actions and the nonnegative estimate
-`mean((r - 1) - log(r))`; also log clip fraction and maximum absolute log-ratio.
+For the KL diagnostic use sampled old-policy actions and the nonnegative quadratic
+approximation `0.5 * mean((r - 1)^2)`; also log clip fraction and maximum absolute
+log-ratio.
 After each actor epoch, compute surrogate, entropy, KL, ratio-clip fraction and
 maximum absolute log-ratio over the complete rollout under that epoch's final
 policy. Use the current optimizer minibatch's approximate KL for the early-stop

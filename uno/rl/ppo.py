@@ -27,8 +27,8 @@ uses PPO's clipped value loss around the frozen pre-update values.
 
 The KL diagnostic is sampled on the collection policy's own actions, not an
 exact sum over the current policy's full legal-action distribution. The actor
-early-stop threshold uses the standard sampled approximation
-`mean((r - 1) - log r)` on each minibatch before its optimizer step; critic
+early-stop threshold uses the nonnegative quadratic approximation
+`0.5 * mean((r - 1)^2)` on each minibatch before its optimizer step; critic
 fitting always completes.
 """
 
@@ -190,7 +190,7 @@ def actor_loss(
         diag = {
             "surrogate": float(obj),
             "entropy": float(entropy.mean()),
-            "approx_kl": float(((r - 1.0) - log_ratio).mean()),
+            "approx_kl": float(0.5 * ((r - 1.0) ** 2).mean()),
             "clip_fraction": float(((r - 1.0).abs() > optim.clip).float().mean()),
             "max_abs_log_ratio": float(log_ratio.abs().max()),
         }
@@ -255,7 +255,7 @@ def rollout_actor_diagnostics(
         logp, entropy = new_log_probs(actor, rollout.actor[sl], rollout.masks[sl], rollout.actions[sl], optim.temperature, device, None if rollout.set_id is None else rollout.set_id[sl])
         log_ratio = logp - torch.from_numpy(rollout.old_logp[sl].astype(np.float32)).to(device)
         r = torch.exp(log_ratio)
-        kl_total += float(((r - 1.0) - log_ratio).sum())
+        kl_total += float((0.5 * (r - 1.0) ** 2).sum())
         entropy_total += float(entropy.sum())
         legal_count = rollout.masks[sl].sum(axis=1).astype(np.float64)
         max_entropy = np.log(np.maximum(legal_count, 1.0))
@@ -290,7 +290,7 @@ def rollout_actor_diagnostics(
 
 
 def rollout_kl(actor: Actor, rollout: Rollout, optim: Optim, device: str = "cpu", chunk: int = FORWARD_CHUNK) -> float:
-    """`mean((r - 1) - log r)` over the whole rollout: sampled and approximate."""
+    """`0.5 * mean((r - 1)^2)` over the whole rollout: sampled and approximate."""
     return rollout_actor_diagnostics(actor, rollout, optim, device=device, chunk=chunk)["approx_kl"]
 
 

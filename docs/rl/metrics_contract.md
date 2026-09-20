@@ -64,7 +64,7 @@ to effective supports of about `1.49`, `1.35`, and `1.22` actions, respectively.
 Because UNO states have different legal-action counts, use `normalized_entropy`
 and `legal_actions` together when judging whether a falling entropy reflects
 stronger preferences or simply more forced/low-choice decisions.
-| `approx_kl` | Sample mean `((r_t - 1) - log r_t)`; nonnegative sampled diagnostic, not exact KL. |
+| `approx_kl` | Sample mean `0.5 * (r_t - 1)^2`; nonnegative sampled diagnostic, not exact KL. |
 | `clip_fraction` | Fraction of rollout decisions with `abs(r_t - 1) > eps`. |
 | `max_abs_log_ratio` | Maximum `abs(log r_t)` over the rollout. |
 | `actor_grad_norm`, `critic_grad_norm` | Mean pre-clipping global gradient norm over that update's optimizer steps. |

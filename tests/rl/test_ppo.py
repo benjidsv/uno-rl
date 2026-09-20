@@ -262,7 +262,7 @@ def test_explained_variance_is_unavailable_rather_than_invented():
 
 def test_update_reports_steps_epochs_and_kl_and_fits_the_critic_to_completion():
     actor, critic, rollout, _, _ = setup()
-    optim = Optim(actor_epochs=4, critic_epochs=4, minibatch=32, target_kl=0.0)  # force an early stop
+    optim = Optim(actor_epochs=4, critic_epochs=4, minibatch=32, target_kl=1e-6)  # force an early stop
     frozen_advantages = _adv(critic, rollout)
     stats = ppo.update(actor, critic, torch.optim.Adam(actor.parameters(), lr=1e-2), torch.optim.Adam(critic.parameters(), lr=1e-2), rollout, optim, 0, 0)
     assert stats.early_stopped and stats.actor_epochs == 1
@@ -289,7 +289,7 @@ def test_update_reports_steps_epochs_and_kl_and_fits_the_critic_to_completion():
 
 def test_actor_kl_early_stop_is_checked_before_each_minibatch_step():
     actor, critic, rollout, _, _ = setup()
-    optim = Optim(actor_epochs=4, critic_epochs=1, minibatch=8, target_kl=0.0)
+    optim = Optim(actor_epochs=4, critic_epochs=1, minibatch=8, target_kl=1e-6)
     stats = ppo.update(
         actor,
         critic,
