@@ -1,33 +1,27 @@
-"""The PPO objective, the detached baseline and the update, exactly as specified.
+"""
+The critic baseline is frozen before the batch is fitted. Advantages and value
+targets are computed once from V_old and reused for every PPO epoch; they are
+never recomputed from the fitted critic.
 
-docs/rl/pipeline-plan.md section 6. For game `g` and learner decision `t`, with
-the learner's terminal return `R_g` in `[-1, 1]`:
+With ``gae_lambda=None`` (the default), actor advantages and critic targets use
+the discounted terminal Monte-Carlo return:
 
-    A_gt = R_g - V_old(x_gt),  r_gt = exp(logp_new - logp_old)
+    A_t = G_t - V_old(s_t)
 
-and the actor maximizes the decision-mean PPO surrogate
+where ``gamma`` discounts in learner-decision steps.
 
-    mean_t min(r_gt * A_gt, clip(r_gt, 1 - eps, 1 + eps) * A_gt).
+When ``gae_lambda`` is in [0, 1], generalized advantage estimation is used:
 
-With uniformly shuffled decision minibatches, each minibatch uses its ordinary
-decision mean. `weighted_gradient` and `tests/rl/test_ppo.py` pin equality with
-the full decision-mean gradient, including unequal game lengths and a final
-partial minibatch.
+    delta_t = r_t + gamma V_old(s_{t+1}) - V_old(s_t)
+    A_t = delta_t + gamma lambda A_{t+1}
 
-The critic is **frozen before the batch is fitted**: advantages are computed once
-from `V_old`, detached, and reused for every PPO epoch. They are not recomputed
-with the newly fitted critic. By default (`gamma = 1`) the critic's loss is a
-separate decision-mean MSE against the same undiscounted terminal returns -- no
-TD, no GAE, no bootstrapping (contract section 3). A non-unit gamma applies
-decision-step discounting to the terminal return, and `value_clip` optionally
-uses PPO's clipped value loss around the frozen pre-update values.
+and the critic is fitted to the corresponding lambda-return
 
-The KL diagnostic is sampled on the collection policy's own actions, not an
-exact sum over the current policy's full legal-action distribution. The actor
-computes the nonnegative log-space K2 approximation `0.5 * mean(log_ratio^2)`
-for every minibatch, aggregates it over each completed epoch, and optionally
-early-stops between epochs when `target_kl` is not None. Critic fitting always
-completes.
+    R^lambda_t = A_t + V_old(s_t).
+
+For complete episodes, ``gae_lambda=1`` is exactly equivalent to the Monte-Carlo
+estimator, while ``gae_lambda=0`` gives TD(0). Advantages remain frozen across
+all PPO epochs.
 """
 
 from __future__ import annotations
@@ -103,8 +97,10 @@ class UpdateStats:
     actor_clipped_fraction: float = 0.0
     critic_grad_norm: float = 0.0
     critic_clipped_fraction: float = 0.0
-    critic_pre_update_ev: float | None = None
-    critic_post_update_same_rollout_ev: float | None = None
+    critic_pre_update_mc_ev: float | None = None
+    critic_post_update_same_rollout_mc_ev: float | None = None
+    critic_pre_update_target_ev: float | None = None
+    critic_post_update_same_rollout_target_ev: float | None = None
     advantage_mean: float = 0.0
     advantage_std: float = 0.0
     return_mean: float = 0.0
@@ -118,16 +114,16 @@ class UpdateStats:
     def __str__(self) -> str:
         pre_ev = (
             "n/a"
-            if self.critic_pre_update_ev is None
-            else f"{self.critic_pre_update_ev:.3f}"
+            if self.critic_pre_update_mc_ev is None
+            else f"{self.critic_pre_update_mc_ev:.3f}"
         )
         post_ev = (
             "n/a"
-            if self.critic_post_update_same_rollout_ev is None
-            else f"{self.critic_post_update_same_rollout_ev:.3f}"
+            if self.critic_post_update_same_rollout_mc_ev is None
+            else f"{self.critic_post_update_same_rollout_mc_ev:.3f}"
         )
         return (
-            f"surrogate {self.surrogate:+.5f} critic mse {self.critic_mse:.5f} (ev {pre_ev}->{post_ev}) entropy {self.entropy:.3f} "
+            f"surrogate {self.surrogate:+.5f} critic mse {self.critic_mse:.5f} (ev[MC] {pre_ev}->{post_ev}) entropy {self.entropy:.3f} "
             f"/ max {self.max_entropy:.3f} (norm {self.normalized_entropy:.2f}, eff {self.effective_actions:.2f}) "
             f"kl {self.approx_kl:.4f} clip {self.clip_fraction:.3f} |grad| {self.actor_grad_norm:.3f} "
             f"epochs {self.actor_epochs}/{self.critic_epochs}"
@@ -167,10 +163,207 @@ def _critic_values_tensors(
     return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
 
 
-def advantages(rollout: Rollout, values: np.ndarray) -> np.ndarray:
-    """`A_gt = R_g - V_old(x_gt)`, detached by construction (a plain array)."""
-    return (rollout.returns_per_decision - values).astype(np.float32)
+def advantages(
+    rollout: Rollout,
+    values: np.ndarray,
+    gamma: float = 1.0,
+) -> np.ndarray:
+    """Monte-Carlo advantage using the configured decision-step discount."""
+    return (discounted_returns(rollout, gamma) - values).astype(np.float32)
 
+
+def _validate_gae_lambda(gae_lambda: float | None) -> None:
+    if gae_lambda is None:
+        return
+    if not np.isfinite(gae_lambda) or not 0.0 <= gae_lambda <= 1.0:
+        raise ValueError("gae_lambda must be None or finite and in [0, 1]")
+
+
+def _rollout_next_decisions(
+    rollout: Rollout,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (remaining_decisions, next_row).
+
+    next_row[i] is the row for the next learner decision in the same episode,
+    or -1 for the final learner decision.
+
+    The common case -- rollout rows already being chronological -- is O(T).
+    A lexsort fallback makes this robust to a differently ordered Rollout
+    without imposing the sort cost on normal training.
+    """
+    episode = np.asarray(rollout.episode, dtype=np.int64)
+    decision = np.asarray(rollout.decision_index, dtype=np.int64)
+
+    remaining = (
+        np.asarray(rollout.learner_decisions, dtype=np.int64)[episode]
+        - decision
+        - 1
+    )
+
+    if np.any(remaining < 0):
+        raise ValueError("decision_index exceeds learner_decisions for an episode")
+
+    n = len(episode)
+    next_row = np.full(n, -1, dtype=np.int64)
+
+    # Fast path: decisions are stored chronologically in the rollout.
+    if n > 1:
+        chronological_next = (
+            (episode[:-1] == episode[1:])
+            & (decision[1:] == decision[:-1] + 1)
+        )
+        rows = np.flatnonzero(chronological_next)
+        next_row[rows] = rows + 1
+
+    nonterminal = remaining > 0
+
+    # Robust fallback if the Rollout storage order is ever changed.
+    if np.any(next_row[nonterminal] < 0):
+        next_row.fill(-1)
+
+        order = np.lexsort((decision, episode))
+        ep_sorted = episode[order]
+        dec_sorted = decision[order]
+
+        if n > 1:
+            consecutive = (
+                (ep_sorted[:-1] == ep_sorted[1:])
+                & (dec_sorted[1:] == dec_sorted[:-1] + 1)
+            )
+            current = order[:-1][consecutive]
+            following = order[1:][consecutive]
+            next_row[current] = following
+
+    if np.any(next_row[nonterminal] < 0):
+        raise ValueError("rollout is missing a nonterminal learner decision")
+
+    if np.any(
+        remaining[next_row[nonterminal]]
+        != remaining[nonterminal] - 1
+    ):
+        raise ValueError("rollout learner decision ordering is inconsistent")
+
+    return remaining, next_row
+
+
+@torch.no_grad()
+def _gae_advantages_and_targets(
+    rollout: Rollout,
+    values: torch.Tensor,
+    gamma: float,
+    gae_lambda: float | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build frozen actor advantages and critic targets.
+
+    Returns:
+        advantages:
+            Frozen pre-normalization policy advantages.
+
+        value_targets:
+            Critic regression targets. These are Monte-Carlo returns when
+            GAE is disabled / lambda=1, and lambda-returns otherwise.
+
+        mc_returns:
+            Discounted terminal Monte-Carlo returns. Kept separately so
+            diagnostics such as explained variance remain comparable across
+            lambda values.
+
+    Rewards are terminal-only and time is measured in learner decisions,
+    matching discounted_returns().
+    """
+    if not np.isfinite(gamma) or not 0.0 <= gamma <= 1.0:
+        raise ValueError("gamma must be finite and in [0, 1]")
+    _validate_gae_lambda(gae_lambda)
+
+    device = values.device
+
+    mc_returns = torch.from_numpy(
+        discounted_returns(rollout, gamma).astype(np.float32)
+    ).to(device)
+
+    # No-GAE and lambda=1 are exactly the same estimator for complete episodes.
+    # Keep this path maximally cheap and bit-for-bit conceptually simple.
+    if gae_lambda is None or gae_lambda == 1.0:
+        adv = mc_returns - values
+        return adv, mc_returns, mc_returns
+
+    remaining, next_row = _rollout_next_decisions(rollout)
+
+    raw_returns = torch.from_numpy(
+        rollout.returns_per_decision.astype(np.float32)
+    ).to(device)
+
+    terminal_np = remaining == 0
+
+    # Terminals have no next state. Point them at row zero only so index_select
+    # has a legal index; torch.where masks that value back to zero immediately.
+    safe_next_np = next_row.copy()
+    safe_next_np[terminal_np] = 0
+
+    safe_next = torch.from_numpy(safe_next_np).to(device)
+    terminal = torch.from_numpy(terminal_np).to(device)
+
+    next_values = values.index_select(0, safe_next)
+    next_values = torch.where(
+        terminal,
+        torch.zeros_like(next_values),
+        next_values,
+    )
+
+    reward = torch.where(
+        terminal,
+        raw_returns,
+        torch.zeros_like(raw_returns),
+    )
+
+    # delta_t = r_t + gamma V_old(s_{t+1}) - V_old(s_t)
+    delta = reward + gamma * next_values - values
+
+    # lambda=0 is TD(0), so no recurrence is needed.
+    q = gamma * gae_lambda
+    if q == 0.0:
+        adv = delta
+        value_targets = adv + values
+        return adv, value_targets, mc_returns
+
+    # Batch together every state with the same number of learner decisions
+    # remaining. This makes the only Python loop proportional to maximum game
+    # length, not rollout size.
+    #
+    # depth 0 = final learner decisions
+    # depth 1 = one learner decision before terminal
+    # ...
+    depth_order_np = np.argsort(remaining, kind="stable").astype(
+        np.int64, copy=False
+    )
+    max_depth = int(remaining.max(initial=0))
+    counts = np.bincount(remaining, minlength=max_depth + 1)
+
+    depth_order = torch.from_numpy(depth_order_np).to(device)
+
+    adv = torch.empty_like(values)
+
+    offset = 0
+    for depth, count in enumerate(counts):
+        count = int(count)
+        if count == 0:
+            continue
+
+        rows = depth_order[offset : offset + count]
+        current = delta.index_select(0, rows)
+
+        if depth:
+            next_rows = safe_next.index_select(0, rows)
+            current = current + q * adv.index_select(0, next_rows)
+
+        adv.index_copy_(0, rows, current)
+        offset += count
+
+    # Standard lambda-return:
+    #     R^lambda_t = A^GAE_t + V_old(s_t)
+    value_targets = adv + values
+
+    return adv, value_targets, mc_returns
 
 def normalize_advantages(adv: np.ndarray) -> np.ndarray:
     """Normalize one complete rollout's advantages before minibatch shuffling."""
@@ -190,7 +383,7 @@ def discounted_returns(rollout: Rollout, gamma: float) -> np.ndarray:
     if gamma == 1.0 or rollout.n_decisions == 0:
         return terminal
     remaining = rollout.learner_decisions[rollout.episode] - rollout.decision_index - 1
-    return terminal * np.power(gamma, remaining)
+    return terminal * np.power(gamma, remaining).astype(np.float32)
 
 
 # -- the objective ---------------------------------------------------------------
@@ -326,7 +519,7 @@ class _PreparedRollout:
     critic_tok: torch.Tensor
     critic_col: torch.Tensor
     critic_glob: torch.Tensor
-    returns: torch.Tensor
+    value_targets: torch.Tensor
     values: torch.Tensor
     advantages: torch.Tensor
 
@@ -334,7 +527,7 @@ class _PreparedRollout:
 def _prepare_rollout(
     rollout: Rollout,
     adv: torch.Tensor,
-    rets: torch.Tensor,
+    value_targets: torch.Tensor,
     values: torch.Tensor,
     device: str,
     actor_data: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
@@ -363,7 +556,7 @@ def _prepare_rollout(
         critic_tok,
         critic_col,
         critic_glob,
-        rets,
+        value_targets,
         values,
         adv,
     )
@@ -739,31 +932,33 @@ def update(
     _synchronize_device(device)
     stats.critic_value_seconds = time.perf_counter() - started
 
-    raw_returns = torch.from_numpy(rollout.returns_per_decision.astype(np.float32)).to(
-        device
-    )
-    rets = torch.from_numpy(
-        discounted_returns(rollout, optim.gamma).astype(np.float32)
-    ).to(device)
-    adv = raw_returns - values
+    gae_lambda = getattr(optim, "gae_lambda", None)
+
+    adv, value_targets, mc_returns = _gae_advantages_and_targets(
+        rollout,
+        values,
+        optim.gamma,
+        gae_lambda,
+    ) # this path will default to normal monte carlo if lambda is none, so value_targets = mc_returns if none
 
     # Pull only scalar summaries to Python.
     adv_mean, adv_std, ret_mean, ret_std = (
         torch
-        .stack([adv.mean(), adv.std(correction=0), rets.mean(), rets.std(correction=0)])
+        .stack([adv.mean(), adv.std(correction=0), mc_returns.mean(), mc_returns.std(correction=0)])
         .detach()
         .cpu()
         .tolist()
     )
     stats.advantage_mean, stats.advantage_std = adv_mean, adv_std
     stats.return_mean, stats.return_std = ret_mean, ret_std
-    stats.critic_pre_update_ev = _explained_variance_tensors(rets, values)
+    stats.critic_pre_update_mc_ev = _explained_variance_tensors(mc_returns, values)
+    stats.critic_pre_update_target_ev = _explained_variance_tensors(value_targets, values)
 
     if optim.normalize_advantages:
         adv = (adv - adv.mean()) / (adv.std(correction=0) + 1e-8)
 
     prepared = _prepare_rollout(
-        rollout, adv, rets, values, device, actor_tensor_data, critic_tensor_data
+        rollout, adv, value_targets, values, device, actor_tensor_data, critic_tensor_data
     )
     n_minibatches = _configured_n_minibatches(optim, t)
 
@@ -866,7 +1061,7 @@ def update(
                 )
             pred = pred.float()
             loss = critic_loss(
-                pred, prepared.returns[rows], prepared.values[rows], optim.value_clip
+                pred, prepared.value_targets[rows], prepared.values[rows], optim.value_clip
             )
             critic_opt.zero_grad(set_to_none=True)
             loss.backward()
@@ -916,9 +1111,13 @@ def update(
         post_values = (
             torch.cat(post_chunks) if post_chunks else torch.zeros(0, device=device)
         )
-    stats.critic_post_update_same_rollout_ev = _explained_variance_tensors(
-        rets, post_values
+    stats.critic_post_update_same_rollout_mc_ev = _explained_variance_tensors(
+        mc_returns, post_values
     )
+    stats.critic_post_update_same_rollout_target_ev = _explained_variance_tensors(
+        value_targets, post_values
+    )
+        
     _synchronize_device(device)
     stats.critic_update_seconds = time.perf_counter() - started
 

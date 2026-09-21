@@ -29,6 +29,7 @@ class Optim:
     """PPO and optimizer settings (pipeline plan section 6's table)."""
 
     gamma: float = 1.0  # terminal Monte Carlo returns; no bootstrapping
+    gae_lambda: float | None = None # none is plain mc returns, should match it
     actor_lr: float = 3e-4
     critic_lr: float = 1e-3
     betas: tuple[float, float] = (0.9, 0.999)

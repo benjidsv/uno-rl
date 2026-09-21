@@ -5,6 +5,7 @@ lengths and a partial final minibatch, the detached baseline, and replayable see
 """
 
 from __future__ import annotations
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -264,13 +265,13 @@ def test_explained_variance_is_unavailable_rather_than_invented():
     actor, critic, rollout, _, _ = setup()
     zeroed = Rollout(**{**rollout.__dict__, "terminal_return": np.zeros_like(rollout.terminal_return)})
     stats = ppo.update(actor, critic, torch.optim.Adam(actor.parameters()), torch.optim.Adam(critic.parameters()), zeroed, Optim(actor_epochs=1, critic_epochs=1), 0, 0)
-    assert stats.critic_pre_update_ev is None
-    assert stats.critic_post_update_same_rollout_ev is None
+    assert stats.critic_pre_update_mc_ev is None
+    assert stats.critic_post_update_same_rollout_mc_ev is None
 
 
 def test_update_reports_steps_epochs_and_kl_and_fits_the_critic_to_completion():
     actor, critic, rollout, _, _ = setup()
-    optim = Optim(actor_epochs=4, critic_epochs=4, minibatch=32, target_kl=1e-6)  # force an early stop
+    optim = Optim(actor_epochs=4, critic_epochs=4, n_minibatches=32, target_kl=1e-6)  # force an early stop
     frozen_advantages = _adv(critic, rollout)
     stats = ppo.update(actor, critic, torch.optim.Adam(actor.parameters(), lr=1e-2), torch.optim.Adam(critic.parameters(), lr=1e-2), rollout, optim, 0, 0)
     assert stats.early_stopped and stats.actor_epochs == 1
@@ -288,8 +289,8 @@ def test_update_reports_steps_epochs_and_kl_and_fits_the_critic_to_completion():
     assert stats.max_abs_log_ratio == pytest.approx(final["max_abs_log_ratio"])
     assert stats.approx_kl == pytest.approx(final["approx_kl"])
     assert 0.0 <= stats.critic_clipped_fraction <= 1.0
-    assert stats.critic_pre_update_ev is not None
-    assert stats.critic_post_update_same_rollout_ev is not None
+    assert stats.critic_pre_update_mc_ev is not None
+    assert stats.critic_post_update_same_rollout_mc_ev is not None
     assert stats.critic_value_seconds > 0
     assert stats.actor_update_seconds > 0
     assert stats.critic_update_seconds > 0
@@ -297,7 +298,7 @@ def test_update_reports_steps_epochs_and_kl_and_fits_the_critic_to_completion():
 
 def test_actor_kl_early_stop_is_checked_before_each_minibatch_step():
     actor, critic, rollout, _, _ = setup()
-    optim = Optim(actor_epochs=4, critic_epochs=1, minibatch=8, target_kl=1e-6)
+    optim = Optim(actor_epochs=4, critic_epochs=1, n_minibatches=32, target_kl=1e-6)
     stats = ppo.update(
         actor,
         critic,
@@ -320,3 +321,207 @@ def test_update_is_reproducible_given_the_same_streams():
         return torch.cat([p.detach().reshape(-1) for p in actor.parameters()])
 
     assert torch.equal(run(), run())
+
+def _three_decision_rollout(reward: float = 1.0):
+    rollout = SimpleNamespace(
+        returns_per_decision=np.asarray(
+            [reward, reward, reward],
+            dtype=np.float32,
+        ),
+        episode=np.asarray(
+            [0, 0, 0],
+            dtype=np.int64,
+        ),
+        decision_index=np.asarray(
+            [0, 1, 2],
+            dtype=np.int64,
+        ),
+        learner_decisions=np.asarray(
+            [3],
+            dtype=np.int64,
+        ),
+        n_decisions=3,
+    )
+
+    assert len(rollout.returns_per_decision) == 3
+    return rollout
+
+def test_gae_lambda_one_matches_mc():
+    rollout = _three_decision_rollout(reward=1.0)
+
+    print(type(rollout))
+    print("n_decisions:", rollout.n_decisions)
+    print("returns:", rollout.returns_per_decision.shape)
+    print("episode:", rollout.episode.shape)
+    print("decision_index:", rollout.decision_index.shape)
+
+    gamma = 0.97
+    values = torch.tensor(
+        [0.1, -0.2, 0.3],
+        dtype=torch.float32,
+    )
+
+    assert rollout.n_decisions == len(values) == 3
+    assert len(rollout.returns_per_decision) == 3
+
+    adv, targets, mc = ppo._gae_advantages_and_targets(
+        rollout,
+        values,
+        gamma=gamma,
+        gae_lambda=1.0,
+    )
+
+    expected = torch.from_numpy(
+        ppo.discounted_returns(rollout, gamma)
+    )
+
+    assert mc.shape == values.shape == expected.shape
+
+    torch.testing.assert_close(mc.cpu(), expected)
+    torch.testing.assert_close(targets.cpu(), expected)
+    torch.testing.assert_close(
+        adv.cpu(),
+        expected - values.cpu(),
+    )
+    rollout = _three_decision_rollout(reward=1.0)
+
+    gamma = 0.97
+    values = torch.tensor(
+        [0.1, -0.2, 0.3],
+        dtype=torch.float64,
+    )
+
+    adv, targets, mc = ppo._gae_advantages_and_targets(
+        rollout,
+        values,
+        gamma=gamma,
+        gae_lambda=1.0,
+    )
+
+    expected = torch.from_numpy(
+        ppo.discounted_returns(rollout, gamma)
+    )
+
+    torch.testing.assert_close(mc.cpu(), expected)
+    torch.testing.assert_close(targets.cpu(), expected)
+    torch.testing.assert_close(
+        adv.cpu(),
+        expected - values,
+    )
+    rollout = _three_decision_rollout(reward=1.0)
+
+    gamma = 0.97
+    values = torch.tensor(
+        [0.1, -0.2, 0.3],
+        dtype=torch.float64,
+    )
+
+    adv, targets, mc = ppo._gae_advantages_and_targets(
+        rollout,
+        values,
+        gamma=gamma,
+        gae_lambda=1.0,
+    )
+
+    expected = torch.from_numpy(
+        ppo.discounted_returns(rollout, gamma).astype(np.float32)
+    )
+
+    torch.testing.assert_close(mc.cpu(), expected)
+    torch.testing.assert_close(targets.cpu(), expected)
+    torch.testing.assert_close(
+        adv.cpu(),
+        expected - values,
+    )
+
+    # Use gamma < 1 deliberately: this also tests the gamma fix.
+    gamma = 0.97
+
+    values = torch.tensor(
+        [0.1, -0.2, 0.3],
+        dtype=torch.float32,
+    )
+
+    adv, targets, mc = ppo._gae_advantages_and_targets(
+        rollout,
+        values,
+        gamma=gamma,
+        gae_lambda=1.0,
+    )
+
+    expected = torch.from_numpy(
+        ppo.discounted_returns(rollout, gamma)
+    )
+
+    torch.testing.assert_close(targets.cpu(), expected)
+    torch.testing.assert_close(mc.cpu(), expected)
+    torch.testing.assert_close(adv.cpu(), expected - values.cpu())
+
+def test_gae_hand_computed():
+    rollout = _three_decision_rollout(reward=1.0)
+
+    values = torch.tensor(
+        [0.2, 0.3, 0.4],
+        dtype=torch.float32,
+    )
+
+    adv, targets, _ = ppo._gae_advantages_and_targets(
+        rollout,
+        values,
+        gamma=0.9,
+        gae_lambda=0.5,
+    )
+
+    torch.testing.assert_close(
+        adv.cpu(),
+        torch.tensor(
+            [0.2185, 0.3300, 0.6000],
+            dtype=torch.float32,
+        ),
+    )
+
+    torch.testing.assert_close(
+        targets.cpu(),
+        torch.tensor(
+            [0.4185, 0.6300, 1.0000],
+            dtype=torch.float32,
+        ),
+    )
+
+def test_gae_does_not_cross_episode_boundaries():
+    rollout = SimpleNamespace(
+        returns_per_decision=np.array(
+            [1.0, 1.0, -1.0, -1.0],
+            dtype=np.float32,
+        ),
+        episode=np.array(
+            [0, 0, 1, 1],
+            dtype=np.int64,
+        ),
+        decision_index=np.array(
+            [0, 1, 0, 1],
+            dtype=np.int64,
+        ),
+        learner_decisions=np.array(
+            [2, 2],
+            dtype=np.int64,
+        ),
+        n_decisions=4,
+    )
+
+    values = torch.zeros(4, dtype=torch.float32)
+
+    adv, targets, _ = ppo._gae_advantages_and_targets(
+        rollout,
+        values,
+        gamma=1.0,
+        gae_lambda=0.5,
+    )
+
+    expected = torch.tensor(
+        [0.5, 1.0, -0.5, -1.0],
+        dtype=torch.float32,
+    )
+
+    torch.testing.assert_close(adv.cpu(), expected)
+    torch.testing.assert_close(targets.cpu(), expected)

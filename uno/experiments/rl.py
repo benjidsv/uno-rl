@@ -359,12 +359,14 @@ def cmd_overnight(
         mlflow_prefix=mlflow_prefix,
         optim_overrides={
             "normalize_advantages": True,
-            "entropy_coef": 0.01,
+            # Actor
             "actor_grad_norm": 0.5,
             "actor_lr": 5e-5,
-            "actor_epochs": 4,
+            "entropy_coef": 0.01,
+            # Critic
             "critic_grad_norm": 2.0,
             "critic_lr": 3e-4,
+            "gae_lambda": 0.95,
         },
     )
 
