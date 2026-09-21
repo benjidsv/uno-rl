@@ -52,9 +52,7 @@ from uno.rl.model import (
 from uno.rl.rollout import Rollout
 from uno.rl.streams import MINIBATCH, generator
 
-FORWARD_CHUNK = (
-    1024  # rows per no-grad forward pass; a memory setting, not an algorithmic one; empirically tested, more doesn't move throughput but uses more memory
-)
+FORWARD_CHUNK = 1024  # rows per no-grad forward pass; a memory setting, not an algorithmic one; empirically tested, more doesn't move throughput but uses more memory
 
 
 from uno.rl.device import synchronize_device as _synchronize_device
@@ -171,7 +169,7 @@ def _critic_values_tensors(
 
 def advantages(rollout: Rollout, values: np.ndarray) -> np.ndarray:
     """`A_gt = R_g - V_old(x_gt)`, detached by construction (a plain array)."""
-    return (rollout.returns_per_decision - values).astype(np.float64)
+    return (rollout.returns_per_decision - values).astype(np.float32)
 
 
 def normalize_advantages(adv: np.ndarray) -> np.ndarray:
@@ -188,7 +186,7 @@ def discounted_returns(rollout: Rollout, gamma: float) -> np.ndarray:
     """
     if not np.isfinite(gamma) or not 0.0 <= gamma <= 1.0:
         raise ValueError("gamma must be finite and in [0, 1]")
-    terminal = rollout.returns_per_decision.astype(np.float64)
+    terminal = rollout.returns_per_decision.astype(np.float32)
     if gamma == 1.0 or rollout.n_decisions == 0:
         return terminal
     remaining = rollout.learner_decisions[rollout.episode] - rollout.decision_index - 1
@@ -432,7 +430,7 @@ def _prepared_actor_diagnostics(
         }
 
     device = prepared.actor_tok.device
-    totals = torch.zeros(8, device=device, dtype=torch.float64)
+    totals = torch.zeros(8, device=device, dtype=torch.float32)
     max_abs = torch.zeros((), device=device)
 
     for i in range(0, n_rows, chunk):
@@ -465,18 +463,18 @@ def _prepared_actor_diagnostics(
         )
 
         totals = totals + torch.stack([
-            surrogate_sum.to(torch.float64),
-            entropy.sum().to(torch.float64),
-            legal_count.sum().to(torch.float64),
-            max_entropy.sum().to(torch.float64),
-            normalized_entropy.sum().to(torch.float64),
-            torch.exp(entropy).sum().to(torch.float64),
-            (0.5 * log_ratio.square()).sum().to(torch.float64),
-            ((ratio - 1.0).abs() > optim.clip).sum().to(torch.float64),
+            surrogate_sum.to(torch.float32),
+            entropy.sum().to(torch.float32),
+            legal_count.sum().to(torch.float32),
+            max_entropy.sum().to(torch.float32),
+            normalized_entropy.sum().to(torch.float32),
+            torch.exp(entropy).sum().to(torch.float32),
+            (0.5 * log_ratio.square()).sum().to(torch.float32),
+            ((ratio - 1.0).abs() > optim.clip).sum().to(torch.float32),
         ])
         max_abs = torch.maximum(max_abs, log_ratio.abs().max())
 
-    values = torch.cat([totals, max_abs.reshape(1).to(torch.float64)]).cpu().tolist()
+    values = torch.cat([totals, max_abs.reshape(1).to(torch.float32)]).cpu().tolist()
     (
         surrogate_total,
         entropy_total,
@@ -583,7 +581,7 @@ def rollout_actor_diagnostics(
         r = torch.exp(log_ratio)
         kl_total += float((0.5 * log_ratio.square()).sum())
         entropy_total += float(entropy.sum())
-        legal_count = rollout.masks[sl].sum(axis=1).astype(np.float64)
+        legal_count = rollout.masks[sl].sum(axis=1).astype(np.float32)
         max_entropy = np.log(np.maximum(legal_count, 1.0))
         entropy_np = entropy.detach().cpu().numpy()
         legal_actions_total += float(legal_count.sum())
