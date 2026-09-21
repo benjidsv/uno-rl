@@ -53,7 +53,7 @@ from uno.rl.rollout import Rollout
 from uno.rl.streams import MINIBATCH, generator
 
 FORWARD_CHUNK = (
-    1024  # rows per no-grad forward pass; a memory setting, not an algorithmic one
+    1024  # rows per no-grad forward pass; a memory setting, not an algorithmic one; empirically tested, more doesn't move throughput but uses more memory
 )
 
 
