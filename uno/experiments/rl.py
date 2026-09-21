@@ -2,8 +2,8 @@
 
 `uv run uno rl shapes [RULESET] [ARM]`            recorded tensor shapes and parameter counts
 `uv run uno rl smoke [RULESET] [ARM] [GAMES/CELL]` one bounded iteration end to end
-`uv run uno rl train [RULESET] [ARM] [SEED] [DECISIONS] [WORKERS] [GAMES/CELL] [DEV DEALS/CELL] [DEVICE] [COLLECTION_THREADS] [UPDATE_THREADS] [MINIBATCH] [TIME_CAP_S] [EVALUATION_FRACTION]`
-`uv run uno rl resume CHECKPOINT [RULESET] [ARM] [SEED] [DECISIONS] [DEVICE] [WORKERS] [LIVE] [COLLECTION_THREADS] [UPDATE_THREADS] [TIME_CAP_S] [EVALUATION_FRACTION]`
+`uv run uno rl train [RULESET] [ARM] [SEED] [DECISIONS] [WORKERS] [GAMES/CELL] [DEV DEALS/CELL] [DEVICE] [COLLECTION_THREADS] [UPDATE_THREADS] [N_MINIBATCHES] [TIME_CAP_S] [EVALUATION_FRACTION] [PRECISION]`
+`uv run uno rl resume CHECKPOINT [RULESET] [ARM] [SEED] [DECISIONS] [DEVICE] [WORKERS] [LIVE] [COLLECTION_THREADS] [UPDATE_THREADS] [TIME_CAP_S] [EVALUATION_FRACTION] [N_MINIBATCHES] [PRECISION]`
 `uv run uno rl devsize [RULESET] [ARM] [SEED] [MAX_DEALS/CELL] [TARGET_95_HALFWIDTH] [TORCH_THREADS] [ACTOR_EXPORT]`
 `uv run uno rl pilot [SEED]`                     one-hour full-UNO B pilot preset
 `uv run uno rl ablation [ARM] [SEED]`            Stage 8 equal-data A/B preset
@@ -78,11 +78,12 @@ def _config(
     deals_per_cell: int,
     device: str,
     live_games: int = 64,
-    minibatch: int = 512,
+    n_minibatches: int = 32,
+    precision: str = "fp32",
     evaluation_fraction: float = 0.1,
     optim_overrides: dict[str, object] | None = None,
 ) -> Config:
-    optim = replace(Optim(), minibatch=minibatch)
+    optim = replace(Optim(), n_minibatches=n_minibatches, precision=precision)
     if optim_overrides:
         optim = replace(optim, **optim_overrides)
     return Config(
@@ -150,9 +151,10 @@ def cmd_train(
     device: str = "auto",
     collection_threads: int = 0,
     update_threads: int = 0,
-    minibatch: int = 512,
+    n_minibatches: int = 32,
     time_cap_s: float = 0.0,
     evaluation_fraction: float = 0.1,
+    precision: str = "fp32",
     *,
     tracking_study_id: str = "pilot",
     tracking_kind: str = "train",
@@ -163,11 +165,19 @@ def cmd_train(
         raise SystemExit(
             "collection and update threads may be zero for the current default, or positive"
         )
-    if minibatch < 1 or time_cap_s < 0 or not 0 < evaluation_fraction <= 1:
+    if (
+        n_minibatches < 1
+        or time_cap_s < 0
+        or not 0 < evaluation_fraction <= 1
+        or precision not in {"fp32", "bf16"}
+    ):
         raise SystemExit(
-            "minibatch must be positive, time cap nonnegative, and evaluation fraction in (0, 1]"
+            "n_minibatches must be positive, time cap nonnegative, "
+            "evaluation fraction in (0, 1], and precision one of: fp32, bf16"
         )
     device = resolve_device(device)
+    if precision == "bf16" and not str(device).startswith("cuda"):
+        raise SystemExit("BF16 PPO precision requires a CUDA device")
     cfg = _config(
         ruleset,
         arm,
@@ -177,7 +187,8 @@ def cmd_train(
         games_per_cell,
         deals_per_cell,
         device,
-        minibatch=minibatch,
+        n_minibatches=n_minibatches,
+        precision=precision,
         evaluation_fraction=evaluation_fraction,
         optim_overrides=optim_overrides,
     )
@@ -185,7 +196,7 @@ def cmd_train(
         cfg = cfg.with_(time_cap_s=time_cap_s)
     out = (
         Path("logs/rl")
-        / f"{ruleset}_{arm}_seed{seed}_mb{minibatch}_{device}_{int(time.time())}"
+        / f"{ruleset}_{arm}_seed{seed}_nmb{n_minibatches}_{precision}_{device}_{int(time.time())}"
     )
     run = Run(cfg, out, _league_for(ruleset))
     run.execution = {
@@ -204,7 +215,7 @@ def cmd_train(
     )
     print(
         f"\n== train {ruleset} arm {arm} seed {seed}: cap {cap:,} learner decisions, {len(run.opponents)} opponents, "
-        f"{cfg.collection.games_per_cell} games/cell, minibatch {minibatch}, device {device}, "
+        f"{cfg.collection.games_per_cell} games/cell, n_minibatches {n_minibatches}, precision {precision}, device {device}, "
         f"time cap {time_cap_s or 'disabled'}s, DEV every {100 * evaluation_fraction:g}% of the decision cap"
     )
     print(
@@ -257,7 +268,7 @@ def cmd_pilot(seed: int = 0) -> None:
         device="cpu",
         collection_threads=1,
         update_threads=4,
-        minibatch=512,
+        n_minibatches=32,
         time_cap_s=3_600,
         evaluation_fraction=0.25,
         tracking_study_id="stage7-full-uno-b-pilot",
@@ -285,7 +296,7 @@ def cmd_ablation(arm: str = ARM_A, seed: int = 0) -> None:
         device="cpu",
         collection_threads=1,
         update_threads=4,
-        minibatch=512,
+        n_minibatches=32,
         time_cap_s=7_500,
         evaluation_fraction=0.25,
         tracking_study_id="stage8-a-b-ablation",
@@ -307,7 +318,7 @@ def cmd_experiment(arm: str = ARM_B, seed: int = 0) -> None:
         device="auto",
         collection_threads=1,
         update_threads=6,
-        minibatch=512,
+        n_minibatches=32,
         time_cap_s=60_000,
         evaluation_fraction=0.016,
         tracking_study_id="experimental",
@@ -333,15 +344,16 @@ def cmd_overnight(
         arm=arm,
         seed=seed,
         cap=10_000_000,
-        workers=1,
+        workers=16,
         games_per_cell=64,
         deals_per_cell=256,
-        device="auto",
+        device="cuda",
         collection_threads=1,
-        update_threads=6,
-        minibatch=512,
+        update_threads=1,
+        n_minibatches=32,
         time_cap_s=60_000,
         evaluation_fraction=0.016,
+        precision="bf16",
         tracking_study_id="overnight-experiment",
         tracking_kind="overnight-data",
         mlflow_prefix=mlflow_prefix,
@@ -616,15 +628,26 @@ def cmd_resume(
     update_threads: int = 0,
     time_cap_s: float = 0.0,
     evaluation_fraction: float = 0.1,
+    n_minibatches: int = 32,
+    precision: str = "fp32",
 ) -> None:
     if workers < 1 or live_games < 1:
         raise SystemExit("workers and live games must be positive")
     if collection_threads < 0 or update_threads < 0:
         raise SystemExit("collection and update threads may be zero or positive")
-    if time_cap_s < 0 or not 0 < evaluation_fraction <= 1:
+    if (
+        time_cap_s < 0
+        or not 0 < evaluation_fraction <= 1
+        or n_minibatches < 1
+        or precision not in {"fp32", "bf16"}
+    ):
         raise SystemExit(
-            "time cap must be nonnegative and evaluation fraction in (0, 1]"
+            "time cap must be nonnegative, evaluation fraction in (0, 1], "
+            "n_minibatches positive, and precision one of: fp32, bf16"
         )
+    device = resolve_device(device)
+    if precision == "bf16" and not str(device).startswith("cuda"):
+        raise SystemExit("BF16 PPO precision requires a CUDA device")
     cfg = _config(
         ruleset,
         arm,
@@ -635,6 +658,8 @@ def cmd_resume(
         256,
         device,
         live_games=live_games,
+        n_minibatches=n_minibatches,
+        precision=precision,
         evaluation_fraction=evaluation_fraction,
     )
     if time_cap_s:
@@ -655,6 +680,9 @@ def cmd_resume(
     )
     print(
         f"   a continuation preserves progress and configuration, not bitwise numerical trajectories"
+    )
+    print(
+        f"   PPO execution: n_minibatches {n_minibatches}, precision {precision}, device {device}"
     )
     collector = None
     if workers > 1:
@@ -708,6 +736,7 @@ def main(argv: list[str]) -> None:
                             int,
                             float,
                             float,
+                            str,
                         ),
                         rest,
                     )
@@ -721,15 +750,27 @@ def main(argv: list[str]) -> None:
             cmd_ablation(*(f(x) for f, x in zip((str, int), rest)))
         case "experiment":
             cmd_experiment(*(f(x) for f, x in zip((str, int), rest)))
-        case "overnight":
-            cmd_overnight(*(f(x) for f, x in zip((str, int), rest)))
         case "resume":
             cmd_resume(
                 rest[0],
                 *(
                     f(x)
                     for f, x in zip(
-                        (str, str, int, int, str, int, int, int, int, float, float),
+                        (
+                            str,
+                            str,
+                            int,
+                            int,
+                            str,
+                            int,
+                            int,
+                            int,
+                            int,
+                            float,
+                            float,
+                            int,
+                            str,
+                        ),
                         rest[1:],
                     )
                 ),
@@ -740,5 +781,5 @@ def main(argv: list[str]) -> None:
             )
         case _:
             raise SystemExit(
-                f"unknown subcommand {what!r}; expected shapes, smoke, pilot, ablation, train, resume or devsize"
+                f"unknown subcommand {what!r}; expected shapes, smoke, pilot, ablation, experiment, overnight, train, resume or devsize"
             )
