@@ -337,13 +337,13 @@ def cmd_experiment(arm: str = ARM_B, seed: int = 0) -> None:
 
 
 def cmd_overnight(
-    arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "megachungus"
+    arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "wiserchungus"
 ) -> None:
     cmd_train(
         ruleset="FULL_UNO",
         arm=arm,
         seed=seed,
-        cap=100_000_000,
+        cap=10_000_000,
         workers=16,
         games_per_cell=64,
         deals_per_cell=1024,
@@ -352,7 +352,7 @@ def cmd_overnight(
         update_threads=1,
         n_minibatches=32,
         time_cap_s=60_000,
-        evaluation_fraction=0.025,
+        evaluation_fraction=0.05,
         precision="bf16",
         tracking_study_id="overnight-experiment",
         tracking_kind="overnight-data",
@@ -361,9 +361,9 @@ def cmd_overnight(
             "normalize_advantages": True,
             "entropy_coef": 0.01,
             "actor_grad_norm": 0.5,
-            "actor_lr": 3e-4,
+            "actor_lr": 5e-5,
             "actor_epochs": 4,
-            "critic_grad_norm": 0.5,
+            "critic_grad_norm": 2.0,
             "critic_lr": 3e-4,
         },
     )

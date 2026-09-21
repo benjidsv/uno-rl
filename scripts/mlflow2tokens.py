@@ -27,6 +27,7 @@ def fetch_mlflow_run_data(
     include_pattern: str = None,
     exclude_pattern: str = None,
     exclude_metrics: list[str] | set[str] = None,
+    max_step: int | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Fetches metric histories from MLflow.
 
@@ -34,6 +35,7 @@ def fetch_mlflow_run_data(
       1. exclude_metrics (exact match from a list/set)
       2. include_pattern (regex match)
       3. exclude_pattern (regex match)
+      4. max_step (keep points with step <= max_step)
     """
     if client is None:
         client = mlflow.tracking.MlflowClient()
@@ -48,11 +50,11 @@ def fetch_mlflow_run_data(
         if metric_name in exclude_set:
             continue
 
-        # 2. Regex inclusion (e.g. include "actor" group)
+        # 2. Regex inclusion
         if include_pattern and not re.search(include_pattern, metric_name):
             continue
 
-        # 3. Regex pattern exclusion (e.g. general terms)
+        # 3. Regex exclusion
         if exclude_pattern and re.search(exclude_pattern, metric_name):
             continue
 
@@ -60,19 +62,27 @@ def fetch_mlflow_run_data(
         if not history:
             continue
 
-        steps = [m.step for m in history]
-        vals = [m.value for m in history]
+        # 4. Training-step limit
+        if max_step is not None:
+            history = [m for m in history if m.step <= max_step]
+
+        if not history:
+            continue
 
         df = (
-            pd
-            .DataFrame({"step": steps, "value": vals})
+            pd.DataFrame(
+                {
+                    "step": [m.step for m in history],
+                    "value": [m.value for m in history],
+                }
+            )
             .sort_values("step")
             .reset_index(drop=True)
         )
+
         metrics_data[metric_name] = df
 
     return metrics_data
-
 
 def min_max_downsample(df: pd.DataFrame, num_windows: int) -> list[dict]:
     """Splits timeline into windows and extracts tagged local min and max points."""
@@ -207,7 +217,7 @@ def export_run_for_llm(
 
 # --- Execution Example ---
 if __name__ == "__main__":
-    RUN_ID = "192cfce0c2714a94afdf6dd4a2335114"
+    RUN_ID = "14c8a7c69e004feaafc82b6965571935"
 
     # Fetch data with regex filtering
     metrics = fetch_mlflow_run_data(
@@ -218,11 +228,12 @@ if __name__ == "__main__":
         exclude_metrics={"actor/surrogate", "critic/mse"},
         # add back the few useful behavior metrics
         # include_metrics={"evaluation/behavior_mean_game_length"},
+	max_step=10_000_000
     )
 
     # Process, write to file, and print terminal summary
     export_run_for_llm(
         metrics_data=metrics,
-        output_path="lowerlr.txt",
-        windows_per_metric=20,  # 10 windows = max ~20 points per metric
+        output_path="runreview.txt",
+        windows_per_metric=25,  # 10 windows = max ~20 points per metric
     )
