@@ -225,6 +225,7 @@ def cmd_train(
             league=run.league_name,
             training_seed=seed,
             live_games=cfg.collection.live_games_per_worker,
+            temperature=cfg.optim.temperature,
         )
         collector = ParallelCollector(wc, workers)
     try:
@@ -324,7 +325,9 @@ def cmd_experiment(arm: str = ARM_B, seed: int = 0) -> None:
     )
 
 
-def cmd_overnight(arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "turbochungus") -> None:
+def cmd_overnight(
+    arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "turbochungus"
+) -> None:
     cmd_train(
         ruleset="FULL_UNO",
         arm=arm,
@@ -664,6 +667,7 @@ def cmd_resume(
                 league=run.league_name,
                 training_seed=seed,
                 live_games=live_games,
+                temperature=cfg.optim.temperature,
             ),
             workers,
         )

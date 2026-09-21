@@ -137,6 +137,7 @@ def make_collector(
         league="rulebot",
         training_seed=seed,
         live_games=cfg.collection.live_games_per_worker,
+        temperature=cfg.optim.temperature,
     )
     return ParallelCollector(wc, workers)
 

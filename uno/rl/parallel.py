@@ -28,6 +28,7 @@ replayed from the last saved boundary if recovery is uncertain.
 
 from __future__ import annotations
 
+import math
 import multiprocessing as mp
 from multiprocessing import shared_memory
 import os
@@ -47,7 +48,7 @@ from uno.rl.opponents import league
 from uno.rl.policy import ActorPolicy
 from uno.rl.rollout import Builder, Rollout
 
-BUNDLE = 8  # episodes per queued bundle
+TARGET_BUNDLES_PER_WORKER = 3  # measured
 STOP = "stop"
 
 
@@ -65,9 +66,23 @@ def _payload(rollout: Rollout) -> dict:
 
 
 _ARRAY_FIELDS = (
-    "tok", "col", "glob", "ctok", "ccol", "cglob", "masks", "actions",
-    "old_logp", "decision_index", "episode", "set_id", "episode_id",
-    "terminal_return", "learner_decisions", "offset", "engine_decisions",
+    "tok",
+    "col",
+    "glob",
+    "ctok",
+    "ccol",
+    "cglob",
+    "masks",
+    "actions",
+    "old_logp",
+    "decision_index",
+    "episode",
+    "set_id",
+    "episode_id",
+    "terminal_return",
+    "learner_decisions",
+    "offset",
+    "engine_decisions",
 )
 
 
@@ -100,7 +115,9 @@ def _load_shared_payload(payload: dict) -> dict:
         for field, (name, shape, dtype, nbytes) in payload["shared"].items():
             opened[field] = shared_memory.SharedMemory(name=name)
             source = np.ndarray(shape, dtype=np.dtype(dtype), buffer=opened[field].buf)
-            result[field] = source.copy() if nbytes else np.empty(shape, dtype=np.dtype(dtype))
+            result[field] = (
+                source.copy() if nbytes else np.empty(shape, dtype=np.dtype(dtype))
+            )
         return result
     finally:
         for shm in opened.values():
@@ -125,7 +142,10 @@ class WorkerConfig:
     league: str
     training_seed: int
     live_games: int
-    threads: int = 1  # BLAS/torch threads per collector: workers x threads must not oversubscribe
+    temperature: float
+    threads: int = (
+        1  # BLAS/torch threads per collector: workers x threads must not oversubscribe
+    )
 
 
 def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
@@ -135,9 +155,9 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
     rs = NAMED[cfg.ruleset]
     actor_spec, critic_spec = spec(rs, cfg.arm), spec(rs, "CRITIC")
     actor = Actor(actor_spec, cfg.width, cfg.blocks)
-    policy = ActorPolicy(actor_spec, actor)
+    policy = ActorPolicy(actor_spec, actor, temperature=cfg.temperature, device="cpu")
     opponents = league(rs, cfg.league)
-    
+
     # On Windows, shared memory is tied to process handles. If a worker closes
     # its handle before the coordinator opens it, the OS destroys the memory block.
     # We accumulate handles and close them at the start of the next iteration,
@@ -146,7 +166,7 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
 
     while True:
         message = ctl.get()
-        
+
         for shm in handles_to_close:
             shm.close()
         handles_to_close.clear()
@@ -164,7 +184,15 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
                 break
             bundle_id, episodes = item
             sub = Manifest(-1, tuple(episodes), (), 0)
-            rollout, stats = collect(sub, policy, critic_spec, opponents, cfg.training_seed, version, cfg.live_games)
+            rollout, stats = collect(
+                sub,
+                policy,
+                critic_spec,
+                opponents,
+                cfg.training_seed,
+                version,
+                cfg.live_games,
+            )
             started = time.perf_counter()
             payload, handles = _shared_payload(rollout)
             stats.serialization_seconds = time.perf_counter() - started
@@ -192,7 +220,12 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
 class ParallelCollector:
     """A pool of persistent collector processes, reused across iterations."""
 
-    def __init__(self, cfg: WorkerConfig, workers: int, bundle: int = BUNDLE) -> None:
+    def __init__(
+        self,
+        cfg: WorkerConfig,
+        workers: int,
+        bundle: int | None = None,
+    ) -> None:
         self.cfg, self.workers, self.bundle = cfg, workers, bundle
         self._ctx = mp.get_context("spawn")
         self._tasks = self._ctx.Queue()
@@ -201,7 +234,14 @@ class ParallelCollector:
         # arrays and multiprocessing serialization buffers to grow without limit.
         self._results = self._ctx.Queue(maxsize=max(1, workers))
         self._ctl = [self._ctx.Queue() for _ in range(workers)]
-        self._procs = [self._ctx.Process(target=_worker, args=(cfg, self._tasks, self._results, self._ctl[i]), daemon=True) for i in range(workers)]
+        self._procs = [
+            self._ctx.Process(
+                target=_worker,
+                args=(cfg, self._tasks, self._results, self._ctl[i]),
+                daemon=True,
+            )
+            for i in range(workers)
+        ]
         for p in self._procs:
             p.start()
 
@@ -219,10 +259,22 @@ class ParallelCollector:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    def collect(self, manifest: Manifest, actor: Actor, critic_spec, behavior_version: int, timeout: float = 600.0) -> tuple[Rollout, Stats]:
+    def collect(
+        self,
+        manifest: Manifest,
+        actor: Actor,
+        critic_spec,
+        behavior_version: int,
+        timeout: float = 600.0,
+    ) -> tuple[Rollout, Stats]:
         rs = NAMED[self.cfg.ruleset]
         actor_spec = spec(rs, self.cfg.arm)
-        builder = Builder(actor_spec, critic_spec, behavior_version, decision_capacity=max(1024, len(manifest) * 16))
+        builder = Builder(
+            actor_spec,
+            critic_spec,
+            behavior_version,
+            decision_capacity=max(1024, len(manifest) * 16),
+        )
         stats = Stats()
         t0 = time.perf_counter()
         by_id = {e.episode_id: e for e in manifest.episodes}
@@ -230,11 +282,25 @@ class ParallelCollector:
         state = {k: v.detach().cpu().clone() for k, v in actor.state_dict().items()}
         for q in self._ctl:
             q.put(("weights", behavior_version, state))
+
+        # Adaptive bundle sizing targetting around three per worker, never more than live games, min at 8
+        # I measured this empirically and it gives good load balancing
+        # I also rounded to nearest mutiple of 8 in order not to break anything but it's probably not necessary
+        if self.bundle is None:
+            bundle = max(
+                8,
+                min(
+                    self.cfg.live_games,
+                    math.ceil(len(manifest) / (self.workers * 3)),
+                ),
+            )
+        else:
+            bundle = self.bundle
         bundles = {}
         episodes = list(manifest.episodes)
-        for i in range(0, len(episodes), self.bundle):
-            bundles[i // self.bundle] = episodes[i : i + self.bundle]
-            self._tasks.put((i // self.bundle, episodes[i : i + self.bundle]))
+        for i in range(0, len(episodes), bundle):
+            bundles[i // bundle] = episodes[i : i + bundle]
+            self._tasks.put((i // bundle, episodes[i : i + bundle]))
         for _ in self._procs:
             self._tasks.put(None)
 
@@ -248,7 +314,10 @@ class ParallelCollector:
             except queue.Empty:
                 stats.result_queue_wait_seconds += time.perf_counter() - wait_started
                 # A dead pool would otherwise be waited on for the whole timeout.
-                if not any(p.is_alive() for p in self._procs) or time.perf_counter() > deadline:
+                if (
+                    not any(p.is_alive() for p in self._procs)
+                    or time.perf_counter() > deadline
+                ):
                     break
                 continue
             stats.result_queue_wait_seconds += time.perf_counter() - wait_started
@@ -270,10 +339,20 @@ class ParallelCollector:
         if retried:
             # A worker died or timed out. Retry its logical work here: the episodes
             # carry their own streams, so the retry is the same data.
-            local = ActorPolicy(actor_spec, actor)
+            local = ActorPolicy(
+                actor_spec, actor, temperature=self.cfg.temperature, device="cpu"
+            )
             for bundle_id in retried:
                 sub = Manifest(-1, tuple(bundles[bundle_id]), (), 0)
-                rollout, worker_stats = collect(sub, local, critic_spec, league(rs, self.cfg.league), self.cfg.training_seed, behavior_version, self.cfg.live_games)
+                rollout, worker_stats = collect(
+                    sub,
+                    local,
+                    critic_spec,
+                    league(rs, self.cfg.league),
+                    self.cfg.training_seed,
+                    behavior_version,
+                    self.cfg.live_games,
+                )
                 _merge(builder, _payload(rollout), by_id)
                 _accumulate(stats, worker_stats)
         stats.seconds = time.perf_counter() - t0

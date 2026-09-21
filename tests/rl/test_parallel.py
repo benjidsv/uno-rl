@@ -31,11 +31,24 @@ def test_parallel_collection_equals_the_single_worker_reference():
     actor = Actor(sp, width=SMALL_WIDTH)
     opponents = league(rs, "toy")
     manifest, _ = build(0, list(opponents), DealSchedule(0), 8, 0)
-    reference, _ = collect(manifest, ActorPolicy(sp, actor), spc, opponents, 0, 7, live_games=8)
+    reference, _ = collect(
+        manifest, ActorPolicy(sp, actor), spc, opponents, 0, 7, live_games=8
+    )
 
-    cfg = WorkerConfig(ruleset="TOY", arm=F.ARM_B, width=SMALL_WIDTH, blocks=2, league="toy", training_seed=0, live_games=8)
+    cfg = WorkerConfig(
+        ruleset="TOY",
+        arm=F.ARM_B,
+        width=SMALL_WIDTH,
+        blocks=2,
+        league="toy",
+        training_seed=0,
+        live_games=8,
+        temperature=1.0,
+    )
     with ParallelCollector(cfg, workers=2, bundle=3) as pool:
-        parallel, stats = pool.collect(manifest, actor, spc, behavior_version=7, timeout=120)
+        parallel, stats = pool.collect(
+            manifest, actor, spc, behavior_version=7, timeout=120
+        )
 
     assert stats.retried_bundles == 0
     assert stats.transfer_bytes > parallel.nbytes
@@ -54,5 +67,14 @@ def test_parallel_collection_equals_the_single_worker_reference():
 
 def test_worker_config_names_its_thread_budget():
     """Numerical-library threads times worker count must not silently oversubscribe."""
-    cfg = WorkerConfig(ruleset="TOY", arm=F.ARM_B, width=8, blocks=1, league="toy", training_seed=0, live_games=4)
+    cfg = WorkerConfig(
+        ruleset="TOY",
+        arm=F.ARM_B,
+        width=8,
+        blocks=1,
+        league="toy",
+        training_seed=0,
+        live_games=4,
+        temperature=1.0,
+    )
     assert cfg.threads == 1
