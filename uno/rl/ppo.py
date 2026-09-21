@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import math
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -57,6 +58,27 @@ FORWARD_CHUNK = (
 
 
 from uno.rl.device import synchronize_device as _synchronize_device
+
+
+def _precision(optim: Optim) -> str:
+    return str(getattr(optim, "precision", "fp32")).lower()
+
+
+def _validate_precision(device: torch.device | str, precision: str) -> None:
+    if precision not in {"fp32", "bf16"}:
+        raise ValueError('precision must be "fp32" or "bf16"')
+    if precision == "bf16":
+        dev = torch.device(device)
+        if dev.type != "cuda":
+            raise ValueError('precision="bf16" is supported only for CUDA PPO updates')
+        if not torch.cuda.is_bf16_supported():
+            raise RuntimeError("CUDA device does not report native BF16 support")
+
+
+def _autocast_context(device: torch.device | str, precision: str):
+    if precision == "bf16":
+        return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    return nullcontext()
 
 
 @dataclass
@@ -195,6 +217,7 @@ def new_log_probs(
     temperature: float,
     device: str,
     set_ids: np.ndarray | None = None,
+    precision: str = "fp32",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Recomputed log probabilities of the taken actions, plus per-row entropy.
 
@@ -202,6 +225,7 @@ def new_log_probs(
     (`uno.rl.model.masked_log_probs`), which is what makes the frozen-weight
     agreement check in stage 2 meaningful.
     """
+    _validate_precision(device, precision)
     tok, col, glob = to_tensors(features, device)
     return _new_log_probs_tensors(
         actor,
@@ -212,6 +236,7 @@ def new_log_probs(
         torch.from_numpy(actions.astype(np.int64)).to(device),
         temperature,
         set_ids,
+        precision=precision,
     )
 
 
@@ -227,14 +252,22 @@ def _new_log_probs_tensors(
     *,
     need_entropy: bool = True,
     validate_mask: bool = True,
+    precision: str = "fp32",
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
-    """Taken-action log-probs from already staged tensors."""
+    """Taken-action log-probs from already staged tensors.
+
+    Only the model forward is autocast. Logits are converted back to FP32 before
+    masking/log-softmax so PPO log ratios, exponentiation, entropy and reductions
+    remain FP32 in both precision modes.
+    """
     # A tabular actor (`uno.rl.tabular`) is parameterized by information set, not by
     # features; it declares that with `uses_set_ids` and everything else is shared.
     if getattr(actor, "uses_set_ids", False):
         logits = actor.logits(set_ids)
     else:
-        logits = actor(tok, col, glob)
+        with _autocast_context(tok.device, precision):
+            logits = actor(tok, col, glob)
+    logits = logits.float()
     lp = masked_log_probs(logits, masks, temperature, validate=validate_mask)
     entropy = entropy_from_log_probs(lp) if need_entropy else None
     return lp.gather(1, actions.unsqueeze(1)).squeeze(1), entropy
@@ -259,6 +292,7 @@ def actor_loss(
         optim.temperature,
         device,
         set_ids,
+        precision=_precision(optim),
     )
     # `old_logp` was recorded during collection and remains fixed throughout
     # all actor epochs and minibatches. Only `logp` follows the updated actor.
@@ -356,6 +390,7 @@ def _prepared_actor_loss(
         set_ids,
         need_entropy=bool(optim.entropy_coef),
         validate_mask=False,
+        precision=_precision(optim),
     )
     log_ratio = logp - prepared.old_logp[rows]
     obj = surrogate(log_ratio, prepared.advantages[rows], optim.clip)
@@ -414,6 +449,7 @@ def _prepared_actor_diagnostics(
             set_ids,
             need_entropy=True,
             validate_mask=False,
+            precision=_precision(optim),
         )
         assert entropy is not None
         log_ratio = logp - prepared.old_logp[sl]
@@ -537,6 +573,7 @@ def rollout_actor_diagnostics(
             optim.temperature,
             device,
             None if rollout.set_id is None else rollout.set_id[sl],
+            precision=_precision(optim),
         )
         # Compare the current actor to the frozen collection-policy reference;
         # never recompute the reference from the actor being trained.
@@ -677,6 +714,9 @@ def update(
     if t == 0:
         return stats
 
+    precision = _precision(optim)
+    _validate_precision(device, precision)
+
     actor_tensor_data = to_tensors(rollout.actor, device)
     critic_tensor_data = to_tensors(rollout.critic, device)
 
@@ -688,13 +728,13 @@ def update(
         value_chunks = []
         tok, col, glob = critic_tensor_data
         for i in range(0, len(tok), FORWARD_CHUNK):
-            value_chunks.append(
-                critic(
+            with _autocast_context(device, precision):
+                value = critic(
                     tok[i : i + FORWARD_CHUNK],
                     col[i : i + FORWARD_CHUNK],
                     glob[i : i + FORWARD_CHUNK],
                 )
-            )
+            value_chunks.append(value.float())
         values = (
             torch.cat(value_chunks) if value_chunks else torch.zeros(0, device=device)
         )
@@ -820,11 +860,13 @@ def update(
         seen = 0
         for index in _minibatches(rng, t, n_minibatches):
             rows = torch.from_numpy(index.astype(np.int64)).to(device)
-            pred = critic(
-                prepared.critic_tok[rows],
-                prepared.critic_col[rows],
-                prepared.critic_glob[rows],
-            )
+            with _autocast_context(device, precision):
+                pred = critic(
+                    prepared.critic_tok[rows],
+                    prepared.critic_col[rows],
+                    prepared.critic_glob[rows],
+                )
+            pred = pred.float()
             loss = critic_loss(
                 pred, prepared.returns[rows], prepared.values[rows], optim.value_clip
             )
@@ -866,13 +908,13 @@ def update(
         post_chunks = []
         tok, col, glob = critic_tensor_data
         for i in range(0, len(tok), FORWARD_CHUNK):
-            post_chunks.append(
-                critic(
+            with _autocast_context(device, precision):
+                post_value = critic(
                     tok[i : i + FORWARD_CHUNK],
                     col[i : i + FORWARD_CHUNK],
                     glob[i : i + FORWARD_CHUNK],
                 )
-            )
+            post_chunks.append(post_value.float())
         post_values = (
             torch.cat(post_chunks) if post_chunks else torch.zeros(0, device=device)
         )

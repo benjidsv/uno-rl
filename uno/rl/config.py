@@ -38,6 +38,7 @@ class Optim:
     actor_epochs: int = 4
     critic_epochs: int = 4
     n_minibatches: int = 32  # balanced shuffled partitions per PPO epoch
+    precision: str = "fp32"  # PPO CUDA compute: "fp32" or BF16 autocast via "bf16"
     normalize_advantages: bool = False
     entropy_coef: float = 0.0  # 0.001 is a conditional exploration diagnostic
     actor_grad_norm: float = 0.5
@@ -126,6 +127,11 @@ def algorithm_resolved(resolved: dict) -> dict:
         key: value
         for key, value in resolved.items()
         if key not in {"device", "data_cap", "time_cap_s", "evaluation"}
+    }
+    algorithm["optim"] = {
+        key: value
+        for key, value in resolved["optim"].items()
+        if key != "precision"
     }
     algorithm["collection"] = {
         key: value

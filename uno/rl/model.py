@@ -98,6 +98,14 @@ class Encoder(nn.Module):
             "class_member", member, persistent=False
         )  # (classes, slots)
         self.register_buffer("class_size", member.sum(1), persistent=False)
+        # Small pre-cast copies avoid a dtype-conversion kernel/allocation on every
+        # BF16 forward while preventing FP32 promotion of large relational activations.
+        self.register_buffer(
+            "class_member_bf16", member.to(torch.bfloat16), persistent=False
+        )
+        self.register_buffer(
+            "class_size_bf16", member.sum(1).to(torch.bfloat16), persistent=False
+        )
         self.register_buffer(
             "token_class",
             torch.tensor(list(lay.slot_class), dtype=torch.long),
@@ -119,10 +127,16 @@ class Encoder(nn.Module):
         n, c, s, w = h.shape
         k = self.n_slot_classes
         per_slot = h.permute(0, 2, 1, 3)  # (n, slots, colors, width)
-        mem = self.class_member.view(1, k, s, 1)
-        means = (per_slot.mean(2).unsqueeze(1) * mem).sum(2) / self.class_size.view(
-            1, k, 1
-        )
+        # Keep static pooling weights in the activation dtype. Under CUDA autocast,
+        # ``h`` is typically BF16 after the first linear; mixing it with FP32 buffers
+        # would promote the large relational concatenations back to FP32.
+        if h.dtype == torch.bfloat16:
+            mem = self.class_member_bf16.view(1, k, s, 1)
+            class_size = self.class_size_bf16.view(1, k, 1)
+        else:
+            mem = self.class_member.to(dtype=h.dtype).view(1, k, s, 1)
+            class_size = self.class_size.to(dtype=h.dtype).view(1, k, 1)
+        means = (per_slot.mean(2).unsqueeze(1) * mem).sum(2) / class_size
         over_colors = per_slot.amax(2).unsqueeze(1).expand(n, k, s, w)
         maxes = torch.where(
             mem.bool(), over_colors, torch.full_like(over_colors, float("-inf"))
@@ -212,25 +226,25 @@ class Actor(nn.Module):
             torch.tensor(lay.act_token, dtype=torch.long).clamp(min=0),
             persistent=False,
         )
+        act_has_token = torch.tensor(lay.act_token >= 0, dtype=torch.float32)
+        self.register_buffer("act_has_token", act_has_token, persistent=False)
         self.register_buffer(
-            "act_has_token",
-            torch.tensor(lay.act_token >= 0, dtype=torch.float32),
-            persistent=False,
+            "act_has_token_bf16", act_has_token.to(torch.bfloat16), persistent=False
         )
         self.register_buffer(
             "act_color",
             torch.tensor(lay.act_color, dtype=torch.long).clamp(min=0),
             persistent=False,
         )
+        act_has_color = torch.tensor(lay.act_color >= 0, dtype=torch.float32)
+        self.register_buffer("act_has_color", act_has_color, persistent=False)
         self.register_buffer(
-            "act_has_color",
-            torch.tensor(lay.act_color >= 0, dtype=torch.float32),
-            persistent=False,
+            "act_has_color_bf16", act_has_color.to(torch.bfloat16), persistent=False
         )
+        act_feat = torch.tensor(lay.act_feat, dtype=torch.float32)
+        self.register_buffer("act_feat", act_feat, persistent=False)
         self.register_buffer(
-            "act_feat",
-            torch.tensor(lay.act_feat, dtype=torch.float32),
-            persistent=False,
+            "act_feat_bf16", act_feat.to(torch.bfloat16), persistent=False
         )
 
     def forward(
@@ -242,14 +256,24 @@ class Actor(nn.Module):
             (h.reshape(n, -1, self.width), hw), dim=1
         )  # (n, n_tokens, w)
         a = self.act_token.shape[0]
-        tok_a = tokens[:, self.act_token] * self.act_has_token.view(1, a, 1)
-        col_a = color_ctx[:, self.act_color] * self.act_has_color.view(1, a, 1)
+        # Match static action buffers to the activation dtype so BF16 autocast does
+        # not accidentally promote the activation-heavy scorer inputs back to FP32.
+        if tokens.dtype == torch.bfloat16:
+            act_has_token = self.act_has_token_bf16
+            act_has_color = self.act_has_color_bf16
+            act_feat = self.act_feat_bf16
+        else:
+            act_has_token = self.act_has_token.to(dtype=tokens.dtype)
+            act_has_color = self.act_has_color.to(dtype=color_ctx.dtype)
+            act_feat = self.act_feat.to(dtype=global_ctx.dtype)
+        tok_a = tokens[:, self.act_token] * act_has_token.view(1, a, 1)
+        col_a = color_ctx[:, self.act_color] * act_has_color.view(1, a, 1)
         x = torch.cat(
             (
                 tok_a,
                 col_a,
                 global_ctx.unsqueeze(1).expand(n, a, global_ctx.shape[-1]),
-                self.act_feat.unsqueeze(0).expand(n, a, -1),
+                act_feat.unsqueeze(0).expand(n, a, -1),
             ),
             dim=-1,
         )
