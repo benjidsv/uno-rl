@@ -337,7 +337,7 @@ def cmd_experiment(arm: str = ARM_B, seed: int = 0) -> None:
 
 
 def cmd_overnight(
-    arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "wiserchungus"
+    arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "chillguy-gae95"
 ) -> None:
     cmd_train(
         ruleset="FULL_UNO",
