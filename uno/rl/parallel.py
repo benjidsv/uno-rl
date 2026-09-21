@@ -33,6 +33,7 @@ import multiprocessing as mp
 from multiprocessing import shared_memory
 import os
 import queue
+import signal
 import time
 from dataclasses import dataclass
 
@@ -150,6 +151,9 @@ class WorkerConfig:
 
 def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
     """One persistent collector process."""
+    # Ignore SIGINT in workers: the coordinator handles Ctrl-C and waits for workers to end
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     torch.set_num_threads(max(1, cfg.threads))
     os.environ.setdefault("OMP_NUM_THREADS", str(max(1, cfg.threads)))
     rs = NAMED[cfg.ruleset]
