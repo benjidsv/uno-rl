@@ -337,13 +337,13 @@ def cmd_experiment(arm: str = ARM_B, seed: int = 0) -> None:
 
 
 def cmd_overnight(
-    arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "turbochungus"
+    arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "megachungus"
 ) -> None:
     cmd_train(
         ruleset="FULL_UNO",
         arm=arm,
         seed=seed,
-        cap=10_000_000,
+        cap=100_000_000,
         workers=16,
         games_per_cell=64,
         deals_per_cell=1024,
