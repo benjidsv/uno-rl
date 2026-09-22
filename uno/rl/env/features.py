@@ -8,7 +8,7 @@ sections 2.1-2.3 and 3. The test-only extractors of
 checkpoint replay (contract section 5.6).
 
 **Shape.** A row is three arrays, indexed rather than flattened
-(`uno.rl.layout`):
+(`uno.rl.env.layout`):
 
 | Array | Shape | What it carries |
 |---|---|---|
@@ -23,7 +23,7 @@ equivariance is achieved by construction rather than by canonicalization.
 
 **Arms.** `A` is position plus discard, with no episode memory and no history
 beyond the fields it declares. `B` is A plus the structured public evidence of
-`uno.rl.evidence`, in extra channels -- A is B with that block absent, sharing
+`uno.rl.env.evidence`, in extra channels -- A is B with that block absent, sharing
 the position encoding exactly, so the arms differ in parameter count and that
 difference is reported rather than denied (pipeline plan section 5). `CRITIC` is
 B's fields plus the opponent's current hand multiplicities: an L2 subset, never
@@ -45,8 +45,8 @@ import numpy as np
 from uno.game.engine import Phase
 from uno.game.observe import Observation, batch_l1_observations
 from uno.game.rules import Kind, Ruleset
-from uno.rl.evidence import AGE_BINS, COUNTER_CAP, MULTIPLICITY_CAP, Evidence
-from uno.rl.layout import Layout, layout
+from uno.rl.env.evidence import AGE_BINS, COUNTER_CAP, MULTIPLICITY_CAP, Evidence
+from uno.rl.env.layout import Layout, layout
 
 SCHEMA_VERSION = 3
 EVALUATION_SCHEMA_VERSIONS = (2, SCHEMA_VERSION)

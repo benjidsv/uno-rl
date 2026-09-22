@@ -14,13 +14,13 @@ import torch
 
 from tests.rl.helpers import SMALL_WIDTH
 from uno.game.rules import TOY
-from uno.rl import features as F
-from uno.rl.collect import collect
-from uno.rl.manifest import DealSchedule, build
+from uno.rl.env import features as F
+from uno.rl.algo.collect import collect
+from uno.rl.core.manifest import DealSchedule, build
 from uno.rl.model import make_actor
-from uno.rl.opponents import league
-from uno.rl.parallel import ParallelCollector, WorkerConfig
-from uno.rl.policy import ActorPolicy
+from uno.rl.eval.opponents import league
+from uno.rl.algo.parallel import ParallelCollector, WorkerConfig
+from uno.rl.algo.policy import ActorPolicy
 
 
 @pytest.mark.slow
@@ -28,7 +28,7 @@ def test_parallel_collection_equals_the_single_worker_reference():
     rs = TOY
     torch.manual_seed(0)
     sp, spc = F.spec(rs, F.ARM_B), F.spec(rs, F.ARM_CRITIC)
-    from uno.rl.config import RelationalModel
+    from uno.rl.core.config import RelationalModel
     actor = make_actor(sp, RelationalModel(width=SMALL_WIDTH, blocks=2))
     opponents = league(rs, "toy")
     manifest, _ = build(0, list(opponents), DealSchedule(0), 8, 0)

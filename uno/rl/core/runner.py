@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from uno.rl.config import Config
-from uno.rl.device import resolve_device
-from uno.rl.parallel import ParallelCollector, WorkerConfig
-from uno.rl.train import Run, train, start_tracker
-from uno.rl.opponents import league
+from uno.rl.core.config import Config
+from uno.rl.core.device import resolve_device
+from uno.rl.algo.parallel import ParallelCollector, WorkerConfig
+from uno.rl.algo.train import Run, train, start_tracker
+from uno.rl.eval.opponents import league
 
 
 @dataclass(frozen=True)

@@ -33,12 +33,12 @@ from uno.agents.baseline import Agent
 from uno.game.engine import Phase, legal_actions, returns
 from uno.game.observe import Level, observe
 from uno.game.rules import Kind, Play, Ruleset
-from uno.rl.collect import LiveGame, sample_action
-from uno.rl.features import extract, legal_mask
-from uno.rl.manifest import Manifest
+from uno.rl.algo.collect import LiveGame, sample_action
+from uno.rl.env.features import extract, legal_mask
+from uno.rl.core.manifest import Manifest
 from uno.rl.model import entropy_from_log_probs
-from uno.rl.policy import ActorPolicy
-from uno.rl.streams import EVAL, uniform
+from uno.rl.algo.policy import ActorPolicy
+from uno.rl.core.streams import EVAL, uniform
 
 
 @dataclass

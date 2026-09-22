@@ -13,7 +13,7 @@ from a bounded diagnostic sample, never as a per-decision training array.
 
 No full game traces are retained. `Rollout.nbytes` and `estimate_bytes` are there
 so a batch is sized before it is allocated, and a small bounded failure sample
-(`uno.rl.collect`) lives outside this buffer.
+(`uno.rl.algo.collect`) lives outside this buffer.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from uno.rl.features import Features, Spec
+from uno.rl.env.features import Features, Spec
 
 ROLLOUT_SCHEMA = 1
 
@@ -57,7 +57,7 @@ class Rollout:
     learner_decisions: np.ndarray  # (G,) int32
     offset: np.ndarray  # (G,) int64, first row of the episode
     # (T,) int64 information-set ids, or all -1. Only a tabular actor
-    # (`uno.rl.tabular`) needs them; a network reads its features instead.
+    # (`uno.rl.eval.tabular`) needs them; a network reads its features instead.
     set_id: np.ndarray | None = None
     schema: int = ROLLOUT_SCHEMA
 

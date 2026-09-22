@@ -41,18 +41,18 @@ import torch
 from uno.agents.baseline import Heuristic
 from uno.game.rules import NAMED
 from uno.progress import bar
-from uno.rl import checkpoint as ckpt
-from uno.rl import evaluate as ev
-from uno.rl import manifest as mf
-from uno.rl.config import Collection, Config, Evaluation, Optim
-from uno.rl.device import resolve_device
-from uno.rl.features import ARM_A, ARM_B, ARM_CRITIC, spec
+from uno.rl.core import checkpoint as ckpt
+from uno.rl.eval import evaluate as ev
+from uno.rl.core import manifest as mf
+from uno.rl.core.config import Collection, Config, Evaluation, Optim
+from uno.rl.core.device import resolve_device
+from uno.rl.env.features import ARM_A, ARM_B, ARM_CRITIC, spec
 from uno.rl.model import shapes
-from uno.rl.opponents import league, league_hash
-from uno.rl.parallel import ParallelCollector, WorkerConfig
-from uno.rl.rollout import estimate_bytes
-from uno.rl.train import Run, iteration, resume, start_tracker, train
-from uno.rl.track import provenance
+from uno.rl.eval.opponents import league, league_hash
+from uno.rl.algo.parallel import ParallelCollector, WorkerConfig
+from uno.rl.algo.rollout import estimate_bytes
+from uno.rl.algo.train import Run, iteration, resume, start_tracker, train
+from uno.rl.core.track import provenance
 
 TOY_LEAGUES = {
     "TOY": "toy",
@@ -87,7 +87,7 @@ def _config(
     optim = replace(Optim(), n_minibatches=n_minibatches, precision=precision)
     if optim_overrides:
         optim = replace(optim, **optim_overrides)
-    from uno.rl.config_io import model_from_dict
+    from uno.rl.core.config_io import model_from_dict
     model = model_from_dict(model_config or {})
     return Config(
         ruleset=ruleset, arm=arm, model=model, training_seed=seed, data_cap=cap, device=device,
@@ -99,7 +99,7 @@ def _config(
 
 def cmd_shapes(ruleset: str = "FULL_UNO", arm: str = ARM_B) -> None:
     rs = NAMED[ruleset]
-    from uno.rl.config import ModelConfig
+    from uno.rl.core.config import ModelConfig
     sp, spc = spec(rs, arm), spec(rs, ARM_CRITIC)
     sh = shapes(sp, spc, ModelConfig())
     print(f"\n== {ruleset} arm {arm}")
@@ -167,7 +167,7 @@ def cmd_train(
     mlflow_prefix: str = "",
     optim_overrides: dict[str, object] | None = None,
 ) -> None:
-    from uno.rl.runner import TrainSpec, Execution, Tracking, run
+    from uno.rl.core.runner import TrainSpec, Execution, Tracking, run
     cfg = _config(
         ruleset,
         arm,
@@ -211,8 +211,8 @@ def cmd_train(
 def cmd_overnight(
     arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "fat-chillguy"
 ) -> None:
-    from uno.rl.config_io import load_preset, override_seed, apply_overrides
-    from uno.rl.runner import run
+    from uno.rl.core.config_io import load_preset, override_seed, apply_overrides
+    from uno.rl.core.runner import run
     
     spec = load_preset("overnight")
     spec = override_seed(spec, seed)
@@ -230,16 +230,16 @@ def cmd_overnight(
     print(f"\n   stop: {summary['stop_reason']}, {summary['updates']} updates")
 
 def cmd_pilot(seed: int = 0) -> None:
-    from uno.rl.config_io import load_preset, override_seed
-    from uno.rl.runner import run
+    from uno.rl.core.config_io import load_preset, override_seed
+    from uno.rl.core.runner import run
     spec = load_preset("pilot")
     spec = override_seed(spec, seed)
     summary = run(spec)
     print(f"\n   stop: {summary['stop_reason']}, {summary['updates']} updates")
 
 def cmd_ablation(arm: str = ARM_B, seed: int = 0) -> None:
-    from uno.rl.config_io import load_preset, override_seed
-    from uno.rl.runner import run
+    from uno.rl.core.config_io import load_preset, override_seed
+    from uno.rl.core.runner import run
     from dataclasses import replace
     if arm not in {ARM_A, ARM_B}:
         raise SystemExit("must be A or B")
@@ -250,8 +250,8 @@ def cmd_ablation(arm: str = ARM_B, seed: int = 0) -> None:
     print(f"\n   stop: {summary['stop_reason']}, {summary['updates']} updates")
 
 def cmd_experiment(arm: str = ARM_B, seed: int = 0) -> None:
-    from uno.rl.config_io import load_preset, override_seed
-    from uno.rl.runner import run
+    from uno.rl.core.config_io import load_preset, override_seed
+    from uno.rl.core.runner import run
     from dataclasses import replace
     spec = load_preset("experiment")
     spec = override_seed(spec, seed)

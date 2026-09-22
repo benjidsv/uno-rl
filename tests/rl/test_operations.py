@@ -21,15 +21,15 @@ from tests.rl.helpers import SMALL_WIDTH
 from uno.agents.baseline import Heuristic
 from uno.game.engine import Phase
 from uno.game.rules import Play, TOY
-from uno.rl import checkpoint as ckpt
-from uno.rl import evaluate as ev
-from uno.rl import features as F
-from uno.rl import manifest as mf
-from uno.rl.config import Collection, Config, Evaluation, Optim, RelationalModel
-from uno.rl.opponents import league, league_hash
-from uno.rl.policy import ActorPolicy
-from uno.rl.track import Tracker
-from uno.rl.train import Run, evaluate_now, iteration
+from uno.rl.core import checkpoint as ckpt
+from uno.rl.eval import evaluate as ev
+from uno.rl.env import features as F
+from uno.rl.core import manifest as mf
+from uno.rl.core.config import Collection, Config, Evaluation, Optim, RelationalModel
+from uno.rl.eval.opponents import league, league_hash
+from uno.rl.algo.policy import ActorPolicy
+from uno.rl.core.track import Tracker
+from uno.rl.algo.train import Run, evaluate_now, iteration
 
 
 def toy_config(**kw) -> Config:
@@ -197,7 +197,7 @@ def test_actor_export_excludes_the_critic_and_replays_the_same_policy(tmp_path):
     s = new_game(TOY, 0)
     obs, legal = observe(s, s.player, Level.L1), legal_actions(s)
     direct = ActorPolicy(F.spec(TOY, F.ARM_B), run.actor)
-    lp, _ = direct.distributions([obs], [__import__("uno.rl.evidence", fromlist=["Evidence"]).Evidence.from_public(TOY, s.public, obs.seat ^ 1)])
+    lp, _ = direct.distributions([obs], [__import__("uno.rl.env.evidence", fromlist=["Evidence"]).Evidence.from_public(TOY, s.public, obs.seat ^ 1)])
     exported = agent.policy(obs, legal)
     for a in legal:
         assert abs(exported[a] - float(np.exp(lp[0, a]))) < 1e-6
@@ -237,7 +237,7 @@ def test_interrupted_continuation_reaches_the_same_state_as_an_uninterrupted_run
     first.progress.deal_schedule = first.schedule.state
     ckpt.save(tmp_path / "boundary.pt", first.config, first.actor, first.critic, first.actor_opt, first.critic_opt, first.progress, {"league": "toy"})
 
-    from uno.rl.train import resume
+    from uno.rl.algo.train import resume
 
     resumed = resume(tmp_path / "boundary.pt", toy_config(), tmp_path / "resumed", league_name="toy")
     iteration(resumed)
@@ -252,7 +252,7 @@ def test_interrupted_continuation_reaches_the_same_state_as_an_uninterrupted_run
 
 
 def test_resume_carries_the_selected_artifact_and_metadata(tmp_path):
-    from uno.rl import train as training
+    from uno.rl.algo import train as training
 
     source = make_run(tmp_path / "source")
     source.progress.best_score = 0.7
@@ -291,7 +291,7 @@ def test_tracking_outage_keeps_the_local_metrics_and_marks_pending_uploads(tmp_p
 
 
 def test_tracker_records_provenance_and_params(tmp_path):
-    from uno.rl.track import provenance
+    from uno.rl.core.track import provenance
 
     p = provenance("deadbeef")
     assert set(p) >= {"base_commit", "dirty", "torch", "numpy", "platform", "machine"}
@@ -356,7 +356,7 @@ def test_panel_sizing_prefixes_concentrate_near_the_requested_maximum():
 
 
 def test_paired_difference_groups_the_cells_of_a_deal(tmp_path):
-    run = make_run(tmp_path, evaluation=__import__("uno.rl.config", fromlist=["Evaluation"]).Evaluation(deals_per_cell=24))
+    run = make_run(tmp_path, evaluation=__import__("uno.rl.core.config", fromlist=["Evaluation"]).Evaluation(deals_per_cell=24))
     result = ev.play_panel(run.panel, run.policy, run.opponents, run.config.training_seed)
     baseline = ev.baseline_panel(run.panel, Heuristic(TOY), run.opponents, TOY, run.config.training_seed)
     assert len(result.deals) == 24 and np.array_equal(result.deals, baseline.deals)
@@ -422,7 +422,7 @@ def test_selection_prefers_the_earlier_checkpoint_on_a_tie():
 
 
 def test_training_reuses_a_boundary_evaluation_as_the_final_result(tmp_path):
-    from uno.rl.train import train
+    from uno.rl.algo.train import train
 
     cfg = toy_config(
         data_cap=1,
@@ -437,7 +437,7 @@ def test_training_reuses_a_boundary_evaluation_as_the_final_result(tmp_path):
 
 
 def test_every_evaluation_path_updates_the_persistent_best(tmp_path, monkeypatch):
-    from uno.rl import train as training
+    from uno.rl.algo import train as training
 
     run = make_run(tmp_path)
     saved = []
@@ -466,7 +466,7 @@ def test_every_evaluation_path_updates_the_persistent_best(tmp_path, monkeypatch
 
 
 def test_training_progress_bar_tracks_learner_decisions(tmp_path, monkeypatch):
-    from uno.rl import train as training
+    from uno.rl.algo import train as training
 
     bars = []
 
@@ -519,7 +519,7 @@ def test_training_progress_bar_tracks_learner_decisions(tmp_path, monkeypatch):
 def test_first_sigint_stops_after_iteration_and_writes_final_artifacts(
     tmp_path, monkeypatch
 ):
-    from uno.rl import train as training
+    from uno.rl.algo import train as training
 
     cfg = toy_config(
         data_cap=1_000_000,
@@ -588,10 +588,10 @@ def test_deal_schedule_state_round_trips():
 def test_a_real_mlflow_run_records_tags_params_metrics_and_artifacts(tmp_path):
     """The store is local, explicit and complete: the plan's section 10 groups."""
     mlflow = pytest.importorskip("mlflow")
-    from uno.rl.track import EXPERIMENT, local_store
-    from uno.rl.train import start_tracker, train
+    from uno.rl.core.track import EXPERIMENT, local_store
+    from uno.rl.algo.train import start_tracker, train
 
-    cfg = toy_config(data_cap=300, evaluation=__import__("uno.rl.config", fromlist=["Evaluation"]).Evaluation(deals_per_cell=8))
+    cfg = toy_config(data_cap=300, evaluation=__import__("uno.rl.core.config", fromlist=["Evaluation"]).Evaluation(deals_per_cell=8))
     run = Run(cfg, tmp_path / "run", league_name="toy")
     run.tracker = start_tracker(run, store_root=tmp_path)
     if not run.tracker.available:  # a broken local store must not fail the suite

@@ -17,8 +17,8 @@ from tests.rl.helpers import decision_states, rows
 from uno.game.engine import Phase, legal_actions, new_game
 from uno.game.observe import Level, observe
 from uno.game.rules import FULL_UNO, MID_25, TOY, TOY2_SKIP, TOY_FULL
-from uno.rl import features as F
-from uno.rl.evidence import Evidence
+from uno.rl.env import features as F
+from uno.rl.env.evidence import Evidence
 
 RULESETS = (TOY, TOY_FULL, TOY2_SKIP, MID_25, FULL_UNO)
 
@@ -200,8 +200,8 @@ def test_a_and_b_agree_on_determinized_worlds():
 
     from tests.rl.helpers import small_actor
     from uno.eval.search import determinize_l1
-    from uno.rl.evidence import Evidence
-    from uno.rl.policy import ActorPolicy
+    from uno.rl.env.evidence import Evidence
+    from uno.rl.algo.policy import ActorPolicy
 
     rs = MID_25
     states = [s for s in decision_states(rs, range(8)) if s.phase is Phase.TURN_START][:25]

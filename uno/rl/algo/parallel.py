@@ -10,7 +10,7 @@ write MLflow runs.
 Work is queued in **small dynamic bundles** rather than partitioned up front, so a
 slow opponent cell is not bound to one worker. Which worker runs which bundle is
 therefore not reproducible -- but the *data* is: episodes carry their own logical
-streams (`uno.rl.streams`), the coordinator reassembles in logical ID order, and
+streams (`uno.rl.core.streams`), the coordinator reassembles in logical ID order, and
 `tests/rl/test_parallel.py` asserts that 1 worker and N workers produce the same
 rollout. Worker count is an execution setting, not a data-allocation setting.
 
@@ -41,13 +41,13 @@ import torch
 import numpy as np
 
 from uno.game.rules import NAMED
-from uno.rl.collect import Stats, collect
-from uno.rl.features import spec
-from uno.rl.manifest import Manifest
+from uno.rl.algo.collect import Stats, collect
+from uno.rl.env.features import spec
+from uno.rl.core.manifest import Manifest
 from uno.rl.model import make_actor
-from uno.rl.opponents import league
-from uno.rl.policy import ActorPolicy
-from uno.rl.rollout import Builder, Rollout
+from uno.rl.eval.opponents import league
+from uno.rl.algo.policy import ActorPolicy
+from uno.rl.algo.rollout import Builder, Rollout
 
 TARGET_BUNDLES_PER_WORKER = 3  # measured
 STOP = "stop"
@@ -157,7 +157,7 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
     os.environ.setdefault("OMP_NUM_THREADS", str(max(1, cfg.threads)))
     rs = NAMED[cfg.ruleset]
     actor_spec, critic_spec = spec(rs, cfg.arm), spec(rs, "CRITIC")
-    from uno.rl.config_io import model_from_dict
+    from uno.rl.core.config_io import model_from_dict
 
     model_config = model_from_dict(cfg.model_config)
     actor = make_actor(actor_spec, model_config)

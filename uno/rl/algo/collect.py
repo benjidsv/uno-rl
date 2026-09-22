@@ -8,7 +8,7 @@ play) and after-draw choices need no alternating-seat assumption: a game simply
 reports whether it is waiting on the learner.
 
 This module is the single-process reference implementation and the oracle for
-`uno.rl.parallel`. It keeps the immutable engine as the authority for legality,
+`uno.rl.algo.parallel`. It keeps the immutable engine as the authority for legality,
 transitions and terminal returns, and it plays **every assigned game to a true
 terminal state**: a ruleset action cap is a terminal result, while a process
 interruption or a wall-time cutoff is not, and is never recorded as a draw.
@@ -25,12 +25,12 @@ from uno.agents.baseline import Agent
 from uno.game.engine import State, legal_actions, new_game, returns, step
 from uno.game.observe import Level, observe
 from uno.game.rules import Ruleset
-from uno.rl.evidence import Evidence
-from uno.rl.features import Spec, extract, legal_mask
-from uno.rl.manifest import Episode, Manifest
-from uno.rl.policy import ActorPolicy
-from uno.rl.rollout import Builder, Rollout
-from uno.rl.streams import ACTOR, OPPONENT, uniform
+from uno.rl.env.evidence import Evidence
+from uno.rl.env.features import Spec, extract, legal_mask
+from uno.rl.core.manifest import Episode, Manifest
+from uno.rl.algo.policy import ActorPolicy
+from uno.rl.algo.rollout import Builder, Rollout
+from uno.rl.core.streams import ACTOR, OPPONENT, uniform
 
 MAX_FAILURE_SAMPLES = 16  # a bounded replay sample, kept outside the training buffer
 

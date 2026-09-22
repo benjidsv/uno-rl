@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from uno.rl.config import ModelConfig
-from uno.rl.features import Spec
+from uno.rl.core.config import ModelConfig
+from uno.rl.env.features import Spec
 from uno.rl.model.relational import Actor as RelationalActor
 from uno.rl.model.relational import Critic as RelationalCritic
 

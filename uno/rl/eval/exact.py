@@ -37,8 +37,8 @@ from uno.compiled.tree import CompiledTree, Keying
 from uno.game.keys import decode_key
 from uno.game.observe import Level, observation_from_key
 from uno.game.rules import Ruleset
-from uno.rl.evidence import Evidence
-from uno.rl.features import Spec, extract
+from uno.rl.env.evidence import Evidence
+from uno.rl.env.features import Spec, extract
 from uno.rl.model import Actor, masked_log_probs
 
 SYMMETRY_TOL = 1e-9  # the tolerance `uno.compiled.strategies.tabulate` applies
@@ -106,7 +106,7 @@ def tabulate(rs: Ruleset, spec: Spec, actor: Actor, temperature: float = 1.0, se
 @cache
 def _features(rs: Ruleset, arm: str, seat: int | None):
     """The declared features of every set, built once: they do not depend on weights."""
-    from uno.rl.features import spec as spec_for
+    from uno.rl.env.features import spec as spec_for
 
     sp = spec_for(rs, arm)
     obs, evidence, _, _, _, _, _ = _sets(rs, seat)
@@ -195,7 +195,7 @@ def sampled_gradient(actor: Actor, rollout, temperature: float = 1.0, baseline: 
     the comparison a game-level standard error instead of a point estimate. The
     aggregate is the ordinary learner-decision mean, matching PPO.
     """
-    from uno.rl.ppo import new_log_probs
+    from uno.rl.algo.ppo import new_log_probs
 
     weights = rollout.returns_per_decision if baseline is None else (rollout.returns_per_decision - baseline)
     n_params = sum(p.numel() for p in actor.parameters())

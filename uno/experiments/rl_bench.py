@@ -22,13 +22,13 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 
-from uno.rl import ppo
-from uno.rl.config import Collection, Config, Evaluation, Optim
-from uno.rl.features import ARM_B, Features
-from uno.rl.train import Run, _iteration
-from uno.rl.parallel import ParallelCollector, WorkerConfig
-from uno.rl.rollout import Rollout
-from uno.rl.device import resolve_device, synchronize_device
+from uno.rl.algo import ppo
+from uno.rl.core.config import Collection, Config, Evaluation, Optim
+from uno.rl.env.features import ARM_B, Features
+from uno.rl.algo.train import Run, _iteration
+from uno.rl.algo.parallel import ParallelCollector, WorkerConfig
+from uno.rl.algo.rollout import Rollout
+from uno.rl.core.device import resolve_device, synchronize_device
 
 
 def slice_rollout(r: Rollout, size: int) -> Rollout:
@@ -211,9 +211,9 @@ def make_collector(
 
 def collect_frozen_rollout(run: Run, collector, cfg: Config) -> Rollout:
     """Collect one rollout from the exact policy state that will be benchmarked."""
-    from uno.rl.collect import collect
-    from uno.rl import manifest as mf
-    from uno.rl.features import spec
+    from uno.rl.algo.collect import collect
+    from uno.rl.core import manifest as mf
+    from uno.rl.env.features import spec
 
     manifest, _next_id = mf.build(
         run.progress.update,
@@ -234,7 +234,7 @@ def collect_frozen_rollout(run: Run, collector, cfg: Config) -> Rollout:
         policy = run.policy
     else:
         from uno.rl.model import make_actor
-        from uno.rl.policy import ActorPolicy
+        from uno.rl.algo.policy import ActorPolicy
 
         actor_cpu = make_actor(spec(cfg.rs, cfg.arm), cfg.model)
         actor_cpu.load_state_dict({

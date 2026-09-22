@@ -6,7 +6,7 @@ shared relational blocks with residual updates, and one shared action scorer.
 Temperature is 1 everywhere, in collection, learning, evaluation and replay.
 
 **Where the symmetry lives.** Nothing canonicalizes an observation. The inputs
-are indexed by color and slot (`uno.rl.features`), and every operation here is
+are indexed by color and slot (`uno.rl.env.features`), and every operation here is
 one of three kinds:
 
 - *shared per token*: the same weights for every `(color, slot)` and every wild;
@@ -35,7 +35,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from uno.rl.features import Features, Spec
+from uno.rl.env.features import Features, Spec
 
 WIDTH = 128
 BLOCKS = 2

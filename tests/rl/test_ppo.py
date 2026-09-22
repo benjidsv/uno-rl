@@ -14,14 +14,14 @@ import torch
 from tests.rl.helpers import SMALL_WIDTH
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.game.rules import TOY, TOY2_SKIP
-from uno.rl import features as F
-from uno.rl import ppo
-from uno.rl.collect import collect
-from uno.rl.config import Optim
-from uno.rl.manifest import DealSchedule, build
+from uno.rl.env import features as F
+from uno.rl.algo import ppo
+from uno.rl.algo.collect import collect
+from uno.rl.core.config import Optim
+from uno.rl.core.manifest import DealSchedule, build
 from uno.rl.model import Actor, Critic
-from uno.rl.policy import ActorPolicy
-from uno.rl.rollout import Rollout
+from uno.rl.algo.policy import ActorPolicy
+from uno.rl.algo.rollout import Rollout
 
 
 def setup(rs=TOY, games_per_cell: int = 6, seed: int = 0, live: int = 8):
@@ -106,7 +106,7 @@ def test_live_game_count_is_an_execution_setting_only():
 
 
 def test_rollout_rejects_a_duplicate_episode():
-    from uno.rl.rollout import Builder
+    from uno.rl.algo.rollout import Builder
 
     _, _, rollout, _, manifest = setup()
     b = Builder(rollout.actor_spec, rollout.critic_spec, 0)
@@ -116,7 +116,7 @@ def test_rollout_rejects_a_duplicate_episode():
 
 
 def test_rollout_rejects_a_short_manifest():
-    from uno.rl.rollout import Builder
+    from uno.rl.algo.rollout import Builder
 
     _, _, rollout, _, manifest = setup()
     b = Builder(rollout.actor_spec, rollout.critic_spec, 0)

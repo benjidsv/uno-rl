@@ -34,8 +34,8 @@ from uno.game.keys import encode_key, obs_key
 from uno.game.observe import Level, Observation
 from uno.game.rules import Ruleset
 from uno.game.symmetry import Symmetry
-from uno.rl.exact import tree_for
-from uno.rl.features import Features, Spec, spec
+from uno.rl.eval.exact import tree_for
+from uno.rl.env.features import Features, Spec, spec
 
 
 @cache
@@ -156,14 +156,14 @@ class TabularPolicy:
         # not, the set lookup is wrong and the whole tabular arm is meaningless.
         if not np.array_equal(self.actor.legal(set_ids), masks):
             raise ValueError("the compiled keying's legal actions disagree with the engine's mask")
-        from uno.rl.policy import played_log_probs
+        from uno.rl.algo.policy import played_log_probs
 
         return played_log_probs(
             masked_log_probs(logits, torch.from_numpy(masks), self.temperature).numpy()
         )
 
     def sample(self, log_probs: np.ndarray, rng_values: np.ndarray) -> np.ndarray:
-        from uno.rl.policy import ActorPolicy
+        from uno.rl.algo.policy import ActorPolicy
 
         return ActorPolicy.sample(self, log_probs, rng_values)
 

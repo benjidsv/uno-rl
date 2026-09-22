@@ -37,11 +37,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from uno.rl.config import Config, algorithm_hash
-from uno.rl.features import spec
+from uno.rl.core.config import Config, algorithm_hash
+from uno.rl.env.features import spec
 import torch.nn as nn
-from uno.rl.opponents import league_hash
-from uno.rl.streams import STREAM_VERSION
+from uno.rl.eval.opponents import league_hash
+from uno.rl.core.streams import STREAM_VERSION
 
 FORMAT_VERSION = 1
 
@@ -222,7 +222,7 @@ def export_actor(path: str | Path, config: Config, actor: nn.Module, name: str, 
 def load_actor(path: str | Path, rs=None):
     """Rebuild an actor export only under the exact saved feature schema."""
     from uno.game.rules import NAMED
-    from uno.rl.policy import ActorPolicy, NeuralAgent
+    from uno.rl.algo.policy import ActorPolicy, NeuralAgent
 
     payload = torch.load(Path(path), weights_only=False, map_location="cpu")
     if payload.get("format_version") != FORMAT_VERSION:
@@ -246,7 +246,7 @@ def load_actor(path: str | Path, rs=None):
             "actor export's feature schema differs; evaluate it with its original "
             "versioned extractor rather than silently changing the policy"
         )
-    from uno.rl.config_io import model_from_dict
+    from uno.rl.core.config_io import model_from_dict
     from uno.rl.model import make_actor
     if "width" in payload or "blocks" in payload:
         model_dict = {"kind": "relational"}

@@ -38,7 +38,7 @@ import torch
 
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.agents.rulebot import rulebot_league
-from uno.rl.device import synchronize_device
+from uno.rl.core.device import synchronize_device
 from uno.eval.play import DEV_SEEDS, match
 from uno.game import rules
 

@@ -19,10 +19,10 @@ from uno.game.keys import l1_key
 from uno.game.observe import Level, observe
 from uno.game.rules import MID_25, TOY, TOY2_SKIP
 from uno.game.symmetry import Symmetry
-from uno.rl import features as F
-from uno.rl.evidence import Evidence
+from uno.rl.env import features as F
+from uno.rl.env.evidence import Evidence
 from uno.rl.model import entropy_from_log_probs, masked_log_probs, to_tensors
-from uno.rl.policy import ActorPolicy, NeuralAgent
+from uno.rl.algo.policy import ActorPolicy, NeuralAgent
 
 TOL = 1e-5  # float32 log-softmax round-trip; the measured error is ~6e-8
 
@@ -188,7 +188,7 @@ def test_actor_and_critic_share_no_parameters():
 
 
 def test_arm_a_and_b_share_the_position_encoder_shape_and_differ_only_in_width():
-    from uno.rl.config import RelationalModel
+    from uno.rl.core.config import RelationalModel
     from uno.rl.model import shapes
 
     rs = TOY

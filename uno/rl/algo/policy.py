@@ -27,8 +27,8 @@ import torch
 from uno.agents.baseline import Policy
 from uno.game.observe import Observation
 from uno.game.rules import Ruleset
-from uno.rl.evidence import Evidence
-from uno.rl.features import Features, Spec, extract, legal_masks
+from uno.rl.env.evidence import Evidence
+from uno.rl.env.features import Features, Spec, extract, legal_masks
 from uno.rl.model import Actor, masked_log_probs, to_tensors
 
 
@@ -76,7 +76,7 @@ class ActorPolicy:
         """Masked log probabilities, `(n, num_actions)`, with `-inf` on illegal actions.
 
         `set_ids` is ignored: a network reads its features. The argument exists so a
-        tabular actor (`uno.rl.tabular`), which is parameterized by information set,
+        tabular actor (`uno.rl.eval.tabular`), which is parameterized by information set,
         is a drop-in for the collector."""
         logits = self.actor(*to_tensors(features, self.device))
         lp = masked_log_probs(logits, torch.from_numpy(masks).to(self.device), self.temperature)

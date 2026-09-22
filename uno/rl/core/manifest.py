@@ -28,7 +28,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from uno.eval.seeds import DEV_POOL
-from uno.rl.streams import SCHEDULE, generator
+from uno.rl.core.streams import SCHEDULE, generator
 
 TRAIN_DEALS = range(0, 800_000)
 PANEL_DEALS = range(800_000, 900_000)
@@ -121,7 +121,7 @@ def build(update: int, opponents, schedule: DealSchedule, games_per_cell: int, n
     Every cell gets the same number of games and its own deals. A deal seed is
     used by exactly one cell within an iteration, so a cell's score is not
     coupled to another cell's by a shared deal during *training*; paired
-    evaluation, where coupling is wanted, is `uno.rl.evaluate`'s job.
+    evaluation, where coupling is wanted, is `uno.rl.eval.evaluate`'s job.
     """
     cs = cells(opponents, seats)
     drawn = schedule.take(len(cs) * games_per_cell)

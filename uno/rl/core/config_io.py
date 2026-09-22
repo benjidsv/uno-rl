@@ -6,8 +6,8 @@ from dataclasses import replace
 from pathlib import Path
 import tomllib
 
-from uno.rl.config import Collection, Config, Evaluation, Optim, RelationalModel
-from uno.rl.runner import Execution, Tracking, TrainSpec
+from uno.rl.core.config import Collection, Config, Evaluation, Optim, RelationalModel
+from uno.rl.core.runner import Execution, Tracking, TrainSpec
 
 
 def parse_value(text: str):

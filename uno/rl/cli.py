@@ -5,16 +5,16 @@ import sys
 from itertools import product
 from pathlib import Path
 
-from uno.rl import checkpoint as ckpt
-from uno.rl.config import Config, algorithm_resolved
-from uno.rl.config_io import (
+from uno.rl.core import checkpoint as ckpt
+from uno.rl.core.config import Config, algorithm_resolved
+from uno.rl.core.config_io import (
     apply_overrides,
     from_dict,
     load,
     load_preset,
     override_seed,
 )
-from uno.rl.runner import run
+from uno.rl.core.runner import run
 
 
 def combinations(grid: dict):
@@ -143,9 +143,9 @@ def main(argv=None) -> None:
         # So we need to update runner.run() or have runner.resume()
         
         import time
-        from uno.rl.device import resolve_device
-        from uno.rl.train import resume as resume_run, start_tracker, train
-        from uno.rl.parallel import ParallelCollector, WorkerConfig
+        from uno.rl.core.device import resolve_device
+        from uno.rl.algo.train import resume as resume_run, start_tracker, train
+        from uno.rl.algo.parallel import ParallelCollector, WorkerConfig
         
         cfg = spec.config
         device = resolve_device(cfg.device)

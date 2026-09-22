@@ -15,8 +15,8 @@ from tests.helpers import tid
 from tests.rl.helpers import decision_games, decision_states
 from uno.game.observe import Level, observe
 from uno.game.rules import FULL_UNO, MID_25, TOY, TOY2_SKIP
-from uno.rl import features as F
-from uno.rl.evidence import MAX_AGE, Evidence, Item
+from uno.rl.env import features as F
+from uno.rl.env.evidence import MAX_AGE, Evidence, Item
 
 RS = FULL_UNO
 OPP = 1  # evidence is always about the other seat

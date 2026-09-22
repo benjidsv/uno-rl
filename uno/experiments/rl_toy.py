@@ -43,16 +43,16 @@ from uno import store
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.game.observe import Level
 from uno.game.rules import NAMED
-from uno.rl import exact
-from uno.rl import features as F
-from uno.rl import ppo
-from uno.rl.collect import collect
-from uno.rl.config import Optim
-from uno.rl.manifest import DealSchedule, build
+from uno.rl.eval import exact
+from uno.rl.env import features as F
+from uno.rl.algo import ppo
+from uno.rl.algo.collect import collect
+from uno.rl.core.config import Optim
+from uno.rl.core.manifest import DealSchedule, build
 from uno.rl.model import make_actor, make_critic
-from uno.rl.policy import ActorPolicy
-from uno.rl.streams import INIT, torch_seed
-from uno.rl.tabular import TabularActor, TabularPolicy
+from uno.rl.algo.policy import ActorPolicy
+from uno.rl.core.streams import INIT, torch_seed
+from uno.rl.eval.tabular import TabularActor, TabularPolicy
 
 OPPONENTS = {"random": PlayFirstRandom, "heuristic": Heuristic}
 WIDTH = 64  # toy-sized: the gates test the optimizer and the contract, not capacity
@@ -92,7 +92,7 @@ def gradient_check(ruleset: str = "TOY", opponent: str = "heuristic", games: int
     opp_sigma = _sigma(rs, opp)
     sp, spc = F.spec(rs, F.ARM_B), F.spec(rs, F.ARM_CRITIC)
     torch.manual_seed(torch_seed(seed, INIT))
-    from uno.rl.config import RelationalModel
+    from uno.rl.core.config import RelationalModel
     actor, critic = make_actor(sp, RelationalModel(width=WIDTH)), make_critic(spc, RelationalModel(width=WIDTH))
 
     t0 = time.perf_counter()
@@ -198,7 +198,7 @@ def tabular_gate(ruleset: str = "TOY", opponent: str = "heuristic", seeds: int =
 def _train_neural(rs, opponent, seat: int, seed: int, cap: int, games_per_iteration: int = 256, exact_mode: bool = False, verbose: bool = False, exact_steps: int = EXACT_STEPS, exact_lr: float = EXACT_LR) -> dict:
     sp, spc = F.spec(rs, F.ARM_B), F.spec(rs, F.ARM_CRITIC)
     torch.manual_seed(torch_seed(seed, INIT))
-    from uno.rl.config import RelationalModel
+    from uno.rl.core.config import RelationalModel
     actor, critic = make_actor(sp, RelationalModel(width=WIDTH)), make_critic(spc, RelationalModel(width=WIDTH))
     optim = Optim(minibatch=512, actor_epochs=4, critic_epochs=2)
     actor_opt = torch.optim.Adam(actor.parameters(), lr=exact_lr if exact_mode else optim.actor_lr, betas=optim.betas, eps=optim.eps)

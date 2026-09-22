@@ -20,10 +20,10 @@ from uno import store
 from uno.agents.baseline import Heuristic, PlayFirstRandom
 from uno.game.observe import Level
 from uno.game.rules import TOY
-from uno.rl import exact
-from uno.rl import features as F
+from uno.rl.eval import exact
+from uno.rl.env import features as F
 from uno.rl.model import Actor
-from uno.rl.policy import ActorPolicy, NeuralAgent
+from uno.rl.algo.policy import ActorPolicy, NeuralAgent
 
 
 @pytest.fixture(scope="module")
@@ -95,8 +95,8 @@ def test_exact_gradient_matches_a_finite_difference_of_the_exact_value(actor, he
 
 
 def test_sampled_gradient_is_per_game_and_returns_the_decision_mean(actor):
-    from uno.rl.collect import collect
-    from uno.rl.manifest import DealSchedule, build
+    from uno.rl.algo.collect import collect
+    from uno.rl.core.manifest import DealSchedule, build
 
     opponents = {a.name: a for a in (PlayFirstRandom(TOY),)}
     manifest, _ = build(0, list(opponents), DealSchedule(0), 40, 0, seats=(0,))
