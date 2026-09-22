@@ -70,6 +70,12 @@ class ActorPolicy:
         self.rs: Ruleset = spec.rs
         self.actor.eval()
         self.actor.to(device)
+        
+        if self.spec.has_opponent:
+            print("\n" + "!" * 80)
+            print("WARNING: ActorPolicy is configured with L2 observations (it sees the opponent's hand).")
+            print("This is a CHEATING configuration intended only for ceiling estimation.")
+            print("!" * 80 + "\n", flush=True)
 
     @torch.no_grad()
     def log_probs(self, features: Features, masks: np.ndarray, set_ids: np.ndarray | None = None) -> np.ndarray:

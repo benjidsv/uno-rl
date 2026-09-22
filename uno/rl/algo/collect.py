@@ -208,7 +208,8 @@ def collect(
             continue
         feature_started = time.perf_counter()
         pairs = [g.observations() for g in active]
-        actor_rows = extract(spec, [p[0] for p in pairs], [g.evidence for g in active] if spec.has_evidence else None)
+        actor_obs = [p[1] if spec.has_opponent else p[0] for p in pairs]
+        actor_rows = extract(spec, actor_obs, [g.evidence for g in active] if spec.has_evidence else None)
         critic_rows = extract(critic_spec, [p[1] for p in pairs], [g.evidence for g in active])
         masks = np.stack([legal_mask(rs, p[0]) for p in pairs])
         set_ids = None if set_id_fn is None else np.fromiter((set_id_fn(p[0]) for p in pairs), dtype=np.int64, count=len(pairs))

@@ -265,9 +265,11 @@ def play_panel(
         active = ready
         if not active:
             continue
-        obs = [g.observations()[0] for g in active]
-        masks = np.stack([legal_mask(rs, o) for o in obs])
-        feats = extract(spec, obs, [g.evidence for g in active] if spec.has_evidence else None)
+        obs_pairs = [g.observations() for g in active]
+        obs_l1 = [p[0] for p in obs_pairs]
+        obs_actor = [p[1] if spec.has_opponent else p[0] for p in obs_pairs]
+        masks = np.stack([legal_mask(rs, o) for o in obs_l1])
+        feats = extract(spec, obs_actor, [g.evidence for g in active] if spec.has_evidence else None)
         log_probs = actor.log_probs(feats, masks)
         entropies = entropy_from_log_probs(torch.from_numpy(log_probs)).numpy()
         us = np.fromiter((uniform(training_seed, EVAL, g.episode.episode_id, g.decision_index) for g in active), dtype=np.float64, count=len(active))
@@ -276,7 +278,7 @@ def play_panel(
             a = int(chosen[i])
             legal = tuple(int(x) for x in np.flatnonzero(masks[i]))
             _record_action(
-                behavior, rs, obs[i], legal, a, float(entropies[i]), is_play
+                behavior, rs, obs_l1[i], legal, a, float(entropies[i]), is_play
             )
             game.apply(a)
 
