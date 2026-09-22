@@ -80,6 +80,10 @@ def make_run_directory(spec: TrainSpec) -> Path:
 def run(spec: TrainSpec) -> dict:
     validate(spec)
     
+    import pprint
+    print("Launching run with TrainSpec:")
+    pprint.pprint(__import__("dataclasses").asdict(spec))
+
     cfg = spec.config
     device = resolve_device(cfg.device)
     cfg = cfg.with_(device=device)
