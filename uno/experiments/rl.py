@@ -82,12 +82,14 @@ def _config(
     precision: str = "fp32",
     evaluation_fraction: float = 0.1,
     optim_overrides: dict[str, object] | None = None,
+    width: int = 128,
+    blocks: int = 2,
 ) -> Config:
     optim = replace(Optim(), n_minibatches=n_minibatches, precision=precision)
     if optim_overrides:
         optim = replace(optim, **optim_overrides)
     return Config(
-        ruleset=ruleset, arm=arm, training_seed=seed, data_cap=cap, device=device,
+        ruleset=ruleset, arm=arm, width=width, blocks=blocks, training_seed=seed, data_cap=cap, device=device,
         collection=Collection(games_per_cell=games_per_cell, live_games_per_worker=live_games, workers=workers),
         evaluation=Evaluation(deals_per_cell=deals_per_cell, every_fraction=evaluation_fraction),
         optim=optim,
@@ -155,6 +157,8 @@ def cmd_train(
     time_cap_s: float = 0.0,
     evaluation_fraction: float = 0.1,
     precision: str = "fp32",
+    width: int = 128,
+    blocks: int = 2,
     *,
     tracking_study_id: str = "pilot",
     tracking_kind: str = "train",
@@ -191,6 +195,8 @@ def cmd_train(
         precision=precision,
         evaluation_fraction=evaluation_fraction,
         optim_overrides=optim_overrides,
+        width=width,
+        blocks=blocks,
     )
     if time_cap_s:
         cfg = cfg.with_(time_cap_s=time_cap_s)
@@ -256,7 +262,7 @@ def cmd_train(
 
 
 def cmd_overnight(
-    arm: str = ARM_A, seed: int = 0, mlflow_prefix: str = "chillguy-ablation"
+    arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "fat-chillguy"
 ) -> None:
     cmd_train(
         ruleset="FULL_UNO",
@@ -287,6 +293,9 @@ def cmd_overnight(
             "critic_lr": 3e-4,
             "gae_lambda": 0.95,
         },
+        # Model
+        width=256,
+        blocks=2,
     )
 
 
