@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import random
 import time
+from collections import deque
 from dataclasses import replace
 
 import numpy as np
@@ -55,8 +56,14 @@ class Sampler:
 
     def __init__(self, rs, mode: str, opponents: dict, candidates: int, k: int) -> None:
         self.rs, self.mode, self.candidates, self.k = rs, mode, candidates, k
-        # Belief is only used for its exact window likelihood; one per league member.
-        self.windows = {name: Belief(rs, "window", opponent=agent) for name, agent in opponents.items()}
+        # Belief is only needed by the window modes. Avoid constructing one for
+        # truth/prior/voids/soft runs.
+        self.windows = (
+            {name: Belief(rs, "window", opponent=agent) for name, agent in opponents.items()}
+            if mode in ("window", "window_true")
+            else {}
+        )
+        self.window_names = tuple(self.windows)
         self.fallbacks = 0
         self.decisions = 0
         self.ess = []
@@ -67,24 +74,35 @@ class Sampler:
         self.decisions += 1
         if k_opp == 0:
             return [()] * self.k
-        cands = [tuple(sorted(rng.sample(unseen, k_opp))) for _ in range(self.candidates)]
+        # prior never inspects or resamples the extra candidates, so generating
+        # only k hands is exactly equivalent (the RNG is local to this decision).
+        n_candidates = self.k if self.mode == "prior" else self.candidates
+        cands = [tuple(sorted(rng.sample(unseen, k_opp))) for _ in range(n_candidates)]
         if self.mode == "prior":
-            return cands[: self.k]
+            return cands
         vs = voids(rs, obs.public, obs.seat ^ 1)
         if self.mode == "soft":
             w = np.array([void_weight(rs, h, vs, SOFT_DECAY) for h in cands])
         else:
             w = np.array([1.0 if not vs or satisfies(rs, h, vs) else 0.0 for h in cands])
         if self.mode in ("window", "window_true"):
-            names = [opponent_name] if self.mode == "window_true" else list(self.windows)
+            names = (opponent_name,) if self.mode == "window_true" else self.window_names
+            # _constraints depends on the observation/opponent, not on the sampled
+            # candidate hand. Compute it once per league member, not once per hand.
+            windows = []
+            for name in names:
+                b = self.windows[name]
+                _, window = b._constraints(obs, obs.seat ^ 1)
+                windows.append((b, window))
+
             lik = np.zeros(len(cands))
             for i in np.flatnonzero(w):
-                for name in names:
-                    b = self.windows[name]
-                    _, window = b._constraints(obs, obs.seat ^ 1)
-                    lik[i] += b._window_likelihood(obs, cands[i], window) if window else 1.0
-            if (w * lik).sum() > 0.0:
-                w = w * lik
+                h = cands[i]
+                for b, window in windows:
+                    lik[i] += b._window_likelihood(obs, h, window) if window else 1.0
+            weighted = w * lik
+            if weighted.sum() > 0.0:
+                w = weighted
             else:  # no candidate explains the window: keep the void-consistent ones
                 self.fallbacks += 1
         total = w.sum()
@@ -101,10 +119,10 @@ def play(man, critic, opponents, mode: str, seed: int, candidates: int, k: int, 
     rs, sp = critic.rs, critic.spec
     sampler = Sampler(rs, mode, opponents, candidates, k)
     by_cell = {c: {} for c in man.cells}
-    queue, active = list(man.episodes), []
+    queue, active = deque(man.episodes), []
     while queue or active:
         while queue and len(active) < live:
-            e = queue.pop(0)
+            e = queue.popleft()
             active.append(LiveGame(rs, e, opponents[e.opponent]))
         for g in active:
             g.advance_to_learner(seed)
@@ -152,7 +170,7 @@ def main() -> None:
     if bad := set(modes) - set(MODES):
         raise SystemExit(f"unknown modes {bad}; choose from {MODES}")
 
-    critic, meta = load_actor(args.critic)
+    critic, meta = load_actor(args.critic, device="cuda")
     if not critic.actor.spec.has_opponent:
         raise SystemExit("--critic must be a CRITIC-arm actor export")
     rs = critic.rs

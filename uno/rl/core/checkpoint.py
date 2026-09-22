@@ -219,7 +219,7 @@ def export_actor(path: str | Path, config: Config, actor: nn.Module, name: str, 
     return {"file": path.name, "checksum": _checksum(path), "name": name}
 
 
-def load_actor(path: str | Path, rs=None):
+def load_actor(path: str | Path, rs=None, device:str = "cpu"):
     """Rebuild an actor export only under the exact saved feature schema."""
     from uno.game.rules import NAMED
     from uno.rl.algo.policy import ActorPolicy, NeuralAgent
@@ -256,7 +256,7 @@ def load_actor(path: str | Path, rs=None):
         model_dict = payload.get("model", {})
     actor = make_actor(sp, model_from_dict(model_dict))
     actor.load_state_dict(payload["actor"])
-    return NeuralAgent(ActorPolicy(sp, actor, payload["temperature"]), payload["name"]), payload
+    return NeuralAgent(ActorPolicy(sp, actor, payload["temperature"], device), payload["name"]), payload
 
 
 __all__ = ["FORMAT_VERSION", "Progress", "export_actor", "load", "load_actor", "restore", "save", "verify"]
