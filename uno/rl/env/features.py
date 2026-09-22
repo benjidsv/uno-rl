@@ -25,9 +25,12 @@ equivariance is achieved by construction rather than by canonicalization.
 beyond the fields it declares. `B` is A plus the structured public evidence of
 `uno.rl.env.evidence`, in extra channels -- A is B with that block absent, sharing
 the position encoding exactly, so the arms differ in parameter count and that
-difference is reported rather than denied (pipeline plan section 5). `CRITIC` is
+difference is reported rather than denied (pipeline plan section 5). `C` is B plus
+the opponent's decayed play history (colors named, switched to and followed, and
+cards played), appended after B's block so B is a prefix of C. `CRITIC` is
 B's fields plus the opponent's current hand multiplicities: an L2 subset, never
-the pile order, the seed or the opponent's identity.
+the pile order, the seed or the opponent's identity. C and the critic share B as
+a prefix and diverge after it.
 
 **Counts are scaled deterministically** -- by the ruleset's deck counts, hand
 size and deck size -- so no statistics are fitted, nothing is standardized across
@@ -45,7 +48,14 @@ import numpy as np
 from uno.game.engine import Phase
 from uno.game.observe import Observation, batch_l1_observations
 from uno.game.rules import Kind, Ruleset
-from uno.rl.env.evidence import AGE_BINS, COUNTER_CAP, MULTIPLICITY_CAP, Evidence
+from uno.rl.env.evidence import (
+    AGE_BINS,
+    COUNTER_CAP,
+    HIST_KINDS,
+    HISTORY_DECAYS,
+    MULTIPLICITY_CAP,
+    Evidence,
+)
 from uno.rl.env.layout import Layout, layout
 
 SCHEMA_VERSION = 3
@@ -53,8 +63,9 @@ EVALUATION_SCHEMA_VERSIONS = (2, SCHEMA_VERSION)
 
 AGGREGATE_CAP = 8  # a per-color evidence aggregate is exposed as min(sum, 8) / 8
 
-ARM_A, ARM_B, ARM_CRITIC = "A", "B", "CRITIC"
-ARMS = (ARM_A, ARM_B, ARM_CRITIC)
+ARM_A, ARM_B, ARM_C, ARM_CRITIC = "A", "B", "C", "CRITIC"
+ARMS = (ARM_A, ARM_B, ARM_C, ARM_CRITIC)
+DECAYS = len(HISTORY_DECAYS)
 
 # -- channel maps -------------------------------------------------------------
 # Every arm shares the position block at offset 0; B's evidence block and the
@@ -71,6 +82,8 @@ TOK_LAST_PLAY = TOK_EV_DIFF + AGE_BINS
 TOK_EVIDENCE_END = TOK_LAST_PLAY + 1
 TOK_OPP_HAND, TOK_OPP_IN_HAND = TOK_EVIDENCE_END, TOK_EVIDENCE_END + 1
 TOK_CRITIC_END = TOK_OPP_IN_HAND + 1
+TOK_HIST_PLAYED = TOK_EVIDENCE_END  # arm C: decayed count of this card played by the opponent, per decay
+TOK_HISTORY_END = TOK_HIST_PLAYED + DECAYS
 
 COL_CUR, COL_TOP, COL_DRAWN, COL_HAND, COL_DISCARD = 0, 1, 2, 3, 4
 COL_POSITION = 5
@@ -82,6 +95,11 @@ COL_LAST_PLAY = COL_EV_WILD_TOP + AGE_BINS
 COL_EVIDENCE_END = COL_LAST_PLAY + 1
 COL_OPP_HAND = COL_EVIDENCE_END
 COL_CRITIC_END = COL_OPP_HAND + 1
+# arm C: decayed counts of the opponent setting this color, (kind, decay) row-major
+COL_HIST_WILD = COL_EVIDENCE_END  # named it with a wild
+COL_HIST_SWITCH = COL_HIST_WILD + DECAYS  # switched to it with a colored card
+COL_HIST_FOLLOW = COL_HIST_SWITCH + DECAYS  # played it on its own color
+COL_HISTORY_END = COL_HIST_WILD + HIST_KINDS * DECAYS
 
 GLOB_HAND, GLOB_OPP_HAND, GLOB_PILE, GLOB_PILE_EMPTY, GLOB_TURN = 0, 1, 2, 3, 4
 GLOB_RESHUFFLES, GLOB_AFTER_DRAW, GLOB_HAS_DRAWN, GLOB_SEAT = 5, 6, 7, 8
@@ -135,7 +153,11 @@ class Spec:
 
     @property
     def has_evidence(self) -> bool:
-        return self.arm in (ARM_B, ARM_CRITIC)
+        return self.arm in (ARM_B, ARM_C, ARM_CRITIC)
+
+    @property
+    def has_history(self) -> bool:
+        return self.arm == ARM_C
 
     @property
     def has_opponent(self) -> bool:
@@ -158,11 +180,15 @@ def spec(rs: Ruleset, arm: str, version: int = SCHEMA_VERSION) -> Spec:
             f"unsupported learner feature schema {version}; "
             f"known evaluation schemas are {EVALUATION_SCHEMA_VERSIONS}"
         )
+    if arm == ARM_C and version != SCHEMA_VERSION:
+        raise ValueError(f"arm C exists only from schema {SCHEMA_VERSION}")
     lay = layout(rs)
     if arm == ARM_A:
         widths = (TOK_POSITION, COL_POSITION, GLOB_POSITION)
     elif arm == ARM_B:
         widths = (TOK_EVIDENCE_END, COL_EVIDENCE_END, GLOB_EVIDENCE_END)
+    elif arm == ARM_C:
+        widths = (TOK_HISTORY_END, COL_HISTORY_END, GLOB_EVIDENCE_END)
     else:
         widths = (TOK_CRITIC_END, COL_CRITIC_END, GLOB_CRITIC_END)
     return Spec(rs, arm, lay, *widths, version=version)
@@ -359,6 +385,14 @@ def extract(sp: Spec, observations, evidences=None) -> Features:
         if sp.has_evidence:
             _evidence_row(sp, obs, evidences[i], tok[i], col[i], glob[i], token_of_type, type_color)
 
+    if sp.has_history:
+        # Scaled like the position block's counts: a color total by the hand size,
+        # a card type by its deck count. Decay keeps both bounded in practice.
+        hist_color = np.stack([e.hist_color for e in evidences])  # (n, kinds, decays, colors)
+        col[:, :, COL_HIST_WILD:COL_HISTORY_END] = hist_color.transpose(0, 3, 1, 2).reshape(n, n_col, -1) / rs.hand_size
+        played = np.stack([e.hist_played for e in evidences])[:, :, order]  # (n, decays, tokens)
+        tok[:, :, TOK_HIST_PLAYED:TOK_HISTORY_END] = played.transpose(0, 2, 1) / deck[order][None, :, None]
+
     out = Features(tok.astype(np.float32), col.astype(np.float32), glob.astype(np.float32))
     out.check_finite()
     return out
@@ -462,7 +496,7 @@ def extract_one(sp: Spec, obs: Observation, ev: Evidence | None = None) -> Featu
 
 
 __all__ = [
-    "ARM_A", "ARM_B", "ARM_CRITIC", "ARMS", "EVALUATION_SCHEMA_VERSIONS",
+    "ARM_A", "ARM_B", "ARM_C", "ARM_CRITIC", "ARMS", "EVALUATION_SCHEMA_VERSIONS",
     "SCHEMA_VERSION", "Features", "Spec",
     "extract", "extract_one", "legal_mask", "legal_masks", "spec",
 ]  # fmt: skip

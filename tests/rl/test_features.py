@@ -69,7 +69,7 @@ def test_mask_detects_a_broken_extractor():
 # -- 2. the information boundary -----------------------------------------------
 
 
-@pytest.mark.parametrize("arm", [F.ARM_A, F.ARM_B])
+@pytest.mark.parametrize("arm", [F.ARM_A, F.ARM_B, F.ARM_C])
 def test_unseen_cards_and_seed_do_not_reach_the_actor(arm):
     """Contract section 5.2: change what the actor may not see; features must not move."""
     rs = FULL_UNO
@@ -109,6 +109,32 @@ def test_arm_a_ignores_history_beyond_its_declared_fields():
     assert np.array_equal(fa.glob, fb.glob[:, : a.glob_width])
 
 
+def test_arm_c_is_b_plus_the_opponent_play_history():
+    """B's channels are C's prefix, and C's extra channels carry the play history."""
+    rs = FULL_UNO
+    b, c = F.spec(rs, F.ARM_B), F.spec(rs, F.ARM_C)
+    states = decision_states(rs, range(8))[:80]
+    obs, ev = rows(rs, states)
+    fb, fc = F.extract(b, obs, ev), F.extract(c, obs, ev)
+    assert np.array_equal(fb.tok, fc.tok[:, :, : b.tok_width])
+    assert np.array_equal(fb.col, fc.col[:, :, : b.col_width])
+    assert np.array_equal(fb.glob, fc.glob)
+    assert fc.tok[:, :, F.TOK_HIST_PLAYED:F.TOK_HISTORY_END].any()
+    assert fc.col[:, :, F.COL_HIST_WILD:F.COL_HISTORY_END].any()
+    # the history reaches C only through the evidence it is handed
+    cleared = [e.copy() for e in ev]
+    for e in cleared:
+        e.hist_color[:] = 0.0
+        e.hist_played[:] = 0.0
+    fcc = F.extract(c, obs, cleared)
+    assert not fcc.tok[:, :, b.tok_width :].any() and not fcc.col[:, :, b.col_width :].any()
+
+
+def test_arm_c_exists_only_under_the_current_schema():
+    with pytest.raises(ValueError):
+        F.spec(FULL_UNO, F.ARM_C, version=2)
+
+
 def test_critic_is_b_plus_the_opponent_hand():
     """Contract section 3: the critic adds L2 hand multiplicities and nothing else."""
     rs = FULL_UNO
@@ -137,7 +163,7 @@ def test_critic_refuses_an_l1_observation():
 
 
 @pytest.mark.parametrize("rs", (TOY, MID_25, FULL_UNO))
-@pytest.mark.parametrize("arm", [F.ARM_A, F.ARM_B])
+@pytest.mark.parametrize("arm", [F.ARM_A, F.ARM_B, F.ARM_C])
 def test_batch_equals_row_at_a_time(rs, arm):
     sp = F.spec(rs, arm)
     states = decision_states(rs, range(6))[:50]
@@ -151,8 +177,9 @@ def test_batch_equals_row_at_a_time(rs, arm):
 
 
 @pytest.mark.parametrize("rs", RULESETS)
-def test_features_are_finite_and_bounded(rs):
-    sp = F.spec(rs, F.ARM_B)
+@pytest.mark.parametrize("arm", [F.ARM_B, F.ARM_C])
+def test_features_are_finite_and_bounded(rs, arm):
+    sp = F.spec(rs, arm)
     obs, ev = rows(rs, decision_states(rs, range(10)))
     f = F.extract(sp, obs, ev)
     f.check_finite()

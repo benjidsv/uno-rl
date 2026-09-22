@@ -35,7 +35,7 @@ def probs(actor_policy: ActorPolicy, rs, states) -> np.ndarray:
 
 
 @pytest.mark.parametrize("rs", (TOY, TOY2_SKIP, MID_25))
-@pytest.mark.parametrize("arm", (F.ARM_A, F.ARM_B))
+@pytest.mark.parametrize("arm", (F.ARM_A, F.ARM_B, F.ARM_C))
 def test_probabilities_are_equivariant_over_the_whole_group(rs, arm):
     sym = Symmetry(rs)
     pol = ActorPolicy(F.spec(rs, arm), small_actor(rs, arm, seed=4))

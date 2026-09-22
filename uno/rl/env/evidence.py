@@ -15,6 +15,17 @@ docs/rl/observation-contract.md section 2.2 and docs/rl/pipeline-plan.md section
 - the opponent's **most recent play**, as full card identity plus chosen color;
 - the **setup tail** still at the pile bottom and whether a reshuffle has happened.
 
+Arm C adds the opponent's **play history**, which B omits beyond the last play:
+per color, how often they named it with a wild, switched to it with a colored card,
+or followed it; and per card type, what they played. Each is an exponentially
+decayed count, `sum(gamma ** cards_drawn_since)` at every `HISTORY_DECAYS` rate. A
+play reveals something about the hand that played it (the rulebots score colour
+support), and the cards the opponent has drawn since are what make that stale --
+their later plays are known cards leaving the hand, which the played-card count
+already carries. Decay replaces bins here because these are soft preferences
+that accumulate, not facts about one board: repeats reinforce instead of
+colliding, and old events fade instead of dropping off an overflow bin.
+
 Voluntary draws are soft evidence (contract section 2.2): they restrict no
 legality and assert no void. `since` excludes the card drawn *at* the event, which
 matches the existing `uno.eval.belief.voids` signal, whose scope caveat carries
@@ -32,6 +43,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
+import numpy as np
+
 from uno.game.engine import Event
 from uno.game.rules import Kind, Ruleset
 
@@ -40,6 +53,10 @@ MAX_AGE = AGE_BINS - 1
 
 MULTIPLICITY_CAP = 8  # an evidence cell's count is exposed as min(count, 8) / 8
 COUNTER_CAP = 32  # penalty events/cards and draws-since-play are capped at 32
+
+HISTORY_DECAYS = np.array([0.5, 0.85])  # arm C: per card the opponent draws; fast and slow memory
+HIST_WILD, HIST_SWITCH, HIST_FOLLOW = 0, 1, 2  # how the opponent's play set the active color
+HIST_KINDS = 3
 
 
 def _is_penalty(rs: Ruleset, public: tuple[Event, ...], i: int) -> bool:
@@ -95,9 +112,23 @@ class Evidence:
     # board in force, needed to index a voluntary draw by what it was seen against
     top: int = -1
     color: int = -1
+    # arm C's decayed play history: (HIST_KINDS, decays, colors) and (decays, num_types)
+    hist_color: np.ndarray | None = None
+    hist_played: np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        if self.hist_color is None:
+            self.hist_color = np.zeros((HIST_KINDS, len(HISTORY_DECAYS), self.rs.colors))
+        if self.hist_played is None:
+            self.hist_played = np.zeros((len(HISTORY_DECAYS), self.rs.num_types))
 
     def copy(self) -> Evidence:
-        return replace(self, items=list(self.items))
+        return replace(
+            self,
+            items=list(self.items),
+            hist_color=self.hist_color.copy(),
+            hist_played=self.hist_played.copy(),
+        )
 
     # -- advancing ---------------------------------------------------------------
 
@@ -121,15 +152,26 @@ class Evidence:
                 self.top, self.color = ev[1], rs.card_types[ev[1]].color
             case "play":
                 _, p, card, color = ev
-                self.top, self.color = card, color
                 if p == self.opp:
                     self.last_play_card, self.last_play_color = card, color
                     self.drawn_since_opp_play = 0
+                    if rs.card_types[card].is_wild:
+                        kind = HIST_WILD
+                    elif color != self.color:
+                        kind = HIST_SWITCH
+                    else:
+                        kind = HIST_FOLLOW
+                    self.hist_color[kind, :, color] += 1.0
+                    self.hist_played[:, card] += 1.0
+                self.top, self.color = card, color
             case "draw":
                 _, p, n = ev
                 if p != self.opp:
                     return
                 penalty = _is_penalty(rs, public, i)
+                decay = HISTORY_DECAYS**n  # every drawn card, penalty or not, dilutes what a play showed
+                self.hist_color *= decay[None, :, None]
+                self.hist_played *= decay[:, None]
                 self.cum_opp_drawn += n
                 self.drawn_since_opp_play += n
                 if penalty:

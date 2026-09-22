@@ -16,7 +16,15 @@ from tests.rl.helpers import decision_games, decision_states
 from uno.game.observe import Level, observe
 from uno.game.rules import FULL_UNO, MID_25, TOY, TOY2_SKIP
 from uno.rl.env import features as F
-from uno.rl.env.evidence import MAX_AGE, Evidence, Item
+from uno.rl.env.evidence import (
+    HIST_FOLLOW,
+    HIST_SWITCH,
+    HIST_WILD,
+    HISTORY_DECAYS,
+    MAX_AGE,
+    Evidence,
+    Item,
+)
 
 RS = FULL_UNO
 OPP = 1  # evidence is always about the other seat
@@ -165,6 +173,47 @@ def test_last_opponent_play_keeps_identity_and_chosen_color():
     assert e2.last_play_card == -1  # our own play is not the opponent's
 
 
+# -- arm C's play history -----------------------------------------------------------
+
+
+def test_play_history_classifies_how_the_opponent_set_the_color():
+    e = ev([setup("c0r1"), play(OPP, "c0r2", 0), play(OPP, "c1r2", 1), play(OPP, "W", 3)])
+    fresh = e.hist_color[:, 0]  # (kinds, colors) at the fast decay; nothing drawn, so exact counts
+    assert fresh[HIST_FOLLOW, 0] == 1.0  # red on red
+    assert fresh[HIST_SWITCH, 1] == 1.0  # a matching rank moved it to color 1
+    assert fresh[HIST_WILD, 3] == 1.0  # a wild named color 3
+    assert fresh.sum() == 3.0
+    assert e.hist_played[0, tid(RS, "W")] == 1.0 and e.hist_played[0].sum() == 3.0
+
+
+def test_play_history_ignores_our_own_plays():
+    e = ev([setup("c0r1"), play(0, "W", 2), play(0, "c2r5", 2)])
+    assert not e.hist_color.any() and not e.hist_played.any()
+
+
+def test_play_history_decays_per_card_the_opponent_draws_penalties_included():
+    e = ev([setup("c0r1"), play(OPP, "W", 2), play(0, "c2+2", 2), ("draw", OPP, 2), ("draw", OPP, 1)])
+    want = HISTORY_DECAYS**3  # a two-card penalty and one voluntary card
+    assert np.allclose(e.hist_color[HIST_WILD, :, 2], want)
+    assert np.allclose(e.hist_played[:, tid(RS, "W")], want)
+    # our own draws do not age the opponent's history
+    same = ev([setup("c0r1"), play(OPP, "W", 2), ("draw", 0, 1)])
+    assert np.allclose(same.hist_color[HIST_WILD, :, 2], 1.0)
+
+
+def test_repeated_plays_reinforce_rather_than_collide():
+    e = ev([setup("c0r1"), play(OPP, "W", 2), play(0, "c2r1", 2), play(OPP, "W", 2)])
+    assert np.allclose(e.hist_color[HIST_WILD, :, 2], 2.0)
+
+
+def test_copy_does_not_share_history_arrays():
+    e = ev([setup("c0r1"), play(OPP, "W", 2)])
+    c = e.copy()
+    c.hist_color[:] = 0.0
+    c.hist_played[:] = 0.0
+    assert e.hist_color.any() and e.hist_played.any()
+
+
 # -- the setup tail ---------------------------------------------------------------
 
 
@@ -196,13 +245,16 @@ def test_incremental_update_equals_full_reconstruction(rs):
             assert incremental[p].drawn_since_opp_play == full.drawn_since_opp_play
             assert (incremental[p].last_play_card, incremental[p].last_play_color) == (full.last_play_card, full.last_play_color)
             assert incremental[p].reshuffles == full.reshuffles
+            assert np.array_equal(incremental[p].hist_color, full.hist_color)
+            assert np.array_equal(incremental[p].hist_played, full.hist_played)
             compared += 1
     assert compared > 100
 
 
 @pytest.mark.parametrize("rs", (TOY2_SKIP, FULL_UNO))
-def test_incremental_and_full_evidence_give_identical_features(rs):
-    sp = F.spec(rs, F.ARM_B)
+@pytest.mark.parametrize("arm", (F.ARM_B, F.ARM_C))
+def test_incremental_and_full_evidence_give_identical_features(rs, arm):
+    sp = F.spec(rs, arm)
     obs, inc, full = [], [], []
     for game in decision_games(rs, range(10)):
         incremental = {0: Evidence(rs, 1), 1: Evidence(rs, 0)}
