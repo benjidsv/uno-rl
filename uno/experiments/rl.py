@@ -255,95 +255,14 @@ def cmd_train(
     print(f"   {json.dumps(summary['cells'])}")
 
 
-def cmd_pilot(seed: int = 0) -> None:
-    """The frozen one-hour Stage 7 full-UNO B learning pilot."""
-    cmd_train(
-        ruleset="FULL_UNO",
-        arm=ARM_B,
-        seed=seed,
-        cap=500_000,
-        workers=1,
-        games_per_cell=64,
-        deals_per_cell=256,
-        device="cpu",
-        collection_threads=1,
-        update_threads=4,
-        n_minibatches=32,
-        time_cap_s=3_600,
-        evaluation_fraction=0.25,
-        tracking_study_id="stage7-full-uno-b-pilot",
-        tracking_kind="pilot",
-    )
-
-
-def cmd_ablation(arm: str = ARM_A, seed: int = 0) -> None:
-    """The frozen Stage 8 equal-data A/B representation comparison.
-
-    The two-hour wall cap is a safety bound, not the comparison budget. A valid
-    run reaches the 1,000,000-decision soft cap; a run stopped by time is incomplete
-    and must not be treated as equal-data evidence.
-    """
-    if arm not in (ARM_A, ARM_B):
-        raise SystemExit("the Stage 8 ablation arm must be A or B")
-    cmd_train(
-        ruleset="FULL_UNO",
-        arm=arm,
-        seed=seed,
-        cap=1_000_000,
-        workers=1,
-        games_per_cell=64,
-        deals_per_cell=256,
-        device="cpu",
-        collection_threads=1,
-        update_threads=4,
-        n_minibatches=32,
-        time_cap_s=7_500,
-        evaluation_fraction=0.25,
-        tracking_study_id="stage8-a-b-ablation",
-        tracking_kind="ablation-data",
-    )
-
-
-def cmd_experiment(arm: str = ARM_B, seed: int = 0) -> None:
-    if arm not in (ARM_A, ARM_B):
-        raise SystemExit("the Stage 8 ablation arm must be A or B")
-    cmd_train(
-        ruleset="FULL_UNO",
-        arm=arm,
-        seed=seed,
-        cap=108_000,
-        workers=1,
-        games_per_cell=64,
-        deals_per_cell=256,
-        device="auto",
-        collection_threads=1,
-        update_threads=6,
-        n_minibatches=32,
-        time_cap_s=60_000,
-        evaluation_fraction=0.016,
-        tracking_study_id="experimental",
-        tracking_kind="experimental-data",
-        mlflow_prefix="test-clr-1e-4--alr1e-4",
-        optim_overrides={
-            "normalize_advantages": True,
-            "entropy_coef": 0.01,
-            "actor_grad_norm": 0.5,
-            "actor_lr": 1e-4,
-            "actor_epochs": 4,
-            "critic_grad_norm": 0.5,
-            "critic_lr": 1e-4,
-        },
-    )
-
-
 def cmd_overnight(
-    arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "chillguy-gae95"
+    arm: str = ARM_A, seed: int = 0, mlflow_prefix: str = "chillguy-ablation"
 ) -> None:
     cmd_train(
         ruleset="FULL_UNO",
         arm=arm,
         seed=seed,
-        cap=10_000_000,
+        cap=5_000_000,
         workers=16,
         games_per_cell=64,
         deals_per_cell=1024,
