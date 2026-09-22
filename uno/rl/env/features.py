@@ -384,7 +384,10 @@ def _evidence_row(sp: Spec, obs: Observation, ev: Evidence, t, c, g, token_of_ty
 
     cells = Counter(_identity_ages(ev, sp.version))
     for (top, active, age), count in cells.items():
-        v = min(count, MULTIPLICITY_CAP) / MULTIPLICITY_CAP
+        if sp.version == 2:
+            v = min(count, MULTIPLICITY_CAP) / MULTIPLICITY_CAP
+        else:
+            v = 1.0
         tc = int(type_color[top])
         if tc < 0:  # a wild top has no color of its own
             t[token_of_type[top], TOK_EV_SAME + age] += v
@@ -397,16 +400,16 @@ def _evidence_row(sp: Spec, obs: Observation, ev: Evidence, t, c, g, token_of_ty
             c[active, COL_EV_ACTIVE + age] += v
             c[tc, COL_EV_TOP + age] += v
 
-    # Aggregates are compressed to [0, 1] by declared, permutation-blind constants.
-    # A token's block sums over at most `colors` cells, so dividing by that loses
-    # nothing; the color and global blocks sum over an unbounded number of distinct
-    # boards, so they are capped like the other counters. Caps are explicit
-    # compression choices to diagnose if B stalls (pipeline plan section 5).
-    t[:, TOK_EV_SAME:TOK_LAST_PLAY] /= sp.layout.colors
-    block = c[:, COL_EV_DIAG:COL_LAST_PLAY]
-    np.minimum(block, AGGREGATE_CAP, out=block)
-    block /= AGGREGATE_CAP
     if sp.version == 2:
+        # Aggregates are compressed to [0, 1] by declared, permutation-blind constants.
+        # A token's block sums over at most `colors` cells, so dividing by that loses
+        # nothing; the color and global blocks sum over an unbounded number of distinct
+        # boards, so they are capped like the other counters. Caps are explicit
+        # compression choices to diagnose if B stalls (pipeline plan section 5).
+        t[:, TOK_EV_SAME:TOK_LAST_PLAY] /= sp.layout.colors
+        block = c[:, COL_EV_DIAG:COL_LAST_PLAY]
+        np.minimum(block, AGGREGATE_CAP, out=block)
+        block /= AGGREGATE_CAP
         # Exact compatibility for the already-running schema-2 diagnostic. It
         # accidentally derived totals from its one representative and scaled by
         # both multiplicity and counter caps. Keep this only for explicit replay.
@@ -416,11 +419,13 @@ def _evidence_row(sp: Spec, obs: Observation, ev: Evidence, t, c, g, token_of_ty
     else:
         # Counts are independent of the representative board identities above. In
         # particular, the overflow total includes every 5+ item even though tok/col
-        # retain one joint board pair. These are ordinary counters: cap once, then
-        # scale once, like the penalty and draws-since-play fields below.
-        g[GLOB_EV_TOTAL:GLOB_EVIDENCE_END] = (
-            np.minimum(ev.age_counts(), COUNTER_CAP) / COUNTER_CAP
-        )
+        # retain one joint board pair. Ages 0-4 are exactly 0 or 1.
+        counts = ev.age_counts()
+        for age in range(AGE_BINS):
+            if age < AGE_BINS - 1:
+                g[GLOB_EV_TOTAL + age] = float(counts[age] > 0)
+            else:
+                g[GLOB_EV_TOTAL + age] = min(counts[age], COUNTER_CAP) / COUNTER_CAP
 
     if ev.last_play_card >= 0:
         t[token_of_type[ev.last_play_card], TOK_LAST_PLAY] = 1.0
