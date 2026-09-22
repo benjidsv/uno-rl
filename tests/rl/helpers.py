@@ -9,7 +9,7 @@ from uno.game.observe import Level, observe
 from uno.game.rules import Ruleset
 from uno.rl.evidence import Evidence
 from uno.rl.features import spec
-from uno.rl.model import Actor, Critic
+from uno.rl.model import make_actor, make_critic
 
 SMALL_WIDTH = 24  # tests check structure, not capacity
 
@@ -49,11 +49,13 @@ def small_actor(rs: Ruleset, arm: str, seed: int = 0) -> Actor:
     import torch
 
     torch.manual_seed(seed)
-    return Actor(spec(rs, arm), width=SMALL_WIDTH)
+    from uno.rl.config import RelationalModel
+    return make_actor(spec(rs, arm), RelationalModel(width=SMALL_WIDTH, blocks=2))
 
 
 def small_critic(rs: Ruleset, seed: int = 0) -> Critic:
     import torch
 
     torch.manual_seed(seed)
-    return Critic(spec(rs, "CRITIC"), width=SMALL_WIDTH)
+    from uno.rl.config import RelationalModel
+    return make_critic(spec(rs, "CRITIC"), RelationalModel(width=SMALL_WIDTH, blocks=2))

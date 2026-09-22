@@ -17,7 +17,7 @@ from uno.game.rules import TOY
 from uno.rl import features as F
 from uno.rl.collect import collect
 from uno.rl.manifest import DealSchedule, build
-from uno.rl.model import Actor
+from uno.rl.model import make_actor
 from uno.rl.opponents import league
 from uno.rl.parallel import ParallelCollector, WorkerConfig
 from uno.rl.policy import ActorPolicy
@@ -28,7 +28,8 @@ def test_parallel_collection_equals_the_single_worker_reference():
     rs = TOY
     torch.manual_seed(0)
     sp, spc = F.spec(rs, F.ARM_B), F.spec(rs, F.ARM_CRITIC)
-    actor = Actor(sp, width=SMALL_WIDTH)
+    from uno.rl.config import RelationalModel
+    actor = make_actor(sp, RelationalModel(width=SMALL_WIDTH, blocks=2))
     opponents = league(rs, "toy")
     manifest, _ = build(0, list(opponents), DealSchedule(0), 8, 0)
     reference, _ = collect(
@@ -38,8 +39,7 @@ def test_parallel_collection_equals_the_single_worker_reference():
     cfg = WorkerConfig(
         ruleset="TOY",
         arm=F.ARM_B,
-        width=SMALL_WIDTH,
-        blocks=2,
+        model_config={"kind": "relational", "width": SMALL_WIDTH, "blocks": 2},
         league="toy",
         training_seed=0,
         live_games=8,
@@ -70,8 +70,7 @@ def test_worker_config_names_its_thread_budget():
     cfg = WorkerConfig(
         ruleset="TOY",
         arm=F.ARM_B,
-        width=8,
-        blocks=1,
+        model_config={"kind": "relational", "width": 8, "blocks": 1},
         league="toy",
         training_seed=0,
         live_games=4,

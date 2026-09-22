@@ -82,14 +82,15 @@ def _config(
     precision: str = "fp32",
     evaluation_fraction: float = 0.1,
     optim_overrides: dict[str, object] | None = None,
-    width: int = 128,
-    blocks: int = 2,
+    model_config: dict | None = None,
 ) -> Config:
     optim = replace(Optim(), n_minibatches=n_minibatches, precision=precision)
     if optim_overrides:
         optim = replace(optim, **optim_overrides)
+    from uno.rl.config_io import model_from_dict
+    model = model_from_dict(model_config or {})
     return Config(
-        ruleset=ruleset, arm=arm, width=width, blocks=blocks, training_seed=seed, data_cap=cap, device=device,
+        ruleset=ruleset, arm=arm, model=model, training_seed=seed, data_cap=cap, device=device,
         collection=Collection(games_per_cell=games_per_cell, live_games_per_worker=live_games, workers=workers),
         evaluation=Evaluation(deals_per_cell=deals_per_cell, every_fraction=evaluation_fraction),
         optim=optim,
@@ -98,15 +99,16 @@ def _config(
 
 def cmd_shapes(ruleset: str = "FULL_UNO", arm: str = ARM_B) -> None:
     rs = NAMED[ruleset]
+    from uno.rl.config import ModelConfig
     sp, spc = spec(rs, arm), spec(rs, ARM_CRITIC)
-    sh = shapes(sp, spc)
+    sh = shapes(sp, spc, ModelConfig())
     print(f"\n== {ruleset} arm {arm}")
     print(f"   {sh}")
     print(
         f"   actor schema {sp.hash}, critic schema {spc.hash}, league {league_hash(rs, _league_for(ruleset))}"
     )
     other = ARM_A if arm == ARM_B else ARM_B
-    alt = shapes(spec(rs, other), spc)
+    alt = shapes(spec(rs, other), spc, ModelConfig())
     print(
         f"   {other}: {alt.actor_params:,} actor params ({sh.actor_params - alt.actor_params:+,} against {arm}; the arms share the position encoder's shape, not its width)"
     )
@@ -165,23 +167,7 @@ def cmd_train(
     mlflow_prefix: str = "",
     optim_overrides: dict[str, object] | None = None,
 ) -> None:
-    if collection_threads < 0 or update_threads < 0:
-        raise SystemExit(
-            "collection and update threads may be zero for the current default, or positive"
-        )
-    if (
-        n_minibatches < 1
-        or time_cap_s < 0
-        or not 0 < evaluation_fraction <= 1
-        or precision not in {"fp32", "bf16"}
-    ):
-        raise SystemExit(
-            "n_minibatches must be positive, time cap nonnegative, "
-            "evaluation fraction in (0, 1], and precision one of: fp32, bf16"
-        )
-    device = resolve_device(device)
-    if precision == "bf16" and not str(device).startswith("cuda"):
-        raise SystemExit("BF16 PPO precision requires a CUDA device")
+    from uno.rl.runner import TrainSpec, Execution, Tracking, run
     cfg = _config(
         ruleset,
         arm,
@@ -195,61 +181,20 @@ def cmd_train(
         precision=precision,
         evaluation_fraction=evaluation_fraction,
         optim_overrides=optim_overrides,
-        width=width,
-        blocks=blocks,
+        model_config={"width": width, "blocks": blocks},
     )
     if time_cap_s:
         cfg = cfg.with_(time_cap_s=time_cap_s)
-    out = (
-        Path("logs/rl")
-        / f"{ruleset}_{arm}_seed{seed}_nmb{n_minibatches}_{precision}_{device}_{int(time.time())}"
+        
+    spec = TrainSpec(
+        config=cfg,
+        league=_league_for(ruleset),
+        execution=Execution(collection_threads=collection_threads, update_threads=update_threads),
+        tracking=Tracking(study_id=tracking_study_id, kind=tracking_kind, name=mlflow_prefix),
     )
-    run = Run(cfg, out, _league_for(ruleset))
-    run.execution = {
-        **(
-            {"collection_torch_threads": collection_threads}
-            if collection_threads
-            else {}
-        ),
-        **({"update_torch_threads": update_threads} if update_threads else {}),
-    }
-    run.tracker = start_tracker(
-        run,
-        study_id=tracking_study_id,
-        kind=tracking_kind,
-        mlflow_prefix=mlflow_prefix,
-    )
-    print(
-        f"\n== train {ruleset} arm {arm} seed {seed}: cap {cap:,} learner decisions, {len(run.opponents)} opponents, "
-        f"{cfg.collection.games_per_cell} games/cell, n_minibatches {n_minibatches}, precision {precision}, device {device}, "
-        f"time cap {time_cap_s or 'disabled'}s, DEV every {100 * evaluation_fraction:g}% of the decision cap"
-    )
-    print(
-        f"   {shapes(spec(cfg.rs, arm), spec(cfg.rs, ARM_CRITIC), cfg.width, cfg.blocks)}"
-    )
-    print(f"   config {cfg.hash}; artifacts in {out}")
-    if not run.tracker.available:
-        print(f"   note: {run.tracker.unavailable_reason}")
-    else:
-        print(f"   MLflow run {run.tracker.run_id} in experiment uno-v5-rl")
-    collector = None
-    if workers > 1:
-        wc = WorkerConfig(
-            ruleset=ruleset,
-            arm=arm,
-            width=cfg.width,
-            blocks=cfg.blocks,
-            league=run.league_name,
-            training_seed=seed,
-            live_games=cfg.collection.live_games_per_worker,
-            temperature=cfg.optim.temperature,
-        )
-        collector = ParallelCollector(wc, workers)
-    try:
-        summary = train(run, run.tracker, collector)
-    finally:
-        if collector is not None:
-            collector.close()
+    
+    summary = run(spec)
+    
     print(
         f"\n   stop: {summary['stop_reason']}, {summary['updates']} updates, {summary['learner_decisions']:,} learner decisions, "
         f"{summary['active_seconds']:.0f}s active, {summary['wall_seconds']:.0f}s wall"
@@ -258,45 +203,61 @@ def cmd_train(
         f"   DEV-selected update {summary['selected_update']} at {summary['selected_score']:.4f}; final {summary['final_score']:.4f} "
         f"[{summary['final_ci95'][0]:.4f}, {summary['final_ci95'][1]:.4f}] (95% CI, DEV panel: descriptive, not confirmatory)"
     )
+    import json
     print(f"   {json.dumps(summary['cells'])}")
+
 
 
 def cmd_overnight(
     arm: str = ARM_B, seed: int = 0, mlflow_prefix: str = "fat-chillguy"
 ) -> None:
-    cmd_train(
-        ruleset="FULL_UNO",
-        arm=arm,
-        seed=seed,
-        cap=5_000_000,
-        workers=16,
-        games_per_cell=64,
-        deals_per_cell=1024,
-        device="cuda",
-        collection_threads=1,
-        update_threads=1,
-        n_minibatches=32,
-        time_cap_s=60_000,
-        evaluation_fraction=0.05,
-        precision="bf16",
-        tracking_study_id="overnight-experiment",
-        tracking_kind="overnight-data",
-        mlflow_prefix=mlflow_prefix,
-        optim_overrides={
-            "normalize_advantages": True,
-            # Actor
-            "actor_grad_norm": 0.5,
-            "actor_lr": 5e-5,
-            "entropy_coef": 0.01,
-            # Critic
-            "critic_grad_norm": 2.0,
-            "critic_lr": 3e-4,
-            "gae_lambda": 0.95,
-        },
-        # Model
-        width=256,
-        blocks=2,
+    from uno.rl.config_io import load_preset, override_seed, apply_overrides
+    from uno.rl.runner import run
+    
+    spec = load_preset("overnight")
+    spec = override_seed(spec, seed)
+    
+    spec_dict = {"tracking": {"name": mlflow_prefix}, "config": {"arm": arm}}
+    apply_overrides(spec_dict, [])
+    from dataclasses import replace
+    spec = replace(
+        spec, 
+        tracking=replace(spec.tracking, name=mlflow_prefix),
+        config=spec.config.with_(arm=arm)
     )
+    
+    summary = run(spec)
+    print(f"\n   stop: {summary['stop_reason']}, {summary['updates']} updates")
+
+def cmd_pilot(seed: int = 0) -> None:
+    from uno.rl.config_io import load_preset, override_seed
+    from uno.rl.runner import run
+    spec = load_preset("pilot")
+    spec = override_seed(spec, seed)
+    summary = run(spec)
+    print(f"\n   stop: {summary['stop_reason']}, {summary['updates']} updates")
+
+def cmd_ablation(arm: str = ARM_B, seed: int = 0) -> None:
+    from uno.rl.config_io import load_preset, override_seed
+    from uno.rl.runner import run
+    from dataclasses import replace
+    if arm not in {ARM_A, ARM_B}:
+        raise SystemExit("must be A or B")
+    spec = load_preset("ablation")
+    spec = override_seed(spec, seed)
+    spec = replace(spec, config=spec.config.with_(arm=arm))
+    summary = run(spec)
+    print(f"\n   stop: {summary['stop_reason']}, {summary['updates']} updates")
+
+def cmd_experiment(arm: str = ARM_B, seed: int = 0) -> None:
+    from uno.rl.config_io import load_preset, override_seed
+    from uno.rl.runner import run
+    from dataclasses import replace
+    spec = load_preset("experiment")
+    spec = override_seed(spec, seed)
+    spec = replace(spec, config=spec.config.with_(arm=arm))
+    summary = run(spec)
+    print(f"\n   stop: {summary['stop_reason']}, {summary['updates']} updates")
 
 
 def _panel_sizes(max_deals: int) -> tuple[int, ...]:
@@ -620,8 +581,7 @@ def cmd_resume(
             WorkerConfig(
                 ruleset=ruleset,
                 arm=arm,
-                width=cfg.width,
-                blocks=cfg.blocks,
+                model_config=__import__("dataclasses").asdict(cfg.model),
                 league=run.league_name,
                 training_seed=seed,
                 live_games=live_games,

@@ -1,0 +1,36 @@
+ruleset = "FULL_UNO"
+arm = "B"
+training_seed = 0
+device = "auto"
+data_cap = 1000000
+time_cap_s = 60000
+league = "rulebot"
+
+[collection]
+workers = 1
+games_per_cell = 64
+live_games_per_worker = 64
+
+[evaluation]
+deals_per_cell = 256
+every_fraction = 0.1
+
+[optim]
+n_minibatches = 32
+precision = "fp32"
+normalize_advantages = true
+entropy_coef = 0.01
+actor_grad_norm = 0.5
+actor_lr = 0.0001
+actor_epochs = 4
+critic_grad_norm = 0.5
+critic_lr = 0.0001
+
+[execution]
+collection_threads = 1
+update_threads = 6
+
+[tracking]
+study_id = "ablation"
+kind = "ablation-data"
+name = "ablation-run"

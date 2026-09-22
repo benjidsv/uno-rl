@@ -49,7 +49,7 @@ from uno.rl import ppo
 from uno.rl.collect import collect
 from uno.rl.config import Optim
 from uno.rl.manifest import DealSchedule, build
-from uno.rl.model import Actor, Critic
+from uno.rl.model import make_actor, make_critic
 from uno.rl.policy import ActorPolicy
 from uno.rl.streams import INIT, torch_seed
 from uno.rl.tabular import TabularActor, TabularPolicy
@@ -92,7 +92,8 @@ def gradient_check(ruleset: str = "TOY", opponent: str = "heuristic", games: int
     opp_sigma = _sigma(rs, opp)
     sp, spc = F.spec(rs, F.ARM_B), F.spec(rs, F.ARM_CRITIC)
     torch.manual_seed(torch_seed(seed, INIT))
-    actor, critic = Actor(sp, WIDTH), Critic(spc, WIDTH)
+    from uno.rl.config import RelationalModel
+    actor, critic = make_actor(sp, RelationalModel(width=WIDTH)), make_critic(spc, RelationalModel(width=WIDTH))
 
     t0 = time.perf_counter()
     g = exact.gradient(rs, sp, actor, opp_sigma, seat)
@@ -197,7 +198,8 @@ def tabular_gate(ruleset: str = "TOY", opponent: str = "heuristic", seeds: int =
 def _train_neural(rs, opponent, seat: int, seed: int, cap: int, games_per_iteration: int = 256, exact_mode: bool = False, verbose: bool = False, exact_steps: int = EXACT_STEPS, exact_lr: float = EXACT_LR) -> dict:
     sp, spc = F.spec(rs, F.ARM_B), F.spec(rs, F.ARM_CRITIC)
     torch.manual_seed(torch_seed(seed, INIT))
-    actor, critic = Actor(sp, WIDTH), Critic(spc, WIDTH)
+    from uno.rl.config import RelationalModel
+    actor, critic = make_actor(sp, RelationalModel(width=WIDTH)), make_critic(spc, RelationalModel(width=WIDTH))
     optim = Optim(minibatch=512, actor_epochs=4, critic_epochs=2)
     actor_opt = torch.optim.Adam(actor.parameters(), lr=exact_lr if exact_mode else optim.actor_lr, betas=optim.betas, eps=optim.eps)
     critic_opt = torch.optim.Adam(critic.parameters(), lr=optim.critic_lr, betas=optim.betas, eps=optim.eps)

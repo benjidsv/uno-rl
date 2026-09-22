@@ -25,7 +25,7 @@ from uno.rl import checkpoint as ckpt
 from uno.rl import evaluate as ev
 from uno.rl import features as F
 from uno.rl import manifest as mf
-from uno.rl.config import Collection, Config, Evaluation, Optim
+from uno.rl.config import Collection, Config, Evaluation, Optim, RelationalModel
 from uno.rl.opponents import league, league_hash
 from uno.rl.policy import ActorPolicy
 from uno.rl.track import Tracker
@@ -33,8 +33,8 @@ from uno.rl.train import Run, evaluate_now, iteration
 
 
 def toy_config(**kw) -> Config:
-    base = Config(ruleset="TOY", arm=F.ARM_B, width=SMALL_WIDTH, blocks=2, training_seed=0, data_cap=2000,
-                  optim=Optim(minibatch=64, actor_epochs=2, critic_epochs=2))  # fmt: skip
+    base = Config(ruleset="TOY", arm=F.ARM_B, model=RelationalModel(width=SMALL_WIDTH, blocks=2), training_seed=0, data_cap=2000,
+                  optim=Optim(n_minibatches=64, actor_epochs=2, critic_epochs=2))  # fmt: skip
     return base.with_(**kw) if kw else base
 
 
@@ -141,7 +141,7 @@ def test_current_full_uno_configuration_hash_is_pinned():
     )
     # Schema 3 makes the 5+ representative and its all-event count explicit.
     # Earlier B checkpoints are intentionally incompatible with this extractor.
-    assert cfg.hash == "d0f2232be3a2f8f3"
+    assert cfg.hash == "933facfac719a18f"
 
 
 
@@ -421,55 +421,6 @@ def test_selection_prefers_the_earlier_checkpoint_on_a_tie():
     assert ev.select([(0, 0.5), (1, 0.6), (2, 0.6)]) == (1, 0.6)
 
 
-def test_pilot_command_freezes_the_one_hour_preset(monkeypatch):
-    from uno.experiments import rl as experiment
-
-    captured = {}
-    monkeypatch.setattr(experiment, "cmd_train", lambda **kwargs: captured.update(kwargs))
-    experiment.cmd_pilot(seed=3)
-    assert captured == {
-        "ruleset": "FULL_UNO", "arm": F.ARM_B, "seed": 3, "cap": 500_000,
-        "workers": 1, "games_per_cell": 64, "deals_per_cell": 256,
-        "device": "cpu", "collection_threads": 1, "update_threads": 4,
-        "minibatch": 512, "time_cap_s": 3_600, "evaluation_fraction": 0.25,
-        "tracking_study_id": "stage7-full-uno-b-pilot", "tracking_kind": "pilot",
-    }
-
-
-def test_ablation_command_freezes_the_equal_data_preset(monkeypatch):
-    from uno.experiments import rl as experiment
-
-    captured = {}
-    monkeypatch.setattr(experiment, "cmd_train", lambda **kwargs: captured.update(kwargs))
-    experiment.cmd_ablation(arm=F.ARM_A, seed=3)
-    assert captured == {
-        "ruleset": "FULL_UNO", "arm": F.ARM_A, "seed": 3, "cap": 1_000_000,
-        "workers": 1, "games_per_cell": 64, "deals_per_cell": 256,
-        "device": "cpu", "collection_threads": 1, "update_threads": 4,
-        "minibatch": 512, "time_cap_s": 7_500, "evaluation_fraction": 0.25,
-        "tracking_study_id": "stage8-a-b-ablation",
-        "tracking_kind": "ablation-data",
-    }
-
-
-def test_ablation_command_refuses_non_feed_forward_arms():
-    from uno.experiments import rl as experiment
-
-    with pytest.raises(SystemExit, match="must be A or B"):
-        experiment.cmd_ablation(arm=F.ARM_CRITIC, seed=0)
-
-
-def test_overnight_command_passes_mlflow_prefix(monkeypatch):
-    from uno.experiments import rl as experiment
-
-    captured = {}
-    monkeypatch.setattr(experiment, "cmd_train", lambda **kwargs: captured.update(kwargs))
-    experiment.cmd_overnight(arm=F.ARM_B, seed=3, mlflow_prefix="overnight-")
-    assert captured["mlflow_prefix"] == "overnight-"
-    assert captured["tracking_study_id"] == "overnight-experiment"
-    assert captured["tracking_kind"] == "overnight-data"
-
-
 def test_training_reuses_a_boundary_evaluation_as_the_final_result(tmp_path):
     from uno.rl.train import train
 
@@ -669,7 +620,7 @@ def test_a_real_mlflow_run_records_tags_params_metrics_and_artifacts(tmp_path):
         "primary/normalized_entropy",
         "primary/effective_actions",
         "primary/approx_kl",
-        "primary/critic_pre_update_explained_variance",
+        "primary/critic_pre_update_mc_ev",
         "progress/games",
         "progress/engine_decisions",
         "actor/surrogate",
@@ -680,7 +631,7 @@ def test_a_real_mlflow_run_records_tags_params_metrics_and_artifacts(tmp_path):
         "actor/effective_actions",
         "critic/mse",
         "critic/value_loss",
-        "critic/post_update_same_rollout_explained_variance",
+        "critic/post_update_mc_ev",
         "critic/grad_clipped_fraction",
         "timing/collection_total_seconds",
         "timing/update_total_seconds",

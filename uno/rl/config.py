@@ -21,7 +21,19 @@ from dataclasses import asdict, dataclass, field, replace
 from uno.game.rules import NAMED, Ruleset
 from uno.rl.features import ARM_B, SCHEMA_VERSION
 
+from typing import Literal
+
 CONFIG_VERSION = 2
+
+
+@dataclass(frozen=True)
+class RelationalModel:
+    kind: Literal["relational"] = "relational"
+    width: int = 128
+    blocks: int = 2
+
+
+ModelConfig = RelationalModel
 
 
 @dataclass(frozen=True)
@@ -76,8 +88,7 @@ class Config:
 
     ruleset: str = "FULL_UNO"
     arm: str = ARM_B
-    width: int = 128
-    blocks: int = 2
+    model: ModelConfig = field(default_factory=RelationalModel)
     training_seed: int = 0
     device: str = "cpu"  # optimization device; collection is always CPU workers
     data_cap: int = 200_000  # learner decisions; a soft cap at iteration boundaries
@@ -154,6 +165,8 @@ __all__ = [
     "Config",
     "Evaluation",
     "Optim",
+    "RelationalModel",
+    "ModelConfig",
     "algorithm_hash",
     "algorithm_resolved",
 ]

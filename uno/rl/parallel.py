@@ -44,7 +44,7 @@ from uno.game.rules import NAMED
 from uno.rl.collect import Stats, collect
 from uno.rl.features import spec
 from uno.rl.manifest import Manifest
-from uno.rl.model import Actor
+from uno.rl.model import make_actor
 from uno.rl.opponents import league
 from uno.rl.policy import ActorPolicy
 from uno.rl.rollout import Builder, Rollout
@@ -138,8 +138,7 @@ def _merge(builder: Builder, payload: dict, episodes: dict) -> None:
 class WorkerConfig:
     ruleset: str
     arm: str
-    width: int
-    blocks: int
+    model_config: dict
     league: str
     training_seed: int
     live_games: int
@@ -158,7 +157,10 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
     os.environ.setdefault("OMP_NUM_THREADS", str(max(1, cfg.threads)))
     rs = NAMED[cfg.ruleset]
     actor_spec, critic_spec = spec(rs, cfg.arm), spec(rs, "CRITIC")
-    actor = Actor(actor_spec, cfg.width, cfg.blocks)
+    from uno.rl.config_io import model_from_dict
+
+    model_config = model_from_dict(cfg.model_config)
+    actor = make_actor(actor_spec, model_config)
     policy = ActorPolicy(actor_spec, actor, temperature=cfg.temperature, device="cpu")
     opponents = league(rs, cfg.league)
 
@@ -266,7 +268,7 @@ class ParallelCollector:
     def collect(
         self,
         manifest: Manifest,
-        actor: Actor,
+        actor: nn.Module,
         critic_spec,
         behavior_version: int,
         timeout: float = 600.0,

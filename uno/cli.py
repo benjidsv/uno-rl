@@ -25,6 +25,11 @@ def main(argv: list[str] | None = None) -> None:
             doc = (importlib.import_module(f"uno.experiments.{name}").__doc__ or "").strip().splitlines()
             print(f"  {name:14s} {doc[0] if doc else ''}")
         return
+    if argv[0] == "rl":
+        import uno.rl.cli
+        uno.rl.cli.main(argv[1:])
+        return
+
     if argv[0] not in names:
         raise SystemExit(f"unknown experiment {argv[0]!r}; `uno list` shows them")
     importlib.import_module(f"uno.experiments.{argv[0]}").main(argv[1:])

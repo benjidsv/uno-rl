@@ -31,7 +31,9 @@ def setup(rs=TOY, games_per_cell: int = 6, seed: int = 0, live: int = 8):
     opponents = {a.name: a for a in (PlayFirstRandom(rs), Heuristic(rs))}
     schedule = DealSchedule(training_seed=seed)
     manifest, _ = build(0, list(opponents), schedule, games_per_cell, 0)
-    rollout, stats = collect(manifest, ActorPolicy(sp, actor), spc, opponents, seed, 0, live_games=live)
+    rollout, stats = collect(
+        manifest, ActorPolicy(sp, actor), spc, opponents, seed, 0, live_games=live
+    )
     return actor, critic, rollout, stats, manifest
 
 
@@ -41,7 +43,9 @@ def setup(rs=TOY, games_per_cell: int = 6, seed: int = 0, live: int = 8):
 def test_the_manifest_is_completed_exactly_once_per_episode():
     _, _, rollout, stats, manifest = setup()
     assert rollout.n_games == len(manifest)
-    assert sorted(rollout.episode_id.tolist()) == [e.episode_id for e in manifest.episodes]
+    assert sorted(rollout.episode_id.tolist()) == [
+        e.episode_id for e in manifest.episodes
+    ]
     assert stats.games == len(manifest)
     assert set(rollout.deal_seed.tolist()) == {e.deal_seed for e in manifest.episodes}
 
@@ -50,9 +54,14 @@ def test_episodes_are_stored_in_logical_id_order_not_completion_order():
     _, _, rollout, _, _ = setup()
     assert np.all(np.diff(rollout.episode_id) > 0)
     for i in range(rollout.n_games):
-        rows = slice(int(rollout.offset[i]), int(rollout.offset[i] + rollout.learner_decisions[i]))
+        rows = slice(
+            int(rollout.offset[i]),
+            int(rollout.offset[i] + rollout.learner_decisions[i]),
+        )
         assert np.all(rollout.episode[rows] == i)
-        assert rollout.decision_index[rows].tolist() == list(range(int(rollout.learner_decisions[i])))
+        assert rollout.decision_index[rows].tolist() == list(
+            range(int(rollout.learner_decisions[i]))
+        )
 
 
 def test_cells_are_balanced_over_opponents_and_seats():
@@ -121,7 +130,9 @@ def test_rollout_rejects_a_short_manifest():
 
 def test_recomputed_log_probs_match_the_behavior_policy_at_frozen_weights():
     actor, _, rollout, _, _ = setup()
-    logp, _ = ppo.new_log_probs(actor, rollout.actor, rollout.masks, rollout.actions, 1.0, "cpu")
+    logp, _ = ppo.new_log_probs(
+        actor, rollout.actor, rollout.masks, rollout.actions, 1.0, "cpu"
+    )
     assert np.allclose(logp.detach().numpy(), rollout.old_logp, atol=1e-6)
 
 
@@ -135,21 +146,46 @@ def test_kl_keeps_the_collection_policy_as_its_frozen_reference():
     old_logp = rollout.old_logp.copy()
     with torch.no_grad():
         parameter = actor.score[-1].weight
-        parameter.add_(torch.linspace(0.0, 0.1, parameter.numel()).reshape_as(parameter))
-    new_logp, _ = ppo.new_log_probs(actor, rollout.actor, rollout.masks, rollout.actions, 1.0, "cpu")
+        parameter.add_(
+            torch.linspace(0.0, 0.1, parameter.numel()).reshape_as(parameter)
+        )
+    new_logp, _ = ppo.new_log_probs(
+        actor, rollout.actor, rollout.masks, rollout.actions, 1.0, "cpu"
+    )
     expected = 0.5 * np.mean((new_logp.detach().numpy() - old_logp) ** 2)
-    assert ppo.rollout_kl(actor, rollout, Optim()) == pytest.approx(expected, rel=1e-5, abs=1e-10)
+    assert ppo.rollout_kl(actor, rollout, Optim()) == pytest.approx(
+        expected, rel=1e-5, abs=1e-10
+    )
     assert np.array_equal(rollout.old_logp, old_logp)
 
 
 def test_rollout_actor_diagnostics_are_chunk_independent_and_cover_the_final_policy():
     actor, critic, rollout, _, _ = setup(rs=TOY2_SKIP, games_per_cell=5)
     adv = _adv(critic, rollout)
-    optim = Optim(minibatch=next(k for k in range(5, rollout.n_decisions) if rollout.n_decisions % k))
+    stats = ppo.update(
+        actor,
+        critic,
+        torch.optim.Adam(actor.parameters()),
+        torch.optim.Adam(critic.parameters()),
+        rollout,
+        Optim(n_minibatches=8, actor_epochs=1, critic_epochs=1),
+        0,
+        0,
+    )
+    assert stats.actor_steps == 8
+    optim = Optim(
+        n_minibatches=next(
+            k for k in range(5, rollout.n_decisions) if rollout.n_decisions % k
+        )
+    )
     with torch.no_grad():
         parameter = actor.score[-1].weight
-        parameter.add_(torch.linspace(0.0, 0.1, parameter.numel()).reshape_as(parameter))
-    whole = ppo.rollout_actor_diagnostics(actor, rollout, optim, adv, chunk=rollout.n_decisions)
+        parameter.add_(
+            torch.linspace(0.0, 0.1, parameter.numel()).reshape_as(parameter)
+        )
+    whole = ppo.rollout_actor_diagnostics(
+        actor, rollout, optim, adv, chunk=rollout.n_decisions
+    )
     chunked = ppo.rollout_actor_diagnostics(actor, rollout, optim, adv, chunk=7)
     assert chunked == pytest.approx(whole, rel=1e-5, abs=1e-6)
     assert whole["approx_kl"] > 0.0
@@ -172,7 +208,10 @@ def test_advantage_is_the_terminal_return_minus_the_frozen_baseline():
     adv = ppo.advantages(rollout, values)
     assert np.allclose(adv, rollout.returns_per_decision - values)
     for i in range(rollout.n_games):
-        rows = slice(int(rollout.offset[i]), int(rollout.offset[i] + rollout.learner_decisions[i]))
+        rows = slice(
+            int(rollout.offset[i]),
+            int(rollout.offset[i] + rollout.learner_decisions[i]),
+        )
         assert np.all(rollout.returns_per_decision[rows] == rollout.terminal_return[i])
 
 
@@ -206,7 +245,9 @@ def test_gamma_discounts_terminal_returns_by_remaining_learner_decisions():
     remaining = rollout.learner_decisions[rollout.episode] - rollout.decision_index - 1
     expected = rollout.terminal_return[rollout.episode] * np.power(0.5, remaining)
     assert np.allclose(got, expected)
-    assert np.array_equal(ppo.discounted_returns(rollout, 1.0), rollout.returns_per_decision)
+    assert np.array_equal(
+        ppo.discounted_returns(rollout, 1.0), rollout.returns_per_decision
+    )
 
 
 def test_value_clip_uses_the_more_conservative_value_loss():
@@ -217,7 +258,9 @@ def test_value_clip_uses_the_more_conservative_value_loss():
     clipped = ppo.critic_loss(prediction, target, old, 0.5)
     assert unclipped.item() == pytest.approx(4.0)
     assert clipped.item() == pytest.approx(4.0)
-    assert ppo.critic_loss(torch.tensor([0.25]), torch.tensor([1.0]), torch.tensor([0.0]), 0.1).item() == pytest.approx(0.81)
+    assert ppo.critic_loss(
+        torch.tensor([0.25]), torch.tensor([1.0]), torch.tensor([0.0]), 0.1
+    ).item() == pytest.approx(0.81)
 
 
 def test_minibatch_gradient_sums_to_the_full_batch_gradient():
@@ -255,27 +298,56 @@ def test_the_objective_is_a_decision_mean():
 def test_the_baseline_is_detached_from_the_actor_graph():
     actor, critic, rollout, _, _ = setup()
     adv = _adv(critic, rollout)
-    loss, _ = ppo.actor_loss(actor, rollout, np.arange(rollout.n_decisions), adv, Optim())
+    loss, _ = ppo.actor_loss(
+        actor, rollout, np.arange(rollout.n_decisions), adv, Optim()
+    )
     loss.backward()
     assert all(p.grad is None for p in critic.parameters())
-    assert any(p.grad is not None and float(p.grad.abs().sum()) > 0 for p in actor.parameters())
+    assert any(
+        p.grad is not None and float(p.grad.abs().sum()) > 0 for p in actor.parameters()
+    )
 
 
 def test_explained_variance_is_unavailable_rather_than_invented():
     actor, critic, rollout, _, _ = setup()
-    zeroed = Rollout(**{**rollout.__dict__, "terminal_return": np.zeros_like(rollout.terminal_return)})
-    stats = ppo.update(actor, critic, torch.optim.Adam(actor.parameters()), torch.optim.Adam(critic.parameters()), zeroed, Optim(actor_epochs=1, critic_epochs=1), 0, 0)
+    zeroed = Rollout(**{
+        **rollout.__dict__,
+        "terminal_return": np.zeros_like(rollout.terminal_return),
+    })
+    stats = ppo.update(
+        actor,
+        critic,
+        torch.optim.Adam(actor.parameters()),
+        torch.optim.Adam(critic.parameters()),
+        zeroed,
+        Optim(actor_epochs=1, critic_epochs=1),
+        0,
+        0,
+    )
     assert stats.critic_pre_update_mc_ev is None
     assert stats.critic_post_update_same_rollout_mc_ev is None
 
 
 def test_update_reports_steps_epochs_and_kl_and_fits_the_critic_to_completion():
     actor, critic, rollout, _, _ = setup()
-    optim = Optim(actor_epochs=4, critic_epochs=4, n_minibatches=32, target_kl=1e-6)  # force an early stop
+    optim = Optim(
+        actor_epochs=4, critic_epochs=4, n_minibatches=32, target_kl=1e-6
+    )  # force an early stop
     frozen_advantages = _adv(critic, rollout)
-    stats = ppo.update(actor, critic, torch.optim.Adam(actor.parameters(), lr=1e-2), torch.optim.Adam(critic.parameters(), lr=1e-2), rollout, optim, 0, 0)
+    stats = ppo.update(
+        actor,
+        critic,
+        torch.optim.Adam(actor.parameters(), lr=1e-2),
+        torch.optim.Adam(critic.parameters(), lr=1e-2),
+        rollout,
+        optim,
+        0,
+        0,
+    )
     assert stats.early_stopped and stats.actor_epochs == 1
-    assert stats.critic_epochs == 4, "critic fitting must complete even if actor epochs stop"
+    assert stats.critic_epochs == 4, (
+        "critic fitting must complete even if actor epochs stop"
+    )
     assert stats.actor_steps > 0 and stats.critic_steps > 0
     assert stats.kl_per_epoch and stats.approx_kl >= 0.0
     final = ppo.rollout_actor_diagnostics(actor, rollout, optim, frozen_advantages)
@@ -296,7 +368,7 @@ def test_update_reports_steps_epochs_and_kl_and_fits_the_critic_to_completion():
     assert stats.critic_update_seconds > 0
 
 
-def test_actor_kl_early_stop_is_checked_before_each_minibatch_step():
+def test_actor_kl_early_stop_is_checked_after_each_epoch():
     actor, critic, rollout, _, _ = setup()
     optim = Optim(actor_epochs=4, critic_epochs=1, n_minibatches=32, target_kl=1e-6)
     stats = ppo.update(
@@ -311,16 +383,26 @@ def test_actor_kl_early_stop_is_checked_before_each_minibatch_step():
     )
     assert stats.early_stopped
     assert stats.actor_epochs == 1
-    assert stats.actor_steps < int(np.ceil(rollout.n_decisions / optim.minibatch))
+    assert stats.actor_steps == optim.n_minibatches
 
 
 def test_update_is_reproducible_given_the_same_streams():
     def run():
         actor, critic, rollout, _, _ = setup(seed=7)
-        ppo.update(actor, critic, torch.optim.Adam(actor.parameters(), lr=1e-3), torch.optim.Adam(critic.parameters(), lr=1e-3), rollout, Optim(minibatch=32), 7, 0)
+        ppo.update(
+            actor,
+            critic,
+            torch.optim.Adam(actor.parameters(), lr=1e-3),
+            torch.optim.Adam(critic.parameters(), lr=1e-3),
+            rollout,
+            Optim(n_minibatches=32),
+            7,
+            0,
+        )
         return torch.cat([p.detach().reshape(-1) for p in actor.parameters()])
 
     assert torch.equal(run(), run())
+
 
 def _three_decision_rollout(reward: float = 1.0):
     rollout = SimpleNamespace(
@@ -345,6 +427,7 @@ def _three_decision_rollout(reward: float = 1.0):
 
     assert len(rollout.returns_per_decision) == 3
     return rollout
+
 
 def test_gae_lambda_one_matches_mc():
     rollout = _three_decision_rollout(reward=1.0)
@@ -371,9 +454,7 @@ def test_gae_lambda_one_matches_mc():
         gae_lambda=1.0,
     )
 
-    expected = torch.from_numpy(
-        ppo.discounted_returns(rollout, gamma)
-    )
+    expected = torch.from_numpy(ppo.discounted_returns(rollout, gamma))
 
     assert mc.shape == values.shape == expected.shape
 
@@ -398,9 +479,7 @@ def test_gae_lambda_one_matches_mc():
         gae_lambda=1.0,
     )
 
-    expected = torch.from_numpy(
-        ppo.discounted_returns(rollout, gamma)
-    )
+    expected = torch.from_numpy(ppo.discounted_returns(rollout, gamma))
 
     torch.testing.assert_close(mc.cpu(), expected)
     torch.testing.assert_close(targets.cpu(), expected)
@@ -449,13 +528,12 @@ def test_gae_lambda_one_matches_mc():
         gae_lambda=1.0,
     )
 
-    expected = torch.from_numpy(
-        ppo.discounted_returns(rollout, gamma)
-    )
+    expected = torch.from_numpy(ppo.discounted_returns(rollout, gamma))
 
     torch.testing.assert_close(targets.cpu(), expected)
     torch.testing.assert_close(mc.cpu(), expected)
     torch.testing.assert_close(adv.cpu(), expected - values.cpu())
+
 
 def test_gae_hand_computed():
     rollout = _three_decision_rollout(reward=1.0)
@@ -487,6 +565,7 @@ def test_gae_hand_computed():
             dtype=torch.float32,
         ),
     )
+
 
 def test_gae_does_not_cross_episode_boundaries():
     rollout = SimpleNamespace(

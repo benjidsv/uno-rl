@@ -1,0 +1,41 @@
+ruleset = "FULL_UNO"
+arm = "B"
+training_seed = 0
+device = "cuda"
+data_cap = 5000000
+time_cap_s = 60000
+league = "rulebot"
+
+[model]
+kind = "relational"
+width = 256
+blocks = 2
+
+[collection]
+workers = 16
+games_per_cell = 64
+live_games_per_worker = 64
+
+[evaluation]
+deals_per_cell = 1024
+every_fraction = 0.05
+
+[optim]
+n_minibatches = 32
+precision = "bf16"
+normalize_advantages = true
+entropy_coef = 0.01
+actor_grad_norm = 0.5
+actor_lr = 5e-5
+critic_grad_norm = 2.0
+critic_lr = 3e-4
+gae_lambda = 0.95
+
+[execution]
+collection_threads = 1
+update_threads = 1
+
+[tracking]
+study_id = "overnight-experiment"
+kind = "overnight-data"
+name = "fat-chillguy"

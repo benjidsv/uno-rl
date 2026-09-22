@@ -44,7 +44,7 @@ from uno.rl import ppo
 from uno.rl.collect import collect
 from uno.rl.config import Config
 from uno.rl.features import spec
-from uno.rl.model import Actor, Critic, shapes
+from uno.rl.model import make_actor, make_critic, shapes
 from uno.rl.opponents import league, league_hash
 from uno.rl.policy import ActorPolicy
 from uno.rl.streams import INIT, STREAM_VERSION, torch_seed
@@ -219,8 +219,8 @@ class Run:
     config: Config
     directory: Path
     league_name: str = "rulebot"
-    actor: Actor = None
-    critic: Critic = None
+    actor: nn.Module = None
+    critic: nn.Module = None
     actor_opt: torch.optim.Optimizer = None
     critic_opt: torch.optim.Optimizer = None
     progress: ckpt.Progress = field(default_factory=ckpt.Progress)
@@ -235,12 +235,12 @@ class Run:
         rs = cfg.rs
         self.directory = Path(self.directory)
         torch.manual_seed(torch_seed(cfg.training_seed, INIT))
-        self.actor = self.actor or Actor(spec(rs, cfg.arm), cfg.width, cfg.blocks).to(
+        self.actor = self.actor or make_actor(spec(rs, cfg.arm), cfg.model).to(
             cfg.device
         )
-        self.critic = self.critic or Critic(
-            spec(rs, "CRITIC"), cfg.width, cfg.blocks
-        ).to(cfg.device)
+        self.critic = self.critic or make_critic(spec(rs, "CRITIC"), cfg.model).to(
+            cfg.device
+        )
         o = cfg.optim
         self.actor_opt = self.actor_opt or torch.optim.Adam(
             self.actor.parameters(),
@@ -291,7 +291,7 @@ def start_tracker(
         **cfg.resolved(), "config_hash": cfg.hash, "algorithm_hash": cfg.algorithm_hash,
         "stream_version": STREAM_VERSION,
         "league_hash": league_hash(cfg.rs, run.league_name), "actor_schema": spec(cfg.rs, cfg.arm).hash,
-        "critic_schema": spec(cfg.rs, "CRITIC").hash, "shapes": str(shapes(spec(cfg.rs, cfg.arm), spec(cfg.rs, "CRITIC"), cfg.width, cfg.blocks)),
+        "critic_schema": spec(cfg.rs, "CRITIC").hash, "shapes": str(shapes(spec(cfg.rs, cfg.arm), spec(cfg.rs, "CRITIC"), cfg.model)),
         **provenance(cfg.hash),
         **{f"execution_{k}": v for k, v in run.execution.items()},
     }  # fmt: skip
@@ -390,7 +390,7 @@ def _iteration(
         if cfg.device == "cpu":
             policy = run.policy
         else:
-            actor_cpu = Actor(spec(rs, cfg.arm), cfg.width, cfg.blocks)
+            actor_cpu = make_actor(spec(rs, cfg.arm), cfg.model)
             actor_cpu.load_state_dict({
                 k: v.detach().cpu() for k, v in run.actor.state_dict().items()
             })

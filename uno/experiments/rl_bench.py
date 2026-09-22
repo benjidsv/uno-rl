@@ -200,8 +200,7 @@ def make_collector(
     wc = WorkerConfig(
         ruleset=ruleset,
         arm=arm,
-        width=cfg.width,
-        blocks=cfg.blocks,
+        model_config=__import__("dataclasses").asdict(cfg.model),
         league="rulebot",
         training_seed=seed,
         live_games=cfg.collection.live_games_per_worker,
@@ -234,10 +233,10 @@ def collect_frozen_rollout(run: Run, collector, cfg: Config) -> Rollout:
     if cfg.device == "cpu":
         policy = run.policy
     else:
-        from uno.rl.model import Actor
+        from uno.rl.model import make_actor
         from uno.rl.policy import ActorPolicy
 
-        actor_cpu = Actor(spec(cfg.rs, cfg.arm), cfg.width, cfg.blocks)
+        actor_cpu = make_actor(spec(cfg.rs, cfg.arm), cfg.model)
         actor_cpu.load_state_dict({
             k: v.detach().cpu() for k, v in run.actor.state_dict().items()
         })

@@ -39,7 +39,7 @@ import torch
 
 from uno.rl.config import Config, algorithm_hash
 from uno.rl.features import spec
-from uno.rl.model import Actor, Critic
+import torch.nn as nn
 from uno.rl.opponents import league_hash
 from uno.rl.streams import STREAM_VERSION
 
@@ -83,8 +83,8 @@ def _cpu_state(module) -> dict:
 def save(
     path: str | Path,
     config: Config,
-    actor: Actor,
-    critic: Critic,
+    actor: nn.Module,
+    critic: nn.Module,
     actor_opt: torch.optim.Optimizer,
     critic_opt: torch.optim.Optimizer,
     progress: Progress,
@@ -155,7 +155,7 @@ def verify(path: str | Path) -> bool:
     return manifest["checksum"] == _checksum(path)
 
 
-def restore(payload: dict, config: Config, actor: Actor, critic: Critic, actor_opt=None, critic_opt=None, device: str = "cpu") -> Progress:
+def restore(payload: dict, config: Config, actor: nn.Module, critic: nn.Module, actor_opt=None, critic_opt=None, device: str = "cpu") -> Progress:
     """Load into live objects, refusing an incompatible branch.
 
     Device, worker count and artifact paths may change freely; the observation
@@ -195,7 +195,7 @@ def _remap(opt: torch.optim.Optimizer, device: str) -> None:
                 state[k] = v.to(device)
 
 
-def export_actor(path: str | Path, config: Config, actor: Actor, name: str, progress: Progress) -> dict:
+def export_actor(path: str | Path, config: Config, actor: nn.Module, name: str, progress: Progress) -> dict:
     """A small actor-only export for evaluation and deployment: no critic, no
     optimizer state, no training metadata that could become actor input."""
     path = Path(path)
@@ -206,8 +206,7 @@ def export_actor(path: str | Path, config: Config, actor: Actor, name: str, prog
         "name": name,
         "ruleset_repr": repr(rs),
         "arm": config.arm,
-        "width": config.width,
-        "blocks": config.blocks,
+        "model": __import__("dataclasses").asdict(config.model),
         "temperature": config.optim.temperature,
         "actor_schema": spec(rs, config.arm).hash,
         "actor": _cpu_state(actor),
@@ -247,7 +246,15 @@ def load_actor(path: str | Path, rs=None):
             "actor export's feature schema differs; evaluate it with its original "
             "versioned extractor rather than silently changing the policy"
         )
-    actor = Actor(sp, payload["width"], payload["blocks"])
+    from uno.rl.config_io import model_from_dict
+    from uno.rl.model import make_actor
+    if "width" in payload or "blocks" in payload:
+        model_dict = {"kind": "relational"}
+        if "width" in payload: model_dict["width"] = payload["width"]
+        if "blocks" in payload: model_dict["blocks"] = payload["blocks"]
+    else:
+        model_dict = payload.get("model", {})
+    actor = make_actor(sp, model_from_dict(model_dict))
     actor.load_state_dict(payload["actor"])
     return NeuralAgent(ActorPolicy(sp, actor, payload["temperature"]), payload["name"]), payload
 

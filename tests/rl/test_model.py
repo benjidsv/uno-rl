@@ -188,11 +188,13 @@ def test_actor_and_critic_share_no_parameters():
 
 
 def test_arm_a_and_b_share_the_position_encoder_shape_and_differ_only_in_width():
+    from uno.rl.config import RelationalModel
     from uno.rl.model import shapes
 
     rs = TOY
-    a = shapes(F.spec(rs, F.ARM_A), F.spec(rs, F.ARM_CRITIC))
-    b = shapes(F.spec(rs, F.ARM_B), F.spec(rs, F.ARM_CRITIC))
+    model = RelationalModel(width=128, blocks=2)
+    a = shapes(F.spec(rs, F.ARM_A), F.spec(rs, F.ARM_CRITIC), model)
+    b = shapes(F.spec(rs, F.ARM_B), F.spec(rs, F.ARM_CRITIC), model)
     assert (a.tokens, a.colors, a.slots, a.wilds) == (b.tokens, b.colors, b.slots, b.wilds)
     assert a.actor_params < b.actor_params  # reported, not claimed equal
     assert a.critic_params == b.critic_params
