@@ -293,6 +293,21 @@ class Run:
         )
 
 
+def _eager_policy(run: Run) -> ActorPolicy:
+    """The run's policy on its device, never through a compiled forward.
+
+    Evaluation is inference only, where compiling buys little; and compiling the
+    evaluation graph while the pool-evaluation thread ran is where a compiled run
+    hung. An uncompiled replica keeps evaluation independent of `compile_models`.
+    """
+    if not getattr(run.actor, "_uno_compiled", False):
+        return run.policy
+    cfg = run.config
+    replica = make_actor(spec(cfg.rs, cfg.arm), cfg.model).to(cfg.device)
+    replica.load_state_dict(run.actor.state_dict())
+    return ActorPolicy(spec(cfg.rs, cfg.arm), replica, cfg.optim.temperature, cfg.device)
+
+
 def compile_models(run: Run) -> None:
     """`torch.compile` the actor and critic forwards: an execution setting only.
 
@@ -311,6 +326,10 @@ def compile_models(run: Run) -> None:
     """
     import torch._inductor.config as inductor
 
+    # triton-windows 3.8 prints a "remark: ... instructions in function" line per
+    # compiled kernel from native code (triton-windows issue #54); it is noise only
+    # during compilation and is deliberately not filtered: redirecting fd 2 broke
+    # Python's console stderr on Windows.
     inductor.emulate_precision_casts = True
     dynamic = True
     if sys.platform == "win32" and shutil.which("cl") is None:
@@ -703,7 +722,7 @@ def evaluate_now(run: Run, collector=None) -> ev.PanelResult:
     if collector is not None:
         _discard_prefetch(run)  # the pool runs one kind of work at a time
         with bar(total=len(run.panel), desc="DEV evaluation", unit="games") as progress:
-            local = None if run.config.device == "cpu" else run.policy
+            local = None if run.config.device == "cpu" else _eager_policy(run)
             return collector.evaluate(
                 run.panel, run.actor, run.progress.update, on_games=progress.update,
                 local_policy=local, local_share=EVAL_LOCAL_SHARE,
@@ -716,7 +735,7 @@ def evaluate_now(run: Run, collector=None) -> ev.PanelResult:
         with bar(total=len(run.panel), desc="DEV evaluation", unit="games") as progress:
             return ev.play_panel(
                 run.panel,
-                run.policy,
+                _eager_policy(run),
                 run.opponents,
                 run.config.training_seed,
                 on_games=progress.update,

@@ -454,13 +454,24 @@ class ParallelCollector:
         )
         entries: list = []
         behavior = Behavior()
+        # Progress is reported only from the calling thread: the pool thread just
+        # counts. (A compiled-model hang was observed with both threads touching
+        # tqdm; keeping UI calls on one thread rules that interaction out.)
+        finished = [0, 0]  # games finished by the pool, games already reported
+        count_lock = threading.Lock()
 
         def on_result(bundle_id, payload, _) -> None:
             part_entries, part_behavior = payload
             entries.extend(part_entries)
             behavior.merge(part_behavior)
-            if on_games is not None:
-                on_games(len(part_entries))
+            with count_lock:
+                finished[0] += len(part_entries)
+
+        def report(local_games: int = 0) -> None:
+            with count_lock:
+                new, finished[1] = finished[0] - finished[1], finished[0]
+            if on_games is not None and new + local_games:
+                on_games(new + local_games)
 
         pooled: dict = {}
 
@@ -478,9 +489,10 @@ class ParallelCollector:
         if local:
             local_result = play_episodes(
                 local, local_policy, league(NAMED[self.cfg.ruleset], self.cfg.league),
-                self.cfg.training_seed, self.cfg.live_games, on_games,
+                self.cfg.training_seed, self.cfg.live_games, report,
             )  # fmt: skip
         thread.join()
+        report()
         if "error" in pooled:
             raise pooled["error"]
         bundles, retried, state = pooled["run"]
@@ -499,6 +511,7 @@ class ParallelCollector:
                     ),
                     None,
                 )  # fmt: skip
+                report()
         return panel_result(manifest, entries, behavior)
 
 
