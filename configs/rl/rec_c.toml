@@ -1,0 +1,49 @@
+# Arm C with the recurrent actor (`uno.rl.model.recurrent`): does the extra hand
+# information rec-C recovers in `belief_ceiling` translate into score under PPO?
+# The overnight settings otherwise, so a rel-C run with `model.kind = "relational"`
+# and the same seed is the paired baseline. To start from a trained rel-C run
+# instead, set `model.init_from` to its training checkpoint (same width/blocks).
+ruleset = "FULL_UNO"
+arm = "C"
+training_seed = 0
+device = "cuda"
+data_cap = 5000000
+time_cap_s = 60000
+league = "rulebot"
+
+[model]
+kind = "recurrent"
+width = 256
+blocks = 2
+memory = 64
+events = 32
+
+[collection]
+workers = 12
+games_per_cell = 64
+live_games_per_worker = 64
+
+[evaluation]
+deals_per_cell = 1024
+every_fraction = 0.05
+
+[optim]
+n_minibatches = 32
+precision = "bf16"
+normalize_advantages = true
+entropy_coef = 0.01
+actor_grad_norm = 0.5
+actor_lr = 5e-5
+critic_grad_norm = 2.0
+critic_lr = 3e-4
+gae_lambda = 0.95
+
+[execution]
+collection_threads = 1
+update_threads = 1
+compile = true
+
+[tracking]
+study_id = "recurrent"
+kind = "rec-c"
+name = "rec-c"

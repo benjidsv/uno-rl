@@ -6,7 +6,7 @@ from pathlib import Path
 from uno.rl.core.config import Config
 from uno.rl.core.device import resolve_device
 from uno.rl.algo.parallel import ParallelCollector, WorkerConfig
-from uno.rl.algo.train import Run, train, start_tracker
+from uno.rl.algo.train import Run, train, start_tracker, warm_start
 from uno.rl.eval.opponents import league
 
 
@@ -96,6 +96,7 @@ def run(spec: TrainSpec) -> dict:
         directory,
         league_name=spec.league,
     )
+    warm_start(training)
 
     training.execution = {
         "collection_torch_threads": spec.execution.collection_threads,

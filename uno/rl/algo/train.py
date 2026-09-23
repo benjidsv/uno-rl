@@ -54,7 +54,7 @@ from uno.rl.algo import ppo
 from uno.rl.algo.collect import collect
 from uno.rl.core.config import Config
 from uno.rl.env.features import spec
-from uno.rl.model import make_actor, make_critic, shapes
+from uno.rl.model import is_recurrent, make_actor, make_critic, shapes
 from uno.rl.eval.opponents import league, league_hash
 from uno.rl.algo.policy import ActorPolicy
 from uno.rl.algo.parallel import cpu_state
@@ -293,6 +293,31 @@ class Run:
         )
 
 
+def warm_start(run: Run) -> None:
+    """Start a fresh recurrent run from a relational run's checkpoint (`init_from`).
+
+    The critic is loaded as is and the actor with zero weights on memory and events,
+    so the first policy is exactly the source's. Only fresh runs call this: a resume
+    restores its own weights and does not need the source checkpoint.
+    """
+    source = getattr(run.config.model, "init_from", None)
+    if not source:
+        return
+    payload = ckpt.load(source)
+    cfg = run.config
+    saved = payload["config"]
+    if saved["arm"] != cfg.arm or saved["ruleset"] != cfg.ruleset:
+        raise ValueError(f"init_from is arm {saved['arm']} on {saved['ruleset']}, not arm {cfg.arm} on {cfg.ruleset}")
+    if payload["actor_schema"] != spec(cfg.rs, cfg.arm).hash or payload["critic_schema"] != spec(cfg.rs, "CRITIC").hash:
+        raise ValueError("init_from's feature schemas differ from this run's")
+    model = saved.get("model", {})
+    if model.get("kind", "relational") != "relational" or (model.get("width"), model.get("blocks")) != (cfg.model.width, cfg.model.blocks):
+        raise ValueError(f"init_from must be a relational run of width {cfg.model.width} and {cfg.model.blocks} blocks, got {model}")
+    run.actor.load_feedforward({k: v.to(cfg.device) for k, v in payload["actor"].items()})
+    run.critic.load_state_dict(payload["critic"])
+    run.lineage = {**run.lineage, "init_from": str(source), "init_from_decisions": payload["progress"]["learner_decisions"]}
+
+
 def _eager_policy(run: Run) -> ActorPolicy:
     """The run's policy on its device, never through a compiled forward.
 
@@ -341,7 +366,9 @@ def compile_models(run: Run) -> None:
         dynamic = None
     for model in (run.actor, run.critic):
         if not getattr(model, "_uno_compiled", False):
-            model.forward = torch.compile(model.forward, dynamic=dynamic)
+            # A recurrent actor's forward is a host loop over decisions: compile its step.
+            name = "_step" if is_recurrent(model) else "forward"
+            setattr(model, name, torch.compile(getattr(model, name), dynamic=dynamic))
             model._uno_compiled = True
 
 

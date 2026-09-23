@@ -50,6 +50,7 @@ from uno.game.rules import NAMED
 from uno.rl.algo.collect import Stats, collect
 from uno.rl.env.features import spec
 from uno.rl.core.manifest import Manifest
+from uno.rl.env.events import event_width
 from uno.rl.model import make_actor
 from uno.rl.eval.opponents import league
 from uno.rl.algo.policy import ActorPolicy
@@ -72,6 +73,7 @@ def _payload(rollout: Rollout) -> dict:
         "episode_id": rollout.episode_id, "terminal_return": rollout.terminal_return,
         "end_reason": rollout.end_reason, "engine_decisions": rollout.engine_decisions,
         "learner_decisions": rollout.learner_decisions, "offset": rollout.offset,
+        "events": rollout.events if rollout.events is not None else np.zeros((rollout.n_decisions, 0), np.float32),
     }  # fmt: skip
 
 
@@ -93,6 +95,7 @@ _ARRAY_FIELDS = (
     "learner_decisions",
     "offset",
     "engine_decisions",
+    "events",
 )
 
 
@@ -365,6 +368,7 @@ class ParallelCollector:
             critic_spec,
             behavior_version,
             decision_capacity=max(1024, len(manifest) * 16),
+            event_width=event_width(rs) if self.cfg.model_config.get("kind") == "recurrent" else 0,
         )
         stats = Stats()
         t0 = time.perf_counter()

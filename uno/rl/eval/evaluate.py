@@ -273,7 +273,7 @@ def play_episodes(
     while True:
         while queue and len(active) < live_games:
             episode = queue.pop(0)
-            active.append(LiveGame(rs, episode, opponents[episode.opponent]))
+            active.append(LiveGame(rs, episode, opponents[episode.opponent], actor.new_memory(episode.seat)))
         if not active:
             break
         ready, done = [], []
@@ -297,7 +297,9 @@ def play_episodes(
         obs_actor = [p[1] if spec.has_opponent else p[0] for p in obs_pairs]
         masks = np.stack([legal_mask(rs, o) for o in obs_l1])
         feats = extract(spec, obs_actor, [g.evidence for g in active] if spec.has_evidence else None)
-        log_probs = actor.log_probs(feats, masks)
+        memories = [g.memory for g in active] if actor.recurrent else None
+        events = actor.observe_events(memories, obs_l1) if actor.recurrent else None
+        log_probs = actor.log_probs(feats, masks, None, events, memories)
         entropies = entropy_from_log_probs(torch.from_numpy(log_probs)).numpy()
         us = np.fromiter((uniform(training_seed, EVAL, g.episode.episode_id, g.decision_index) for g in active), dtype=np.float64, count=len(active))
         chosen = actor.sample(log_probs, us)

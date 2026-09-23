@@ -24,7 +24,7 @@ import numpy as np
 
 from uno.rl.env.features import Features, Spec
 
-ROLLOUT_SCHEMA = 1
+ROLLOUT_SCHEMA = 2  # 2: per-decision event rows for recurrent actors
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,10 @@ class Rollout:
     # (T,) int64 information-set ids, or all -1. Only a tabular actor
     # (`uno.rl.eval.tabular`) needs them; a network reads its features instead.
     set_id: np.ndarray | None = None
+    # (T, event_width) float32 count tables of the events since the previous decision
+    # (`uno.rl.env.events`), for a recurrent actor only; None for a feed-forward one.
+    # The actor's memory is not stored: PPO rebuilds it from each episode's start.
+    events: np.ndarray | None = None
     schema: int = ROLLOUT_SCHEMA
 
     @property
@@ -78,7 +82,7 @@ class Rollout:
     def nbytes(self) -> int:
         arrays = (self.actor.tok, self.actor.col, self.actor.glob, self.critic.tok, self.critic.col, self.critic.glob,
                   self.masks, self.actions, self.old_logp, self.episode, self.decision_index)  # fmt: skip
-        return int(sum(a.nbytes for a in arrays))
+        return int(sum(a.nbytes for a in arrays)) + (0 if self.events is None else self.events.nbytes)
 
     def validate(self) -> None:
         """Structural checks the plan requires before an update touches the batch."""
@@ -88,6 +92,8 @@ class Rollout:
                 raise ValueError(f"{name} has {len(a)} rows, expected {t}")
         if len(self.actor) != t or len(self.critic) != t:
             raise ValueError("feature rows do not match the decision count")
+        if self.events is not None and (len(self.events) != t or not np.isfinite(self.events).all()):
+            raise ValueError("event rows do not match the decision count or are not finite")
         if self.n_games and int(self.learner_decisions.sum()) != t:
             raise ValueError("per-episode learner decision counts do not sum to the rows")
         ids = self.episode_id
@@ -125,8 +131,10 @@ class Builder:
     Python list entry or a per-row tuple.
     """
 
-    def __init__(self, actor_spec: Spec, critic_spec: Spec, behavior_version: int, decision_capacity: int = 1024) -> None:
+    def __init__(self, actor_spec: Spec, critic_spec: Spec, behavior_version: int, decision_capacity: int = 1024,
+                 event_width: int = 0) -> None:
         self.actor_spec, self.critic_spec, self.behavior_version = actor_spec, critic_spec, behavior_version
+        self.event_width = event_width  # 0: a feed-forward actor, no event rows
         if decision_capacity < 1:
             raise ValueError("decision_capacity must be positive")
         self._capacity = decision_capacity
@@ -135,9 +143,12 @@ class Builder:
         self._episodes: dict[int, dict] = {}
         self._payloads: list[dict] = []
 
-    def add_decision(self, episode_id: int, decision_index: int, actor: Features, critic: Features, mask: np.ndarray, action: int, old_logp: float, set_id: int = -1) -> None:
+    def add_decision(self, episode_id: int, decision_index: int, actor: Features, critic: Features, mask: np.ndarray, action: int, old_logp: float, set_id: int = -1,
+                     events: np.ndarray | None = None) -> None:
         if self._payloads:
             raise ValueError("cannot mix row-wise and bulk rollout ingestion")
+        if (events is None) != (self.event_width == 0) or (events is not None and events.shape != (self.event_width,)):
+            raise ValueError(f"expected {'no event row' if self.event_width == 0 else f'an event row of width {self.event_width}'}")
         if len(actor) != 1 or len(critic) != 1:
             raise ValueError("add_decision expects one actor and critic feature row")
         self._ensure_capacity(self._n_rows + 1, actor, critic)
@@ -155,6 +166,8 @@ class Builder:
         self._arrays["episode_id"][i] = episode_id
         self._arrays["decision_index"][i] = decision_index
         self._arrays["set_id"][i] = set_id
+        if events is not None:
+            self._arrays["events"][i] = events
         self._n_rows += 1
 
     def _ensure_capacity(self, required: int, actor: Features, critic: Features) -> None:
@@ -177,6 +190,7 @@ class Builder:
             "episode_id": np.empty(self._capacity, dtype=np.int64),
             "decision_index": np.empty(self._capacity, dtype=np.int32),
             "set_id": np.empty(self._capacity, dtype=np.int64),
+            "events": np.empty((self._capacity, self.event_width), dtype=np.float32),
         }
         if old is not None:
             for name, array in self._arrays.items():
@@ -264,6 +278,8 @@ class Builder:
             episode=np.repeat(np.arange(len(ids), dtype=np.int32), counts) if ids else np.zeros(0, np.int32),
             decision_index=np.zeros(0, np.int32) if not t else self._arrays["decision_index"][row_order],
             set_id=np.zeros(0, np.int64) if not t else self._arrays["set_id"][row_order],
+            events=None if not self.event_width else (
+                np.zeros((0, self.event_width), np.float32) if not t else self._arrays["events"][row_order]),
             episode_id=np.asarray(ids, dtype=np.int64),
             deal_seed=np.asarray([m["episode"].deal_seed for m in meta], dtype=np.int64),
             opponent=tuple(m["episode"].opponent for m in meta),
@@ -297,7 +313,7 @@ class Builder:
         pieces: dict[str, list[np.ndarray]] = {
             name: [] for name in (
                 "tok", "col", "glob", "ctok", "ccol", "cglob", "masks",
-                "actions", "old_logp", "decision_index", "set_id",
+                "actions", "old_logp", "decision_index", "set_id", "events",
             )
         }
         for eid in ids:
@@ -331,6 +347,7 @@ class Builder:
             episode=np.repeat(np.arange(len(ids), dtype=np.int32), counts) if ids else np.zeros(0, np.int32),
             decision_index=joined("decision_index", np.zeros(0, np.int32)),
             set_id=joined("set_id", np.zeros(0, np.int64)),
+            events=joined("events", np.zeros((0, self.event_width), np.float32)) if self.event_width else None,
             episode_id=np.asarray(ids, dtype=np.int64),
             deal_seed=np.asarray([m["episode"].deal_seed for m in meta], dtype=np.int64),
             opponent=tuple(m["episode"].opponent for m in meta),

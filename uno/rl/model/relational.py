@@ -368,9 +368,14 @@ class Actor(nn.Module):
         color context once per color; the global context once per row; and the
         static action features once per call, independent of the batch.
         """
-        n = tok.shape[0]
+        return self.scores(*self.encoder(tok, col, glob))
+
+    def scores(
+        self, h: torch.Tensor, hw: torch.Tensor, color_ctx: torch.Tensor, global_ctx: torch.Tensor
+    ) -> torch.Tensor:
+        """Action logits from the encoder's outputs (shared with the recurrent actor)."""
+        n = h.shape[0]
         w = self.width
-        h, hw, color_ctx, global_ctx = self.encoder(tok, col, glob)
         tokens = torch.cat((h.reshape(n, -1, w), hw), dim=1)  # (n, n_tokens, w)
         a = self.act_token.shape[0]
         first, second = self.score[0], self.score[2]

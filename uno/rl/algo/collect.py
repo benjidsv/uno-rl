@@ -82,9 +82,9 @@ class Stats:
 class LiveGame:
     """One assigned episode in flight, with its own engine state and evidence."""
 
-    __slots__ = ("episode", "state", "seat", "opponent", "evidence", "seen", "decision_index", "opponent_decisions", "engine_decisions")
+    __slots__ = ("episode", "state", "seat", "opponent", "evidence", "seen", "decision_index", "opponent_decisions", "engine_decisions", "memory")
 
-    def __init__(self, rs: Ruleset, episode: Episode, opponent: Agent) -> None:
+    def __init__(self, rs: Ruleset, episode: Episode, opponent: Agent, memory=None) -> None:
         try:
             self.state: State = new_game(rs, episode.deal_seed)
         except ValueError as exc:  # no number card for the first discard
@@ -100,6 +100,7 @@ class LiveGame:
         self.decision_index = 0
         self.opponent_decisions = 0
         self.engine_decisions = 0
+        self.memory = memory  # a recurrent actor's `uno.rl.algo.policy.Memory`, else None
 
     @property
     def terminal(self) -> bool:
@@ -160,7 +161,9 @@ def collect(
     """
     rs = actor.rs
     spec = actor.spec
-    builder = Builder(spec, critic_spec, behavior_version, decision_capacity=max(1024, len(manifest) * 16))
+    recurrent = getattr(actor, "recurrent", False)
+    builder = Builder(spec, critic_spec, behavior_version, decision_capacity=max(1024, len(manifest) * 16),
+                      event_width=getattr(actor, "event_width", 0))
     stats = Stats()
     t0 = time.perf_counter()
 
@@ -175,7 +178,8 @@ def collect(
             episode = queue.pop(0)
             if episode.opponent not in opponents:
                 raise KeyError(f"episode {episode.episode_id} names opponent {episode.opponent!r}, which was not supplied")
-            active.append(LiveGame(rs, episode, opponents[episode.opponent]))
+            memory = actor.new_memory(episode.seat) if recurrent else None
+            active.append(LiveGame(rs, episode, opponents[episode.opponent], memory))
             started += 1
             last_start = time.perf_counter()
 
@@ -213,9 +217,11 @@ def collect(
         critic_rows = extract(critic_spec, [p[1] for p in pairs], [g.evidence for g in active])
         masks = np.stack([legal_mask(rs, p[0]) for p in pairs])
         set_ids = None if set_id_fn is None else np.fromiter((set_id_fn(p[0]) for p in pairs), dtype=np.int64, count=len(pairs))
+        memories = [g.memory for g in active] if recurrent else None
+        events = actor.observe_events(memories, [p[0] for p in pairs]) if recurrent else None
         stats.feature_seconds += time.perf_counter() - feature_started
         inference_started = time.perf_counter()
-        log_probs = actor.log_probs(actor_rows, masks, set_ids)
+        log_probs = actor.log_probs(actor_rows, masks, set_ids, events, memories)
         stats.inference_calls += 1
         stats.inference_rows += len(active)
         stats.batch_sizes.append(len(active))
@@ -228,7 +234,8 @@ def collect(
             if not masks[i, a]:
                 raise ValueError(f"sampled an illegal action {a} in episode {game.episode.episode_id}")
             set_id = -1 if set_ids is None else int(set_ids[i])
-            builder.add_decision(game.episode.episode_id, game.decision_index, actor_rows[i : i + 1], critic_rows[i : i + 1], masks[i], a, float(log_probs[i, a]), set_id)
+            builder.add_decision(game.episode.episode_id, game.decision_index, actor_rows[i : i + 1], critic_rows[i : i + 1], masks[i], a, float(log_probs[i, a]), set_id,
+                                 None if events is None else events[i])
             stats.learner_decisions += 1
             if failures is not None and len(failures) < MAX_FAILURE_SAMPLES and game.decision_index == 0:
                 # A small, explicitly bounded replay sample, outside the training

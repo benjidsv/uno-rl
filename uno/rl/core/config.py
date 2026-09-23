@@ -33,7 +33,24 @@ class RelationalModel:
     blocks: int = 2
 
 
-ModelConfig = RelationalModel
+@dataclass(frozen=True)
+class RecurrentModel:
+    """`uno.rl.model.recurrent.RecurrentActor`; the critic stays the relational one.
+
+    `init_from` is a training checkpoint of a relational run on the same arm: its
+    critic is loaded as is and its actor with zero weights on memory and events, so
+    the run starts at that policy and measures what memory adds from there.
+    """
+
+    kind: Literal["recurrent"] = "recurrent"
+    width: int = 128
+    blocks: int = 2
+    memory: int = 64
+    events: int = 32
+    init_from: str | None = None
+
+
+ModelConfig = RelationalModel | RecurrentModel
 
 
 @dataclass(frozen=True)
@@ -166,6 +183,7 @@ __all__ = [
     "Evaluation",
     "Optim",
     "RelationalModel",
+    "RecurrentModel",
     "ModelConfig",
     "algorithm_hash",
     "algorithm_resolved",

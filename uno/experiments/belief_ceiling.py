@@ -58,15 +58,12 @@ from uno.rl.algo.collect import LiveGame
 from uno.rl.core import manifest as mf
 from uno.rl.core.checkpoint import load_actor
 from uno.rl.core.streams import EVAL, uniform
+from uno.rl.env.events import (DRAW, INIT, MAX_N, N_KINDS, NOBODY, OPP, OWN_DRAW, PAD, PLAY, RESHUFFLE,
+                                SELF, SETUP, SKIP, Tape)
 from uno.rl.env.features import ARM_A, ARM_B, ARM_C, extract, legal_mask, spec
 from uno.rl.eval.opponents import league
 from uno.rl.model.relational import Encoder
 
-# Raw event tokens: (kind, actor, card, color, n) small integers.
-PAD, INIT, SETUP, SKIP, PLAY, DRAW, OWN_DRAW, RESHUFFLE = range(8)
-N_KINDS = 8
-NOBODY, SELF, OPP = 0, 1, 2
-MAX_N = 15
 # Data starts away from the diagnostic panel's first deals, which paired arm
 # comparisons (`arm_b_diag`, 2,048 deals/cell) already use.
 DEFAULT_START = mf.DIAGNOSTIC_DEALS.start + 50_000
@@ -74,53 +71,6 @@ SCALARS = 5  # opp hand, own hand, pile, turn, after-draw
 SEQUENCE = ("gru", "lstm", "tf")
 REC = ("rec-", "recev-", "recnull-")  # memory + events, events only, neither (control)
 HYBRID_CORES = ("gru", "lstm", "tf", "none")  # `rel-C+none` is the capacity control: no history
-
-
-class Tape:
-    """One game's L1 event stream for one seat, extended incrementally.
-
-    Own private draws are placed right after the public draw event they belong to,
-    using its actual count, as the observation contract requires for C-style history.
-    """
-
-    def __init__(self, rs, seat: int) -> None:
-        self.rs, self.seat = rs, seat
-        self.none_card, self.none_color = rs.num_types, rs.colors
-        self.tokens: list[tuple[int, int, int, int, int]] = []
-        self.public_seen = 0
-        self.own_seen = 0
-
-    def _who(self, p: int) -> int:
-        return SELF if p == self.seat else OPP
-
-    def advance(self, obs) -> int:
-        """Append everything new in `obs`; return the prefix length a query may read."""
-        nc, ncol = self.none_card, self.none_color
-        if not self.tokens:
-            self.tokens += [(INIT, SELF, c, ncol, 0) for c in sorted(obs.initial_hand)]
-        for ev in obs.public[self.public_seen:]:
-            match ev[0]:
-                case "setup":
-                    self.tokens.append((SETUP, NOBODY, ev[1], ncol, 0))
-                    self.tokens += [(SKIP, NOBODY, c, ncol, 0) for c in ev[2]]
-                case "play":
-                    _, p, card, color = ev
-                    self.tokens.append((PLAY, self._who(p), card, color, 0))
-                case "draw":
-                    _, p, n = ev
-                    self.tokens.append((DRAW, self._who(p), nc, ncol, min(n, MAX_N)))
-                    if p == self.seat:
-                        cards = obs.own_draws[self.own_seen : self.own_seen + n]
-                        if len(cards) != n:
-                            raise ValueError("own private draws do not align with public draw events")
-                        self.own_seen += n
-                        self.tokens += [(OWN_DRAW, SELF, c, ncol, 0) for c in cards]
-                case "reshuffle":
-                    self.tokens.append((RESHUFFLE, NOBODY, nc, ncol, 0))
-                case other:
-                    raise ValueError(f"unknown public event {other!r}")
-        self.public_seen = len(obs.public)
-        return len(self.tokens)
 
 
 def _counts(cards, k: int) -> np.ndarray:

@@ -3,6 +3,7 @@ from uno.rl.core.config import ModelConfig
 from uno.rl.env.features import Spec
 from uno.rl.model.relational import Actor as RelationalActor
 from uno.rl.model.relational import Critic as RelationalCritic
+from uno.rl.model.recurrent import RecurrentActor
 
 
 def make_actor(sp: Spec, model_config: ModelConfig):
@@ -13,13 +14,25 @@ def make_actor(sp: Spec, model_config: ModelConfig):
                 width=model_config.width,
                 blocks=model_config.blocks,
             )
+        case "recurrent":
+            return RecurrentActor(
+                sp,
+                width=model_config.width,
+                blocks=model_config.blocks,
+                memory=model_config.memory,
+                events=model_config.events,
+            )
         case _:
             raise ValueError(f"unknown model kind {model_config.kind!r}")
 
 
+def is_recurrent(actor) -> bool:
+    return bool(getattr(actor, "recurrent", False))
+
+
 def make_critic(sp: Spec, model_config: ModelConfig):
     match model_config.kind:
-        case "relational":
+        case "relational" | "recurrent":
             return RelationalCritic(
                 sp,
                 width=model_config.width,

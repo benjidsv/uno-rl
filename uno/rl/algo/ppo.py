@@ -22,6 +22,11 @@ and the critic is fitted to the corresponding lambda-return
 For complete episodes, ``gae_lambda=1`` is exactly equivalent to the Monte-Carlo
 estimator, while ``gae_lambda=0`` gives TD(0). Advantages remain frozen across
 all PPO epochs.
+
+A recurrent actor (`uno.rl.model.recurrent`) is recomputed over whole episodes from
+zero memory: its minibatches partition the rollout's *episodes* (not its rows), and
+its final diagnostics are chunked at episode boundaries. The objective is the same
+decision mean within each minibatch. The critic is feed-forward and unchanged.
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ from uno.rl.model import (
     Actor,
     Critic,
     entropy_from_log_probs,
+    is_recurrent,
     masked_log_probs,
     to_tensors,
 )
@@ -444,17 +450,27 @@ def _new_log_probs_tensors(
     need_entropy: bool = True,
     validate_mask: bool = True,
     precision: str = "fp32",
+    events: torch.Tensor | None = None,
+    lengths: np.ndarray | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Taken-action log-probs from already staged tensors.
 
     Only the model forward is autocast. Logits are converted back to FP32 before
     masking/log-softmax so PPO log ratios, exponentiation, entropy and reductions
     remain FP32 in both precision modes.
+
+    A recurrent actor also takes the rows' `events` and their episode `lengths`: the
+    rows must be whole episodes, each contiguous and in decision order.
     """
     # A tabular actor (`uno.rl.eval.tabular`) is parameterized by information set, not by
     # features; it declares that with `uses_set_ids` and everything else is shared.
     if getattr(actor, "uses_set_ids", False):
         logits = actor.logits(set_ids)
+    elif is_recurrent(actor):
+        if events is None or lengths is None:
+            raise ValueError("a recurrent actor is recomputed over whole episodes: pass events and lengths")
+        with _autocast_context(tok.device, precision):
+            logits = actor(tok, col, glob, events, lengths)
     else:
         with _autocast_context(tok.device, precision):
             logits = actor(tok, col, glob)
@@ -473,6 +489,7 @@ def actor_loss(
     device: str = "cpu",
 ) -> tuple[torch.Tensor, dict]:
     """The negated surrogate for one minibatch, with its diagnostics."""
+    _feedforward_only(actor)
     feats = rollout.actor[index]
     set_ids = None if rollout.set_id is None else rollout.set_id[index]
     logp, entropy = new_log_probs(
@@ -507,6 +524,11 @@ def actor_loss(
     return loss, diag
 
 
+def _feedforward_only(actor) -> None:
+    if is_recurrent(actor):
+        raise NotImplementedError("row-wise helper: a recurrent actor trains through `update_actor`")
+
+
 @dataclass(frozen=True)
 class _PreparedRollout:
     actor_tok: torch.Tensor
@@ -522,6 +544,10 @@ class _PreparedRollout:
     value_targets: torch.Tensor
     values: torch.Tensor
     advantages: torch.Tensor
+    # recurrent actors: per-row event tables, and the episodes' row ranges in order
+    actor_events: torch.Tensor | None = None
+    episode_offset: np.ndarray | None = None
+    episode_lengths: np.ndarray | None = None
 
 
 def _prepare_rollout(
@@ -545,6 +571,14 @@ def _prepare_rollout(
 
     actor_tok, actor_col, actor_glob = actor_data or tensors(rollout.actor)
     critic_tok, critic_col, critic_glob = critic_data or tensors(rollout.critic)
+    recurrent = rollout.events is not None
+    if recurrent:
+        lengths = np.asarray(rollout.learner_decisions, dtype=np.int64)
+        offset = np.asarray(rollout.offset, dtype=np.int64)
+        if not np.array_equal(offset, np.concatenate([[0], np.cumsum(lengths)[:-1]])) or not np.array_equal(
+            rollout.decision_index, np.concatenate([np.arange(n) for n in lengths]) if len(lengths) else rollout.decision_index
+        ):
+            raise ValueError("a recurrent update needs each episode's rows contiguous and in decision order")
     return _PreparedRollout(
         actor_tok,
         actor_col,
@@ -559,7 +593,47 @@ def _prepare_rollout(
         value_targets,
         values,
         adv,
+        torch.from_numpy(rollout.events).to(device) if recurrent else None,
+        offset if recurrent else None,
+        lengths if recurrent else None,
     )
+
+
+def _episode_minibatches(
+    rng, prepared: _PreparedRollout, n_batches: int, device: str
+) -> list[tuple[np.ndarray, torch.Tensor, np.ndarray]]:
+    """Balanced shuffled partitions of the *episodes*: `(rows, device rows, lengths)`,
+    each episode's rows contiguous and in order, as a recurrent forward needs."""
+    out = []
+    for episodes in _minibatches(rng, len(prepared.episode_lengths), n_batches):
+        lengths = prepared.episode_lengths[episodes]
+        index = np.concatenate([np.arange(o, o + n) for o, n in zip(prepared.episode_offset[episodes], lengths)])
+        out.append((index, torch.from_numpy(index).to(device), lengths))
+    return out
+
+
+def _actor_minibatches(rng, prepared: _PreparedRollout, n_batches: int, device: str):
+    """`(rows, device rows, episode lengths or None)` per actor minibatch."""
+    if prepared.actor_events is not None:
+        return _episode_minibatches(rng, prepared, n_batches, device)
+    return [(index, rows, None) for index, rows in _device_minibatches(rng, len(prepared.actor_tok), n_batches, device)]
+
+
+def _chunks(prepared: _PreparedRollout, chunk: int) -> list[tuple[slice, np.ndarray | None]]:
+    """Row slices of about `chunk` rows for no-grad passes; whole episodes when recurrent."""
+    n = len(prepared.actor_tok)
+    if prepared.actor_events is None:
+        return [(slice(i, i + chunk), None) for i in range(0, n, chunk)]
+    out, start, group, rows = [], 0, [], 0
+    for length in prepared.episode_lengths.tolist():
+        if group and rows + length > chunk:
+            out.append((slice(start, start + rows), np.asarray(group)))
+            start, group, rows = start + rows, [], 0
+        group.append(length)
+        rows += length
+    if group:
+        out.append((slice(start, start + rows), np.asarray(group)))
+    return out
 
 
 def _prepared_actor_loss(
@@ -568,8 +642,10 @@ def _prepared_actor_loss(
     index: np.ndarray,
     rows: torch.Tensor,
     optim: Optim,
+    lengths: np.ndarray | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     set_ids = None if prepared.actor_set_ids is None else prepared.actor_set_ids[index]
+    events = None if prepared.actor_events is None else prepared.actor_events[rows]
     logp, entropy = _new_log_probs_tensors(
         actor,
         prepared.actor_tok[rows],
@@ -582,6 +658,8 @@ def _prepared_actor_loss(
         need_entropy=bool(optim.entropy_coef),
         validate_mask=False,
         precision=_precision(optim),
+        events=events,
+        lengths=lengths,
     )
     log_ratio = logp - prepared.old_logp[rows]
     obj = surrogate(log_ratio, prepared.advantages[rows], optim.clip)
@@ -626,8 +704,7 @@ def _prepared_actor_diagnostics(
     totals = torch.zeros(8, device=device, dtype=torch.float32)
     max_abs = torch.zeros((), device=device)
 
-    for i in range(0, n_rows, chunk):
-        sl = slice(i, i + chunk)
+    for sl, lengths in _chunks(prepared, chunk):
         set_ids = None if prepared.actor_set_ids is None else prepared.actor_set_ids[sl]
         logp, entropy = _new_log_probs_tensors(
             actor,
@@ -641,6 +718,8 @@ def _prepared_actor_diagnostics(
             need_entropy=True,
             validate_mask=False,
             precision=_precision(optim),
+            events=None if prepared.actor_events is None else prepared.actor_events[sl],
+            lengths=lengths,
         )
         assert entropy is not None
         log_ratio = logp - prepared.old_logp[sl]
@@ -707,6 +786,7 @@ def weighted_gradient(
     objective, not because the training loop uses it: training takes one optimizer
     step per minibatch.
     """
+    _feedforward_only(actor)
     t = rollout.n_decisions
     total = [torch.zeros_like(p) for p in actor.parameters()]
     for index in batches:
@@ -741,6 +821,7 @@ def rollout_actor_diagnostics(
     With advantage normalization enabled, its diagnostic normalization is
     rollout-wide; the shipped configuration leaves normalization disabled.
     """
+    _feedforward_only(actor)
     if adv is not None and len(adv) != rollout.n_decisions:
         raise ValueError("rollout diagnostics need one advantage per decision")
     diagnostic_adv = None
@@ -1026,7 +1107,9 @@ def update_actor(
     prepared = _prepare_rollout(
         rollout, adv, value_targets, values, device, actor_tensor_data, critic_tensor_data
     )
-    n_minibatches = _configured_n_minibatches(optim, t)
+    n_minibatches = _configured_n_minibatches(optim, t if rollout.events is None else rollout.n_games)
+    if is_recurrent(actor) != (rollout.events is not None):
+        raise ValueError("a recurrent actor needs a rollout with event rows, and only it does")
 
     # Actor -----------------------------------------------------------------
     started = time.perf_counter()
@@ -1040,9 +1123,9 @@ def update_actor(
         epoch_kl_total = torch.zeros((), device=device)
         epoch_rows = 0
 
-        for index, rows in _device_minibatches(rng, t, n_minibatches, device):
+        for index, rows, lengths in _actor_minibatches(rng, prepared, n_minibatches, device):
             loss, minibatch_diag = _prepared_actor_loss(
-                actor, prepared, index, rows, optim
+                actor, prepared, index, rows, optim, lengths
             )
             epoch_kl_total = epoch_kl_total + minibatch_diag[
                 "approx_kl"

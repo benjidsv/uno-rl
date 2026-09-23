@@ -6,7 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 import tomllib
 
-from uno.rl.core.config import Collection, Config, Evaluation, Optim, RelationalModel
+from uno.rl.core.config import Collection, Config, Evaluation, Optim, RecurrentModel, RelationalModel
 from uno.rl.core.runner import Execution, Tracking, TrainSpec
 
 
@@ -21,6 +21,8 @@ def model_from_dict(data: dict):
     match data.get("kind", "relational"):
         case "relational":
             return RelationalModel(**data)
+        case "recurrent":
+            return RecurrentModel(**data)
         case kind:
             raise ValueError(f"unknown model kind {kind!r}")
 
