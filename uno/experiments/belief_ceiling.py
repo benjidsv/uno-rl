@@ -13,7 +13,8 @@ see different inputs are then fitted on the same games and compared on held-out 
             supports under the architecture the actor actually uses.
 - `rec-X`   arm X's relational encoder with an equivariant per-token memory updated per
             decision, plus a pooled equivariant summary of the raw events since the last
-            decision (`Recurrent`); `recnull-X` is its no-history control. Warm-started
+            decision (`Recurrent`); `recev-X` keeps only the event summary (no recurrent
+            state); `recnull-X` is the no-history control. Warm-started
             from `rel-X`, so the PRIMARY line is what memory adds from the same start.
 - `gru`/`lstm`/`tf` a sequence model over the **raw** L1 event stream (own initial hand, setup,
             every public event, own private draws aligned to their draw events), plus the
@@ -71,6 +72,7 @@ MAX_N = 15
 DEFAULT_START = mf.DIAGNOSTIC_DEALS.start + 50_000
 SCALARS = 5  # opp hand, own hand, pile, turn, after-draw
 SEQUENCE = ("gru", "lstm", "tf")
+REC = ("rec-", "recev-", "recnull-")  # memory + events, events only, neither (control)
 HYBRID_CORES = ("gru", "lstm", "tf", "none")  # `rel-C+none` is the capacity control: no history
 
 
@@ -428,11 +430,13 @@ class Recurrent(nn.Module):
                      (PLAY, SELF): 3, (PLAY, OPP): 4, (OWN_DRAW, SELF): 5}
     REL = 4 * 6 + 4 + 4 + 1 + 1  # see `_summaries`
 
-    def __init__(self, rs, sp, width: int, blocks: int, history: bool = True, mem: int = 64, ev: int = 32) -> None:
+    def __init__(self, rs, sp, width: int, blocks: int, history: bool = True, mem: int = 64, ev: int = 32,
+                 memory: bool = True) -> None:
         super().__init__()
         from dataclasses import replace
 
         self.base, self.history, self.mem, self.ev = sp, history, mem, ev
+        self.memory = history and memory  # `recev-X`: events since the last decision, no recurrent state
         self.rel = Relational(replace(sp, tok_width=sp.tok_width + mem + ev), width, blocks)
         self.cell = nn.GRUCell(width, mem)
         self.phi = nn.Sequential(nn.Linear(self.REL, ev), nn.ReLU(), nn.Linear(ev, ev))
@@ -550,7 +554,7 @@ class Recurrent(nn.Module):
             grid, wild, _, _ = self.rel.encoder(x, col[:, i], glob[:, i])
             z = torch.cat([self.rel.grid_head(grid).flatten(1), self.rel.wild_head(wild).squeeze(-1)], 1)
             out.append(z[:, self.rel.type_to_token])
-            if self.history:
+            if self.memory:
                 h = torch.cat([grid.flatten(1, 2), wild], 1)  # (G, 54, width), token order
                 new = self.cell(h.reshape(-1, h.shape[-1]), m.reshape(-1, self.mem)).view_as(m)
                 m = torch.where(valid[:, i, None, None], new, m)
@@ -558,7 +562,7 @@ class Recurrent(nn.Module):
 
 
 def uses_games(name: str) -> bool:
-    return name in SEQUENCE or "+" in name or name.startswith(("rec-", "recnull-"))
+    return name in SEQUENCE or "+" in name or name.startswith(REC)
 
 
 def uses_features(name: str) -> bool:
@@ -633,11 +637,11 @@ def batches(data: Data, model_name: str, rows: np.ndarray, device, rng=None, row
         cuts = np.flatnonzero(np.diff(data.game[order])) + 1
         for chunk in np.split(order, cuts):
             rows_of_game[int(data.game[chunk[0]])] = chunk
-        if model_name.startswith(("rec-", "recnull-")):  # its loop runs over decisions
+        if model_name.startswith(REC):  # its loop runs over decisions
             length = np.array([len(rows_of_game[int(g)]) for g in games])
         else:
             length = data.offsets[games + 1] - data.offsets[games]
-        by_steps = model_name.startswith(("rec-", "recnull-"))
+        by_steps = model_name.startswith(REC)
 
         def cut(g: np.ndarray, lens: np.ndarray) -> list[np.ndarray]:
             """Split length-sorted games into batches."""
@@ -682,8 +686,8 @@ def build(name: str, rs, width: int, blocks: int):
         return Hybrid(build(rel_name, rs, width, blocks), Sequence(rs, core))
     kind, arm = name.split("-")
     sp = spec(rs, arm)
-    if kind in ("rec", "recnull"):
-        return Recurrent(rs, sp, width, blocks, history=kind == "rec")
+    if kind in ("rec", "recev", "recnull"):
+        return Recurrent(rs, sp, width, blocks, history=kind != "recnull", memory=kind == "rec")
     if kind == "lin":
         return Linear((sp.tok_width, sp.col_width, sp.glob_width), sp.layout.n_tokens, sp.layout.colors, rs.num_types)
     if kind == "rel":
@@ -869,13 +873,17 @@ def run_fit(args) -> None:
         gain = "" if base is None else "%+.5f +- %.5f" % clustered(base - nll, deal)
         r = results[label]
         print(f"{label:14s} {nll.mean():10.5f} {gain:>16s} {r['color_r2']:9.3f} {r['wild_r2']:8.3f}")
-    for label in [x for x in test_nll if x.startswith("rec-")]:
-        control = "recnull-" + label[len("rec-"):]
-        if control in test_nll:
-            m, se = clustered(test_nll[control] - test_nll[label], deal)
-            comparisons[f"{label} - {control}"] = (m, se)
-            print(f"PRIMARY {label} vs {control}: {m:+.5f} +- {se:.5f} nats/card better "
-                  f"(what an equivariant memory over the raw history adds to arm {label[-1]}'s features)")
+    what = {("rec-", "recnull-"): "memory + events since the last decision, over arm {}'s features",
+            ("recev-", "recnull-"): "events since the last decision alone, over arm {}'s features",
+            ("rec-", "recev-"): "the recurrent memory, given the event summary"}
+    for (model, control), meaning in what.items():
+        for label in [x for x in test_nll if x.startswith(model)]:
+            base_label = control + label[len(model):]
+            if base_label in test_nll:
+                m, se = clustered(test_nll[base_label] - test_nll[label], deal)
+                comparisons[f"{label} - {base_label}"] = (m, se)
+                print(f"PRIMARY {label} vs {base_label}: {m:+.5f} +- {se:.5f} nats/card better "
+                      f"({meaning.format(label.split('-')[1].split('@')[0])})")
     # Primary: each warm-started hybrid against the no-history control at the same fraction.
     for label in [x for x in test_nll if "+" in x and not x.startswith("rel-C+none")]:
         control = "rel-C+none" + (label[label.index("@"):] if "@" in label else "")

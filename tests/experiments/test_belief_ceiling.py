@@ -81,19 +81,23 @@ def test_warm_started_recurrent_model_starts_exactly_at_rel():
     b = _batch(_games())
     rel = bc.Relational(F.spec(RS, F.ARM_C), 32, 2)
     _randomize(rel)
-    for history in (True, False):
-        rec = bc.Recurrent(RS, F.spec(RS, F.ARM_C), 32, 2, history=history, mem=8, ev=8)
+    for history, memory in ((True, True), (True, False), (False, False)):
+        rec = bc.Recurrent(RS, F.spec(RS, F.ARM_C), 32, 2, history=history, mem=8, ev=8, memory=memory)
         _randomize(rec, 1)  # memory/event weights nonzero; load_rel must still zero their reads
         rec.load_rel(rel.state_dict())
         with torch.no_grad():
             assert torch.allclose(rec(b), rel(b), atol=1e-5)
 
 
-@pytest.mark.parametrize("history", (True, False))
-def test_recurrent_model_is_equivariant_under_the_whole_group(history):
+VARIANTS = pytest.mark.parametrize("history,memory", ((True, True), (True, False), (False, False)),
+                                   ids=("rec", "recev", "recnull"))
+
+
+@VARIANTS
+def test_recurrent_model_is_equivariant_under_the_whole_group(history, memory):
     sym = Symmetry(RS)
     games = _games()
-    rec = bc.Recurrent(RS, F.spec(RS, F.ARM_C), 32, 2, history=history, mem=8, ev=8)
+    rec = bc.Recurrent(RS, F.spec(RS, F.ARM_C), 32, 2, history=history, mem=8, ev=8, memory=memory)
     _randomize(rec)
     with torch.no_grad():
         base = rec(_batch(games))
@@ -118,3 +122,37 @@ def test_equivariance_check_detects_a_color_dependent_input():
         g = next(g for g in range(sym.order) if sym.colors[g][0] != 0)
         got = rec(leak(_batch(games, sym, g)))
     assert float((got[:, torch.as_tensor(sym.types[g].astype(np.int64))] - base).abs().max()) > 1e-3
+
+
+@VARIANTS
+def test_recurrent_predictions_ignore_everything_after_the_decision(history, memory):
+    """Causality: rewriting later events and later decisions' features must not change
+    any prediction up to decision `j` (the stream is read as one sequence per game)."""
+    games = _games()
+    b = _batch(games)
+    rec = bc.Recurrent(RS, F.spec(RS, F.ARM_C), 32, 2, history=history, mem=8, ev=8, memory=memory)
+    _randomize(rec)
+    torch.manual_seed(1)
+    with torch.no_grad():
+        base = rec(b)
+        for j in (0, 1, 3):
+            later = b["step"] > j
+            if not later.any():
+                continue
+            fake = dict(b)
+            tokens = b["tokens"].clone()
+            for gi in range(tokens.shape[0]):
+                rows = (b["row_game"] == gi) & (b["step"] == j)
+                if rows.any():
+                    cut = int(b["pos"][rows][0])
+                    tokens[gi, cut:, 1:4] = torch.randint_like(tokens[gi, cut:, 1:4], 0, 3)
+                    tokens[gi, cut:, 0] = bc.PLAY
+            fake["tokens"] = tokens
+            for key in ("tok", "col", "glob"):
+                x = b[key].clone()
+                x[later] = torch.rand_like(x[later])
+                fake[key] = x
+            got = rec(fake)
+            keep = ~later
+            assert torch.allclose(got[keep], base[keep], atol=1e-6), f"decision <= {j} saw the future"
+            assert not torch.allclose(got[later], base[later]), "the perturbation must matter later"
