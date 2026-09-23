@@ -11,6 +11,10 @@ see different inputs are then fitted on the same games and compared on held-out 
 - `rel-X`   the actor's own equivariant relational encoder (`uno.rl.model.relational`)
             on arm X's features, with a per-token head: the best the arm's encoding
             supports under the architecture the actor actually uses.
+- `rec-X`   arm X's relational encoder with an equivariant per-token memory updated per
+            decision, plus a pooled equivariant summary of the raw events since the last
+            decision (`Recurrent`); `recnull-X` is its no-history control. Warm-started
+            from `rel-X`, so the PRIMARY line is what memory adds from the same start.
 - `gru`/`lstm`/`tf` a sequence model over the **raw** L1 event stream (own initial hand, setup,
             every public event, own private draws aligned to their draw events), plus the
             current position. It sees everything L1 allows, with no engineered summary.
@@ -403,8 +407,118 @@ class Hybrid(nn.Module):
         return self.rel(batch) + self.seq(batch)
 
 
+class Recurrent(nn.Module):
+    """Arm X's relational encoder with an equivariant per-token memory, updated per decision.
+
+    At each of the learner's decisions the encoder reads arm X's features plus two extra
+    per-token inputs: the memory left by the previous decision, and a pooled summary of
+    the raw events since then. One GRU cell, shared by every token, then updates the
+    memory from the encoder's token outputs. Everything is per token with shared weights,
+    and events are described relative to a token only through equalities (same type,
+    same color, same rank, named color matches, wild), so relabelling colors permutes
+    tokens, memories and predictions together: `F(g h, g e) = g F(h, e)`.
+
+    `history=False` is the control: same model and training, memory and events zeroed.
+    Warm-started from a trained `rel-X` with zero weights on the new input channels, it
+    starts exactly at `rel-X`.
+    """
+
+    REL = 20  # per (event, token) relation features, see `_relations`
+
+    def __init__(self, rs, sp, width: int, blocks: int, history: bool = True, mem: int = 64, ev: int = 32) -> None:
+        super().__init__()
+        from dataclasses import replace
+
+        self.base, self.history, self.mem, self.ev = sp, history, mem, ev
+        self.rel = Relational(replace(sp, tok_width=sp.tok_width + mem + ev), width, blocks)
+        self.cell = nn.GRUCell(width, mem)
+        self.phi = nn.Sequential(nn.Linear(self.REL, ev), nn.ReLU(), nn.Linear(ev, ev))
+        lay = sp.layout
+        order = np.concatenate([lay.grid_type.reshape(-1), lay.wild_type])  # token -> type
+        k = rs.num_types
+        color = np.append(lay.type_color, -2)  # index k is "no card"
+        slot = np.append(lay.type_slot, -2)
+        self.register_buffer("tok_type", torch.from_numpy(order).long(), persistent=False)
+        self.register_buffer("type_color", torch.from_numpy(color).long(), persistent=False)
+        self.register_buffer("type_slot", torch.from_numpy(slot).long(), persistent=False)
+        self.k, self.colors = k, rs.colors
+
+    def load_rel(self, state: dict) -> None:
+        """Copy a trained `rel-X`, inserting zero weights for the new token channels."""
+        own = self.rel.state_dict()
+        for key, value in state.items():
+            if key == "encoder.proj.weight":
+                t = self.base.tok_width
+                new = torch.zeros_like(own[key])
+                new[:, :t] = value[:, :t]
+                new[:, t + self.mem + self.ev :] = value[:, t:]
+                own[key] = new
+            else:
+                own[key] = value
+        self.rel.load_state_dict(own)
+
+    def old_proj_mask(self) -> torch.Tensor:
+        """1 on the projection columns that read the new channels, 0 on rel-X's own."""
+        w = self.rel.encoder.proj.weight
+        mask = torch.zeros_like(w)
+        t = self.base.tok_width
+        mask[:, t : t + self.mem + self.ev] = 1.0
+        return mask
+
+    def _relations(self, tokens: torch.Tensor) -> torch.Tensor:
+        """(G, T, 54, REL) equality-only features of every event against every token type."""
+        kind, actor, card, color, n = (tokens[..., i] for i in range(5))
+        f = torch.nn.functional
+        tt = self.tok_type  # (54,)
+        tcol, tslot = self.type_color[tt], self.type_slot[tt]  # token's color/slot, -1 for wilds
+        ecol, eslot = self.type_color[card], self.type_slot[card]  # (G, T)
+        has = (card < self.k)[..., None]
+        same_type = card[..., None] == tt
+        same_color = (ecol[..., None] == tcol) & (tcol >= 0) & ~same_type
+        same_slot = (eslot[..., None] == tslot) & (tslot >= 0) & ~same_type
+        e_wild = (has & (ecol[..., None] == -1)).expand_as(same_type)
+        named = (color < self.colors)[..., None]  # color == rs.colors means "none"
+        named_same = named & (color[..., None] == tcol)
+        named_other = named & (color[..., None] != tcol) & (tcol >= 0)
+        t_wild = (tcol < 0).expand_as(same_type)
+        per_event = torch.cat([f.one_hot(kind, N_KINDS), f.one_hot(actor, 3), (n.float() / MAX_N)[..., None]], -1)
+        per_pair = torch.stack([same_type, same_color, same_slot, e_wild, has.expand_as(same_type),
+                                named_same, named_other, t_wild], -1).float()
+        g, t = tokens.shape[:2]
+        return torch.cat([per_event[:, :, None].expand(g, t, len(tt), per_event.shape[-1]).float(), per_pair], -1)
+
+    def forward(self, batch):
+        rg, step = batch["row_game"], batch["step"]
+        g, d = int(rg.max()) + 1, int(step.max()) + 1
+        n_tok = len(self.tok_type)
+        pad = lambda x: x.new_zeros((g, d) + x.shape[1:]).index_put_((rg, step), x)
+        tok, col, glob = pad(batch["tok"]), pad(batch["col"]), pad(batch["glob"])
+        valid = pad(torch.ones_like(rg, dtype=torch.bool))
+        if self.history:
+            ev = self.phi(self._relations(batch["tokens"]))  # (G, T, 54, ev)
+            cum = torch.cat([ev.new_zeros(g, 1, n_tok, self.ev), ev.cumsum(1)], 1)
+            pos = pad(batch["pos"])
+            prev = torch.cat([pos.new_zeros(g, 1), pos[:, :-1]], 1)
+            gi = torch.arange(g, device=pos.device)[:, None]
+            summary = cum[gi, pos] - cum[gi, prev]  # (G, D, 54, ev): events since the last decision
+        m = tok.new_zeros(g, n_tok, self.mem)
+        out = []
+        for i in range(d):
+            extra = (torch.cat([m, summary[:, i]], -1) if self.history
+                     else tok.new_zeros(g, n_tok, self.mem + self.ev))
+            x = torch.cat([tok[:, i, :, : self.base.tok_width], extra], -1)
+            grid, wild, _, _ = self.rel.encoder(x, col[:, i], glob[:, i])
+            z = torch.cat([self.rel.grid_head(grid).flatten(1), self.rel.wild_head(wild).squeeze(-1)], 1)
+            out.append(z[:, self.rel.type_to_token])
+            if self.history:
+                h = torch.cat([grid.flatten(1, 2), wild], 1)  # (G, 54, width), token order
+                new = self.cell(h.reshape(-1, h.shape[-1]), m.reshape(-1, self.mem)).view_as(m)
+                m = torch.where(valid[:, i, None, None], new, m)
+        return torch.stack(out, 1)[rg, step]
+
+
 def uses_games(name: str) -> bool:
-    return name in SEQUENCE or "+" in name
+    return name in SEQUENCE or "+" in name or name.startswith(("rec-", "recnull-"))
 
 
 def uses_features(name: str) -> bool:
@@ -436,6 +550,7 @@ def game_batch(data: Data, games: np.ndarray, rows_of_game: dict, device, rng=No
         tokens[i, : lens[i]] = data.tokens[data.offsets[g] : data.offsets[g + 1]]
     local = {g: i for i, g in enumerate(games)}
     row_game = np.array([local[g] for g in data.game[idx]])
+    step = np.concatenate([np.arange(len(rows_of_game[g])) for g in games])  # decision index in game
     hand, unseen, target = data.hand[idx], data.unseen[idx], data.target[idx]
     top, color, drawn = data.top[idx].astype(np.int64), data.color[idx].astype(np.int64), data.drawn[idx].astype(np.int64)
     if rng is not None and not features:  # one color permutation per batch: every field moves together
@@ -451,7 +566,7 @@ def game_batch(data: Data, games: np.ndarray, rows_of_game: dict, device, rng=No
     out = {"tokens": t(tokens, torch.long), "row_game": t(row_game, torch.long),
            "pos": t(data.pos[idx], torch.long), "hand": t(hand), "unseen": t(unseen), "target": t(target),
            "top": t(top, torch.long), "color": t(color, torch.long), "drawn": t(drawn, torch.long),
-           "scalars": t(data.scalars[idx]), "rows": idx}
+           "scalars": t(data.scalars[idx]), "rows": idx, "step": t(step, torch.long)}
     if features:
         out.update(tok=t(data.tok[idx]), col=t(data.col[idx]), glob=t(data.glob[idx]))
     return out
@@ -475,7 +590,10 @@ def batches(data: Data, model_name: str, rows: np.ndarray, device, rng=None, row
         cuts = np.flatnonzero(np.diff(data.game[order])) + 1
         for chunk in np.split(order, cuts):
             rows_of_game[int(data.game[chunk[0]])] = chunk
-        length = data.offsets[games + 1] - data.offsets[games]
+        if model_name.startswith(("rec-", "recnull-")):  # its loop runs over decisions
+            length = np.array([len(rows_of_game[int(g)]) for g in games])
+        else:
+            length = data.offsets[games + 1] - data.offsets[games]
         if rng is None:
             games = games[np.argsort(length, kind="stable")]
             chunks = [games[i : i + game_bs] for i in range(0, len(games), game_bs)]
@@ -508,6 +626,8 @@ def build(name: str, rs, width: int, blocks: int):
         return Hybrid(build(rel_name, rs, width, blocks), Sequence(rs, core))
     kind, arm = name.split("-")
     sp = spec(rs, arm)
+    if kind in ("rec", "recnull"):
+        return Recurrent(rs, sp, width, blocks, history=kind == "rec")
     if kind == "lin":
         return Linear((sp.tok_width, sp.col_width, sp.glob_width), sp.layout.n_tokens, sp.layout.colors, rs.num_types)
     if kind == "rel":
@@ -629,9 +749,10 @@ def run_fit(args) -> None:
              "results": results, "paired": comparisons}, indent=2, default=float))
 
     comparisons = {}
-    rel_c_states: dict[float, dict] = {}  # trained rel-C weights by training fraction
+    rel_states: dict[tuple[str, float], dict] = {}  # trained rel-X weights by (arm, fraction)
     if args.init_rel:
-        rel_c_states = {f: torch.load(args.init_rel, map_location="cpu") for f in fractions}
+        arm = Path(args.init_rel).name.split("_")[0].split("-")[1]
+        rel_states = {(arm, f): torch.load(args.init_rel, map_location="cpu") for f in fractions}
     for name in names:
         for fraction in (fractions if name != "prior" else [1.0]):
             label = name if fraction == 1.0 else f"{name}@{fraction:g}"
@@ -641,21 +762,40 @@ def run_fit(args) -> None:
             model = build(name, rs, args.width, args.blocks).to(device)
             started = time.time()
             lr = args.seq_lr if name in SEQUENCE else args.lr
-            warm = isinstance(model, Hybrid)
+            warm = isinstance(model, (Hybrid, Recurrent))
             if warm:
-                # Both hybrid and control start at the trained rel-C (the sequence head is
-                # zero), so what they add over it is measured from the same point.
-                if fraction not in rel_c_states:
-                    raise ValueError(f"{name} warm-starts from rel-C: list rel-C before it "
+                # Hybrid/control and rec/recnull start at the trained rel-X (new inputs
+                # have zero weight), so what they add is measured from the same point.
+                arm = "C" if isinstance(model, Hybrid) else name.split("-")[1]
+                if (arm, fraction) not in rel_states:
+                    raise ValueError(f"{name} warm-starts from rel-{arm}: list rel-{arm} before it "
                                      f"(same fractions) or pass --init-rel")
-                model.rel.load_state_dict(rel_c_states[fraction])
-                lr = [{"params": model.rel.parameters(), "lr": args.lr * args.rel_lr_scale},
-                      {"params": model.seq.parameters(), "lr": args.seq_lr}]
+                if isinstance(model, Hybrid):
+                    model.rel.load_state_dict(rel_states[(arm, fraction)])
+                    lr = [{"params": model.rel.parameters(), "lr": args.lr * args.rel_lr_scale},
+                          {"params": model.seq.parameters(), "lr": args.seq_lr}]
+                else:
+                    model.load_rel(rel_states[(arm, fraction)])
+                    model.to(device)
+                    proj = model.rel.encoder.proj
+                    others = [p for n_, p in model.rel.named_parameters() if not n_.startswith("encoder.proj")]
+                    if args.rel_lr_scale == 0:
+                        # rel-X frozen: only the columns reading memory/events may move.
+                        mask = model.old_proj_mask()
+                        proj.weight.register_hook(lambda grad, mask=mask: grad * mask)
+                        proj.bias.requires_grad_(False)
+                        for p_ in others:
+                            p_.requires_grad_(False)
+                    lr = [{"params": [p_ for p_ in others if p_.requires_grad], "lr": args.lr * args.rel_lr_scale},
+                          {"params": [p_ for p_ in proj.parameters() if p_.requires_grad], "lr": args.seq_lr},
+                          {"params": list(model.cell.parameters()) + list(model.phi.parameters()), "lr": args.seq_lr}]
+                    lr = [group for group in lr if group["params"]]
             info = fit(model, source, name, train, source.rows(1), device, args.epochs, lr, args.patience,
                        args.seed, args.game_batch, warm)
-            if name == "rel-C":
-                rel_c_states[fraction] = {k: t.detach().cpu().clone() for k, t in model.state_dict().items()}
-                torch.save(rel_c_states[fraction], Path(args.data) / f"rel-C_{stamp}_{fraction:g}.pt")
+            if name.startswith("rel-"):
+                arm = name.split("-")[1]
+                rel_states[(arm, fraction)] = {k: t.detach().cpu().clone() for k, t in model.state_dict().items()}
+                torch.save(rel_states[(arm, fraction)], Path(args.data) / f"{name}_{stamp}_{fraction:g}.pt")
             nll, logp = predict(model, data, name, test, device, args.game_batch)
             r2c, r2w = color_r2(data, test, logp, rs.colors)
             info.update(test_nll=float(nll.mean()), color_r2=r2c, wild_r2=r2w, train_rows=len(train),
@@ -672,6 +812,13 @@ def run_fit(args) -> None:
         gain = "" if base is None else "%+.5f +- %.5f" % clustered(base - nll, deal)
         r = results[label]
         print(f"{label:14s} {nll.mean():10.5f} {gain:>16s} {r['color_r2']:9.3f} {r['wild_r2']:8.3f}")
+    for label in [x for x in test_nll if x.startswith("rec-")]:
+        control = "recnull-" + label[len("rec-"):]
+        if control in test_nll:
+            m, se = clustered(test_nll[control] - test_nll[label], deal)
+            comparisons[f"{label} - {control}"] = (m, se)
+            print(f"PRIMARY {label} vs {control}: {m:+.5f} +- {se:.5f} nats/card better "
+                  f"(what an equivariant memory over the raw history adds to arm {label[-1]}'s features)")
     # Primary: each warm-started hybrid against the no-history control at the same fraction.
     for label in [x for x in test_nll if "+" in x and not x.startswith("rel-C+none")]:
         control = "rel-C+none" + (label[label.index("@"):] if "@" in label else "")
