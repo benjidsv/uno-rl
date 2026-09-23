@@ -423,7 +423,10 @@ class Recurrent(nn.Module):
     starts exactly at `rel-X`.
     """
 
-    REL = 20  # per (event, token) relation features, see `_relations`
+    # Event channels that carry a card: (kind, actor) -> channel.
+    CARD_CHANNELS = {(INIT, SELF): 0, (SETUP, NOBODY): 1, (SKIP, NOBODY): 2,
+                     (PLAY, SELF): 3, (PLAY, OPP): 4, (OWN_DRAW, SELF): 5}
+    REL = 4 * 6 + 4 + 4 + 1 + 1  # see `_summaries`
 
     def __init__(self, rs, sp, width: int, blocks: int, history: bool = True, mem: int = 64, ev: int = 32) -> None:
         super().__init__()
@@ -435,13 +438,25 @@ class Recurrent(nn.Module):
         self.phi = nn.Sequential(nn.Linear(self.REL, ev), nn.ReLU(), nn.Linear(ev, ev))
         lay = sp.layout
         order = np.concatenate([lay.grid_type.reshape(-1), lay.wild_type])  # token -> type
-        k = rs.num_types
-        color = np.append(lay.type_color, -2)  # index k is "no card"
-        slot = np.append(lay.type_slot, -2)
-        self.register_buffer("tok_type", torch.from_numpy(order).long(), persistent=False)
-        self.register_buffer("type_color", torch.from_numpy(color).long(), persistent=False)
-        self.register_buffer("type_slot", torch.from_numpy(slot).long(), persistent=False)
-        self.k, self.colors = k, rs.colors
+        k, colors, slots = rs.num_types, rs.colors, lay.slots
+        type_color = np.append(lay.type_color, -2)  # index k is "no card"
+        type_slot = np.append(lay.type_slot, -2)
+        color_oh = np.zeros((k + 1, colors), np.float32)
+        slot_oh = np.zeros((k + 1, slots), np.float32)
+        colored = np.flatnonzero(type_color >= 0)
+        color_oh[colored, type_color[colored]] = 1.0
+        slot_oh[colored, type_slot[colored]] = 1.0
+        wild = (type_color == -1).astype(np.float32)
+        channel = np.full(N_KINDS * 3, -1)
+        for (kind, actor), c in self.CARD_CHANNELS.items():
+            channel[kind * 3 + actor] = c
+        buffers = {"tok_type": torch.from_numpy(order).long(), "type_color": torch.from_numpy(type_color).long(),
+                   "type_slot": torch.from_numpy(type_slot).long(), "color_oh": torch.from_numpy(color_oh),
+                   "slot_oh": torch.from_numpy(slot_oh), "wild": torch.from_numpy(wild),
+                   "channel": torch.from_numpy(channel).long()}
+        for name, value in buffers.items():
+            self.register_buffer(name, value, persistent=False)
+        self.k, self.colors = k, colors
 
     def load_rel(self, state: dict) -> None:
         """Copy a trained `rel-X`, inserting zero weights for the new token channels."""
@@ -465,27 +480,55 @@ class Recurrent(nn.Module):
         mask[:, t : t + self.mem + self.ev] = 1.0
         return mask
 
-    def _relations(self, tokens: torch.Tensor) -> torch.Tensor:
-        """(G, T, 54, REL) equality-only features of every event against every token type."""
+    def _summaries(self, tokens: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
+        """(G, D, 54, REL) per-token counts of the events in each decision's interval.
+
+        Events are binned into the interval that ends at the decision reading them, as
+        small count tables (card channel x card type, named colors, draws), and each
+        token reads its entries by equality only: same type, same color / same rank as
+        another type, wilds, named color equal or not. No tensor is per (event, token).
+        """
+        g, d = pos.shape
         kind, actor, card, color, n = (tokens[..., i] for i in range(5))
-        f = torch.nn.functional
-        tt = self.tok_type  # (54,)
-        tcol, tslot = self.type_color[tt], self.type_slot[tt]  # token's color/slot, -1 for wilds
-        ecol, eslot = self.type_color[card], self.type_slot[card]  # (G, T)
-        has = (card < self.k)[..., None]
-        same_type = card[..., None] == tt
-        same_color = (ecol[..., None] == tcol) & (tcol >= 0) & ~same_type
-        same_slot = (eslot[..., None] == tslot) & (tslot >= 0) & ~same_type
-        e_wild = (has & (ecol[..., None] == -1)).expand_as(same_type)
-        named = (color < self.colors)[..., None]  # color == rs.colors means "none"
-        named_same = named & (color[..., None] == tcol)
-        named_other = named & (color[..., None] != tcol) & (tcol >= 0)
-        t_wild = (tcol < 0).expand_as(same_type)
-        per_event = torch.cat([f.one_hot(kind, N_KINDS), f.one_hot(actor, 3), (n.float() / MAX_N)[..., None]], -1)
-        per_pair = torch.stack([same_type, same_color, same_slot, e_wild, has.expand_as(same_type),
-                                named_same, named_other, t_wild], -1).float()
-        g, t = tokens.shape[:2]
-        return torch.cat([per_event[:, :, None].expand(g, t, len(tt), per_event.shape[-1]).float(), per_pair], -1)
+        t_idx = torch.arange(tokens.shape[1], device=tokens.device).expand(g, -1).contiguous()
+        interval = torch.searchsorted(pos.contiguous(), t_idx, right=True)  # event t is read at decision `interval`
+        interval = torch.where(kind == PAD, torch.full_like(interval, d), interval).clamp_max(d)
+        gi = torch.arange(g, device=tokens.device)[:, None].expand_as(interval)
+        ch = self.channel[kind * 3 + actor]
+        k1, c1 = self.k + 1, self.colors + 1
+        # (G, D+1, channel, type) card counts; slot D collects events no decision reads
+        cards = tokens.new_zeros((g, d + 1, 6, k1), dtype=torch.float32)
+        keep = ch >= 0
+        cards.index_put_((gi[keep], interval[keep], ch[keep], card[keep]), torch.ones_like(card[keep], dtype=torch.float32), accumulate=True)
+        named = tokens.new_zeros((g, d + 1, 2, c1), dtype=torch.float32)  # (self, opp) plays naming a color
+        play = (kind == PLAY) & (color < self.colors)
+        named.index_put_((gi[play], interval[play], actor[play] - 1, color[play]), torch.ones_like(color[play], dtype=torch.float32), accumulate=True)
+        other = tokens.new_zeros((g, d + 1, 5), dtype=torch.float32)  # draw events and cards (self, opp), reshuffles
+        for j, mask, value in ((0, (kind == DRAW) & (actor == SELF), 1.0), (1, (kind == DRAW) & (actor == OPP), 1.0),
+                               (2, (kind == DRAW) & (actor == SELF), None), (3, (kind == DRAW) & (actor == OPP), None),
+                               (4, kind == RESHUFFLE, 1.0)):
+            v = torch.ones_like(n[mask], dtype=torch.float32) if value is not None else n[mask].float()
+            other.index_put_((gi[mask], interval[mask], torch.full_like(interval[mask], j)), v, accumulate=True)
+        cards, named, other = cards[:, :d], named[:, :d], other[:, :d]
+
+        tt = self.tok_type
+        tcol, tslot = self.type_color[tt], self.type_slot[tt]
+        colored = (tcol >= 0).float()
+        same_type = cards[..., tt]  # (G, D, 6, 54)
+        by_color = cards @ self.color_oh  # (G, D, 6, colors)
+        by_slot = cards @ self.slot_oh
+        same_color = (by_color[..., tcol.clamp_min(0)] - same_type) * colored
+        same_slot = (by_slot[..., tslot.clamp_min(0)] - same_type) * colored
+        wilds = (cards @ self.wild)[..., None].expand_as(same_type)
+        per_card = torch.cat([same_type, same_color, same_slot, wilds], 2).permute(0, 1, 3, 2)  # (G, D, 54, 24)
+        named_total = named[..., : self.colors].sum(-1, keepdim=True)
+        named_same = named[..., tcol.clamp_min(0)] * colored  # (G, D, 2, 54)
+        named_other = (named_total - named[..., tcol.clamp_min(0)]) * colored
+        per_named = torch.cat([named_same, named_other], 2).permute(0, 1, 3, 2)  # (G, D, 54, 4)
+        n_tok = len(tt)
+        per_other = other[:, :, None].expand(g, d, n_tok, 5)
+        t_wild = (1.0 - colored).expand(g, d, n_tok)[..., None]
+        return torch.log1p(torch.cat([per_card, per_named, per_other, t_wild], -1))
 
     def forward(self, batch):
         rg, step = batch["row_game"], batch["step"]
@@ -495,12 +538,9 @@ class Recurrent(nn.Module):
         tok, col, glob = pad(batch["tok"]), pad(batch["col"]), pad(batch["glob"])
         valid = pad(torch.ones_like(rg, dtype=torch.bool))
         if self.history:
-            ev = self.phi(self._relations(batch["tokens"]))  # (G, T, 54, ev)
-            cum = torch.cat([ev.new_zeros(g, 1, n_tok, self.ev), ev.cumsum(1)], 1)
-            pos = pad(batch["pos"])
-            prev = torch.cat([pos.new_zeros(g, 1), pos[:, :-1]], 1)
-            gi = torch.arange(g, device=pos.device)[:, None]
-            summary = cum[gi, pos] - cum[gi, prev]  # (G, D, 54, ev): events since the last decision
+            # Padded decisions get position "infinity", so no event is binned into them.
+            pos = pad(batch["pos"]).masked_fill(~valid, torch.iinfo(torch.long).max)
+            summary = self.phi(self._summaries(batch["tokens"], pos))  # (G, D, 54, ev)
         m = tok.new_zeros(g, n_tok, self.mem)
         out = []
         for i in range(d):
@@ -575,13 +615,16 @@ def game_batch(data: Data, games: np.ndarray, rows_of_game: dict, device, rng=No
 BUCKET_BATCHES = 50  # length-sorting window, in batches
 
 
-def batches(data: Data, model_name: str, rows: np.ndarray, device, rng=None, row_bs: int = 1024, game_bs: int = 64):
+def batches(data: Data, model_name: str, rows: np.ndarray, device, rng=None, row_bs: int = 1024, game_bs: int = 64,
+            step_budget: int = 4096):
     """Yield batches covering `rows` exactly once (shuffled when `rng` is given).
 
     Game batches are length-bucketed: a stream is padded to its batch's longest game,
     and at random a batch of 64 is ~73% padding (mean 62 tokens, p90 118, max ~500).
     Training shuffles, sorts each window of `BUCKET_BATCHES` batches by length, then
-    shuffles the batch order; evaluation simply sorts.
+    shuffles the batch order; evaluation simply sorts. `rec-`/`recnull-` batches are cut
+    by `step_budget` (games x longest game's decisions) instead of `game_bs`: their
+    decision loop keeps every step's activations for the backward pass.
     """
     if uses_games(model_name):
         games = np.unique(data.game[rows])
@@ -594,17 +637,30 @@ def batches(data: Data, model_name: str, rows: np.ndarray, device, rng=None, row
             length = np.array([len(rows_of_game[int(g)]) for g in games])
         else:
             length = data.offsets[games + 1] - data.offsets[games]
+        by_steps = model_name.startswith(("rec-", "recnull-"))
+
+        def cut(g: np.ndarray, lens: np.ndarray) -> list[np.ndarray]:
+            """Split length-sorted games into batches."""
+            if not by_steps:
+                return [g[i : i + game_bs] for i in range(0, len(g), game_bs)]
+            out, begin = [], 0
+            for i in range(1, len(g) + 1):
+                if i == len(g) or (i + 1 - begin) * lens[i] > step_budget:
+                    out.append(g[begin:i])
+                    begin = i
+            return out
+
         if rng is None:
-            games = games[np.argsort(length, kind="stable")]
-            chunks = [games[i : i + game_bs] for i in range(0, len(games), game_bs)]
+            o = np.argsort(length, kind="stable")
+            chunks = cut(games[o], length[o])
         else:
             order = rng.permutation(len(games))
             games, length = games[order], length[order]
             window = game_bs * BUCKET_BATCHES
             chunks = []
             for w in range(0, len(games), window):
-                g = games[w : w + window][np.argsort(length[w : w + window], kind="stable")]
-                chunks += [g[i : i + game_bs] for i in range(0, len(g), game_bs)]
+                o = np.argsort(length[w : w + window], kind="stable")
+                chunks += cut(games[w : w + window][o], length[w : w + window][o])
             chunks = [chunks[i] for i in rng.permutation(len(chunks))]
         for chunk in chunks:
             yield game_batch(data, chunk, rows_of_game, device, rng, uses_features(model_name))
@@ -639,12 +695,13 @@ def build(name: str, rs, width: int, blocks: int):
 
 
 @torch.no_grad()
-def predict(model, data: Data, name: str, rows: np.ndarray, device, game_bs: int = 64) -> tuple[np.ndarray, np.ndarray]:
+def predict(model, data: Data, name: str, rows: np.ndarray, device, game_bs: int = 64,
+            step_budget: int = 4096) -> tuple[np.ndarray, np.ndarray]:
     """(per-row nats/card, per-row log p) in `rows` order."""
     model.eval()
     nll = np.empty(len(data.game), dtype=np.float64)
     logp = np.empty((len(data.game), data.unseen.shape[1]), dtype=np.float32)
-    for b in batches(data, name, rows, device, game_bs=game_bs):
+    for b in batches(data, name, rows, device, game_bs=game_bs, step_budget=step_budget):
         lp = masked_log_probs(model(b), b["unseen"])
         nll[b["rows"]] = card_nll(lp, b["target"]).float().cpu().numpy()
         logp[b["rows"]] = lp.float().cpu().numpy()
@@ -652,7 +709,7 @@ def predict(model, data: Data, name: str, rows: np.ndarray, device, game_bs: int
 
 
 def fit(model, data: Data, name: str, train: np.ndarray, val: np.ndarray, device, epochs: int,
-        lr, patience: int, seed: int, game_bs: int = 64, warm: bool = False) -> dict:
+        lr, patience: int, seed: int, game_bs: int = 64, warm: bool = False, step_budget: int = 4096) -> dict:
     """Adam with early stopping on validation. `lr` is a rate or a list of param groups.
 
     A warm-started model is scored before any update and that score is the first
@@ -665,19 +722,19 @@ def fit(model, data: Data, name: str, train: np.ndarray, val: np.ndarray, device
     best, best_state, bad, history = math.inf, None, 0, []
     start_val = None
     if warm:
-        start_val = best = float(predict(model, data, name, val, device, game_bs)[0].mean())
+        start_val = best = float(predict(model, data, name, val, device, game_bs, step_budget)[0].mean())
         best_state = {k: t.detach().clone() for k, t in model.state_dict().items()}
         print(f"    warm start: val {best:.5f} nats/card", flush=True)
     for epoch in range(epochs):
         model.train()
         started = time.time()
-        for b in batches(data, name, train, device, rng, game_bs=game_bs):
+        for b in batches(data, name, train, device, rng, game_bs=game_bs, step_budget=step_budget):
             loss = card_nll(masked_log_probs(model(b), b["unseen"]), b["target"]).mean()
             opt.zero_grad(set_to_none=True)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
-        v = float(predict(model, data, name, val, device, game_bs)[0].mean())
+        v = float(predict(model, data, name, val, device, game_bs, step_budget)[0].mean())
         history.append(v)
         print(f"    epoch {epoch + 1}: val {v:.5f} nats/card ({time.time() - started:.0f}s)", flush=True)
         if v < best - 1e-5:
@@ -791,12 +848,12 @@ def run_fit(args) -> None:
                           {"params": list(model.cell.parameters()) + list(model.phi.parameters()), "lr": args.seq_lr}]
                     lr = [group for group in lr if group["params"]]
             info = fit(model, source, name, train, source.rows(1), device, args.epochs, lr, args.patience,
-                       args.seed, args.game_batch, warm)
+                       args.seed, args.game_batch, warm, args.step_budget)
             if name.startswith("rel-"):
                 arm = name.split("-")[1]
                 rel_states[(arm, fraction)] = {k: t.detach().cpu().clone() for k, t in model.state_dict().items()}
                 torch.save(rel_states[(arm, fraction)], Path(args.data) / f"{name}_{stamp}_{fraction:g}.pt")
-            nll, logp = predict(model, data, name, test, device, args.game_batch)
+            nll, logp = predict(model, data, name, test, device, args.game_batch, args.step_budget)
             r2c, r2w = color_r2(data, test, logp, rs.colors)
             info.update(test_nll=float(nll.mean()), color_r2=r2c, wild_r2=r2w, train_rows=len(train),
                         params=sum(p.numel() for p in model.parameters()), seconds=time.time() - started)
@@ -867,6 +924,8 @@ def main(argv=None) -> None:
     f.add_argument("--rel-lr-scale", type=float, default=0.1, help="lr multiplier for a warm-started rel-C part")
     f.add_argument("--seed", type=int, default=0)
     f.add_argument("--game-batch", type=int, default=64, help="games per batch for sequence and hybrid models")
+    f.add_argument("--step-budget", type=int, default=4096,
+                   help="rec models: max games x decisions per batch (activation memory)")
     f.add_argument("--in-memory", action="store_true", help="load features into RAM instead of memory-mapping")
     args = ap.parse_args(argv)
     if args.command == "collect":
