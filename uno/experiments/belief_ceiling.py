@@ -244,7 +244,7 @@ class Data:
     held-out deal was seen in training under another opponent or seat.
     """
 
-    def __init__(self, path: Path, test_mod: int = 10) -> None:
+    def __init__(self, path: Path, test_mod: int = 10, in_memory: bool = False) -> None:
         self.path = path
         self.meta = json.loads((path / "meta.json").read_text())
         load = lambda name, mmap=None: np.load(path / f"{name}.npy", mmap_mode=mmap)
@@ -252,7 +252,8 @@ class Data:
             setattr(self, key, load(key))
         self.features = self.meta.get("features", True)
         self.tok, self.col, self.glob = (
-            (load(f"feat_{k}", "r") for k in ("tok", "col", "glob")) if self.features else (None, None, None))
+            (load(f"feat_{k}", None if in_memory else "r") for k in ("tok", "col", "glob"))
+            if self.features else (None, None, None))
         self.games = load("games")
         self.tokens = load("tokens")
         self.offsets = load("token_offsets")
@@ -455,8 +456,17 @@ def game_batch(data: Data, games: np.ndarray, rows_of_game: dict, device, rng=No
     return out
 
 
+BUCKET_BATCHES = 50  # length-sorting window, in batches
+
+
 def batches(data: Data, model_name: str, rows: np.ndarray, device, rng=None, row_bs: int = 1024, game_bs: int = 64):
-    """Yield batches covering `rows` exactly once (shuffled when `rng` is given)."""
+    """Yield batches covering `rows` exactly once (shuffled when `rng` is given).
+
+    Game batches are length-bucketed: a stream is padded to its batch's longest game,
+    and at random a batch of 64 is ~73% padding (mean 62 tokens, p90 118, max ~500).
+    Training shuffles, sorts each window of `BUCKET_BATCHES` batches by length, then
+    shuffles the batch order; evaluation simply sorts.
+    """
     if uses_games(model_name):
         games = np.unique(data.game[rows])
         rows_of_game = {}
@@ -464,10 +474,21 @@ def batches(data: Data, model_name: str, rows: np.ndarray, device, rng=None, row
         cuts = np.flatnonzero(np.diff(data.game[order])) + 1
         for chunk in np.split(order, cuts):
             rows_of_game[int(data.game[chunk[0]])] = chunk
-        if rng is not None:
-            games = rng.permutation(games)
-        for i in range(0, len(games), game_bs):
-            yield game_batch(data, games[i : i + game_bs], rows_of_game, device, rng, uses_features(model_name))
+        length = data.offsets[games + 1] - data.offsets[games]
+        if rng is None:
+            games = games[np.argsort(length, kind="stable")]
+            chunks = [games[i : i + game_bs] for i in range(0, len(games), game_bs)]
+        else:
+            order = rng.permutation(len(games))
+            games, length = games[order], length[order]
+            window = game_bs * BUCKET_BATCHES
+            chunks = []
+            for w in range(0, len(games), window):
+                g = games[w : w + window][np.argsort(length[w : w + window], kind="stable")]
+                chunks += [g[i : i + game_bs] for i in range(0, len(g), game_bs)]
+            chunks = [chunks[i] for i in rng.permutation(len(chunks))]
+        for chunk in chunks:
+            yield game_batch(data, chunk, rows_of_game, device, rng, uses_features(model_name))
     else:
         order = rng.permutation(rows) if rng is not None else rows
         for i in range(0, len(order), row_bs):
@@ -497,12 +518,12 @@ def build(name: str, rs, width: int, blocks: int):
 
 
 @torch.no_grad()
-def predict(model, data: Data, name: str, rows: np.ndarray, device) -> tuple[np.ndarray, np.ndarray]:
+def predict(model, data: Data, name: str, rows: np.ndarray, device, game_bs: int = 64) -> tuple[np.ndarray, np.ndarray]:
     """(per-row nats/card, per-row log p) in `rows` order."""
     model.eval()
     nll = np.empty(len(data.game), dtype=np.float64)
     logp = np.empty((len(data.game), data.unseen.shape[1]), dtype=np.float32)
-    for b in batches(data, name, rows, device):
+    for b in batches(data, name, rows, device, game_bs=game_bs):
         lp = masked_log_probs(model(b), b["unseen"])
         nll[b["rows"]] = card_nll(lp, b["target"]).float().cpu().numpy()
         logp[b["rows"]] = lp.float().cpu().numpy()
@@ -510,7 +531,7 @@ def predict(model, data: Data, name: str, rows: np.ndarray, device) -> tuple[np.
 
 
 def fit(model, data: Data, name: str, train: np.ndarray, val: np.ndarray, device, epochs: int,
-        lr: float, patience: int, seed: int) -> dict:
+        lr: float, patience: int, seed: int, game_bs: int = 64) -> dict:
     if not any(p.requires_grad for p in model.parameters()):
         return {"epochs": 0}
     opt = torch.optim.Adam(model.parameters(), lr=lr)
@@ -519,13 +540,13 @@ def fit(model, data: Data, name: str, train: np.ndarray, val: np.ndarray, device
     for epoch in range(epochs):
         model.train()
         started = time.time()
-        for b in batches(data, name, train, device, rng):
+        for b in batches(data, name, train, device, rng, game_bs=game_bs):
             loss = card_nll(masked_log_probs(model(b), b["unseen"]), b["target"]).mean()
             opt.zero_grad(set_to_none=True)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
-        v = float(predict(model, data, name, val, device)[0].mean())
+        v = float(predict(model, data, name, val, device, game_bs)[0].mean())
         history.append(v)
         print(f"    epoch {epoch + 1}: val {v:.5f} nats/card ({time.time() - started:.0f}s)", flush=True)
         if v < best - 1e-5:
@@ -563,20 +584,23 @@ def clustered(diff: np.ndarray, clusters: np.ndarray) -> tuple[float, float]:
 def run_fit(args) -> None:
     from uno.game.rules import NAMED
 
-    data = Data(Path(args.data))
+    data = Data(Path(args.data), in_memory=args.in_memory)
     rs = next(r for r in NAMED.values() if repr(r) == data.meta["ruleset"])
     data.meta["_rs_types"] = rs
     tdata = None
     if args.train_data:
         # A larger stream-only dataset for models without features. Its split uses the
         # same deal rule, so none of its training deals is one of `data`'s test deals.
-        tdata = Data(Path(args.train_data))
+        tdata = Data(Path(args.train_data), in_memory=args.in_memory)
         tdata.meta["_rs_types"] = rs
         for key in ("actor", "start", "seed", "ruleset"):
             if tdata.meta[key] != data.meta[key]:
                 raise ValueError(f"--train-data differs from --data in {key}")
     device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
     torch.manual_seed(args.seed)
+    if device.type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
     train_all, val, test = data.rows(0), data.rows(1), data.rows(2)
     print(f"{data.meta['decisions']:,} decisions from {data.meta['games']:,} games; "
           f"train/val/test rows {len(train_all):,}/{len(val):,}/{len(test):,}; device {device}")
@@ -602,8 +626,9 @@ def run_fit(args) -> None:
             model = build(name, rs, args.width, args.blocks).to(device)
             started = time.time()
             lr = args.seq_lr if name in SEQUENCE else args.lr
-            info = fit(model, source, name, train, source.rows(1), device, args.epochs, lr, args.patience, args.seed)
-            nll, logp = predict(model, data, name, test, device)
+            info = fit(model, source, name, train, source.rows(1), device, args.epochs, lr, args.patience,
+                       args.seed, args.game_batch)
+            nll, logp = predict(model, data, name, test, device, args.game_batch)
             r2c, r2w = color_r2(data, test, logp, rs.colors)
             info.update(test_nll=float(nll.mean()), color_r2=r2c, wild_r2=r2w, train_rows=len(train),
                         params=sum(p.numel() for p in model.parameters()), seconds=time.time() - started)
@@ -656,6 +681,8 @@ def main(argv=None) -> None:
     f.add_argument("--width", type=int, default=128)
     f.add_argument("--blocks", type=int, default=2)
     f.add_argument("--seed", type=int, default=0)
+    f.add_argument("--game-batch", type=int, default=64, help="games per batch for sequence and hybrid models")
+    f.add_argument("--in-memory", action="store_true", help="load features into RAM instead of memory-mapping")
     args = ap.parse_args(argv)
     if args.command == "collect":
         collect(args.actor, args.deals, args.start, args.out, args.seed, features=not args.no_features)
