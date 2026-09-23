@@ -1,0 +1,43 @@
+# b128_base + optim.actor_lr = 2e-4 (was 5e-5)
+ruleset = "FULL_UNO"
+arm = "B"
+training_seed = 0
+device = "cuda"
+data_cap = 5000000
+time_cap_s = 5400  # safety net only: ~35 min expected; a run cut by it is not comparable
+league = "rulebot"
+
+[model]
+kind = "relational"
+width = 128
+blocks = 2
+
+[collection]
+workers = 12  # 8 physical cores; not in the algorithm hash, so still a B seed-0 replica
+games_per_cell = 64
+live_games_per_worker = 64
+
+[evaluation]
+deals_per_cell = 1024  # same selection panel and 250k grid as A/B: curves stay paired
+every_fraction = 0.05
+
+[optim]
+n_minibatches = 32
+precision = "bf16"
+normalize_advantages = true
+entropy_coef = 0.01
+actor_grad_norm = 0.5
+actor_lr = 2e-4
+critic_grad_norm = 2.0
+critic_lr = 3e-4
+gae_lambda = 0.95
+
+[execution]
+collection_threads = 1
+update_threads = 1
+compile = true
+
+[tracking]
+study_id = "sweep-2026-09-23"
+kind = "sweep"
+name = "b128_alr2e-4"
