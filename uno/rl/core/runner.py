@@ -14,6 +14,7 @@ from uno.rl.eval.opponents import league
 class Execution:
     collection_threads: int = 0
     update_threads: int = 0
+    compile: bool = False  # torch.compile the PPO forwards (`uno.rl.algo.train.compile_models`)
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ def run(spec: TrainSpec) -> dict:
     training.execution = {
         "collection_torch_threads": spec.execution.collection_threads,
         "update_torch_threads": spec.execution.update_threads,
+        "compile": spec.execution.compile,
     }
 
     training.execution = {

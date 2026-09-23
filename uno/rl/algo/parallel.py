@@ -14,6 +14,10 @@ streams (`uno.rl.core.streams`), the coordinator reassembles in logical ID order
 `tests/rl/test_parallel.py` asserts that 1 worker and N workers produce the same
 rollout. Worker count is an execution setting, not a data-allocation setting.
 
+The same pool plays the scheduled DEV panel (`ParallelCollector.evaluate`): panel
+games are keyed by episode and decision like training games, so the scores equal
+`uno.rl.eval.evaluate.play_panel` in one process (also asserted there).
+
 Transfers use named shared-memory blocks for NumPy arrays and a small serialized
 descriptor over the result queue, one chunk per bundle. The result queue is
 bounded to one pending descriptor per worker, and the coordinator records block
@@ -34,7 +38,9 @@ from multiprocessing import shared_memory
 import os
 import queue
 import signal
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import torch
@@ -48,9 +54,12 @@ from uno.rl.model import make_actor
 from uno.rl.eval.opponents import league
 from uno.rl.algo.policy import ActorPolicy
 from uno.rl.algo.rollout import Builder, Rollout
+from uno.rl.eval.evaluate import Behavior, PanelResult, panel_result, play_episodes
 
 TARGET_BUNDLES_PER_WORKER = 3  # measured
 STOP = "stop"
+COLLECT = "collect"  # task kinds
+EVAL = "eval"
 
 
 def _payload(rollout: Rollout) -> dict:
@@ -188,7 +197,13 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
             if item is None:
                 results.put(("done", version, None, queue_put_seconds))
                 break
-            bundle_id, episodes = item
+            kind, bundle_id, episodes = item
+            if kind == EVAL:
+                entries, behavior = play_episodes(
+                    episodes, policy, opponents, cfg.training_seed, cfg.live_games
+                )
+                results.put((EVAL, bundle_id, (entries, behavior), None))
+                continue
             sub = Manifest(-1, tuple(episodes), (), 0)
             rollout, stats = collect(
                 sub,
@@ -224,7 +239,12 @@ def _worker(cfg: WorkerConfig, tasks, results, ctl) -> None:
 
 
 class ParallelCollector:
-    """A pool of persistent collector processes, reused across iterations."""
+    """A pool of persistent collector processes, reused across iterations.
+
+    The pool runs two kinds of work on a published actor: training collection
+    (`collect`) and the scheduled DEV panel (`evaluate`). One kind at a time: a
+    call returns only after every worker has reported the end of its queue.
+    """
 
     def __init__(
         self,
@@ -265,14 +285,79 @@ class ParallelCollector:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    def _local_policy(self, state: dict) -> ActorPolicy:
+        """A coordinator-side CPU replica for retries. Never wrap the caller's
+        actor: `ActorPolicy` moves its module to the policy device, which would
+        pull a CUDA training actor onto the CPU."""
+        from uno.rl.core.config_io import model_from_dict
+
+        rs = NAMED[self.cfg.ruleset]
+        actor_spec = spec(rs, self.cfg.arm)
+        replica = make_actor(actor_spec, model_from_dict(self.cfg.model_config))
+        replica.load_state_dict(state)
+        return ActorPolicy(actor_spec, replica, temperature=self.cfg.temperature, device="cpu")
+
+    def _run(
+        self,
+        kind: str,
+        episodes: list,
+        actor,
+        version: int,
+        bundle: int,
+        on_result,
+        stats: Stats | None,
+        timeout: float,
+    ) -> tuple[dict[int, list], set[int], dict]:
+        """Publish `actor`, queue `episodes` in bundles and hand each result to
+        `on_result(bundle_id, payload, worker_stats)`. Returns the bundles, the
+        ones no worker reported (to retry locally) and the published weights."""
+        state = cpu_state(actor)
+        for q in self._ctl:
+            q.put(("weights", version, state))
+        bundles = {}
+        for i in range(0, len(episodes), bundle):
+            bundles[i // bundle] = episodes[i : i + bundle]
+            self._tasks.put((kind, i // bundle, episodes[i : i + bundle]))
+        for _ in self._procs:
+            self._tasks.put(None)
+
+        outstanding = set(bundles)
+        finished_workers = 0
+        deadline = time.perf_counter() + timeout
+        while finished_workers < len(self._procs):
+            wait_started = time.perf_counter()
+            try:
+                message, a, payload, worker_stats = self._results.get(timeout=1.0)
+            except queue.Empty:
+                if stats is not None:
+                    stats.result_queue_wait_seconds += time.perf_counter() - wait_started
+                # A dead pool would otherwise be waited on for the whole timeout.
+                if (
+                    not any(p.is_alive() for p in self._procs)
+                    or time.perf_counter() > deadline
+                ):
+                    break
+                continue
+            if stats is not None:
+                stats.result_queue_wait_seconds += time.perf_counter() - wait_started
+            if message == "done":
+                finished_workers += 1
+                if stats is not None:
+                    stats.result_queue_put_seconds += float(worker_stats)
+                continue
+            on_result(a, payload, worker_stats)
+            outstanding.discard(a)
+        return bundles, outstanding, state
+
     def collect(
         self,
         manifest: Manifest,
-        actor: nn.Module,
+        actor,
         critic_spec,
         behavior_version: int,
         timeout: float = 600.0,
     ) -> tuple[Rollout, Stats]:
+        """Collect `manifest` under `actor` (a module or a `cpu_state` snapshot)."""
         rs = NAMED[self.cfg.ruleset]
         actor_spec = spec(rs, self.cfg.arm)
         builder = Builder(
@@ -285,10 +370,6 @@ class ParallelCollector:
         t0 = time.perf_counter()
         by_id = {e.episode_id: e for e in manifest.episodes}
 
-        state = {k: v.detach().cpu().clone() for k, v in actor.state_dict().items()}
-        for q in self._ctl:
-            q.put(("weights", behavior_version, state))
-
         # Adaptive bundle sizing targetting around three per worker, never more than live games, min at 8
         # I measured this empirically and it gives good load balancing
         # I also rounded to nearest mutiple of 8 in order not to break anything but it's probably not necessary
@@ -297,40 +378,13 @@ class ParallelCollector:
                 8,
                 min(
                     self.cfg.live_games,
-                    math.ceil(len(manifest) / (self.workers * 3)),
+                    math.ceil(len(manifest) / (self.workers * TARGET_BUNDLES_PER_WORKER)),
                 ),
             )
         else:
             bundle = self.bundle
-        bundles = {}
-        episodes = list(manifest.episodes)
-        for i in range(0, len(episodes), bundle):
-            bundles[i // bundle] = episodes[i : i + bundle]
-            self._tasks.put((i // bundle, episodes[i : i + bundle]))
-        for _ in self._procs:
-            self._tasks.put(None)
 
-        outstanding = set(bundles)
-        finished_workers = 0
-        deadline = time.perf_counter() + timeout
-        while finished_workers < len(self._procs):
-            wait_started = time.perf_counter()
-            try:
-                kind, a, payload, worker_stats = self._results.get(timeout=1.0)
-            except queue.Empty:
-                stats.result_queue_wait_seconds += time.perf_counter() - wait_started
-                # A dead pool would otherwise be waited on for the whole timeout.
-                if (
-                    not any(p.is_alive() for p in self._procs)
-                    or time.perf_counter() > deadline
-                ):
-                    break
-                continue
-            stats.result_queue_wait_seconds += time.perf_counter() - wait_started
-            if kind == "done":
-                finished_workers += 1
-                stats.result_queue_put_seconds += float(worker_stats)
-                continue
+        def on_result(bundle_id, payload, worker_stats) -> None:
             stats.transfer_bytes += int(payload.get("bytes", len(payload)))
             started = time.perf_counter()
             decoded = _load_shared_payload(payload) if "shared" in payload else payload
@@ -338,16 +392,17 @@ class ParallelCollector:
             started = time.perf_counter()
             _merge(builder, decoded, by_id)
             stats.merge_seconds += time.perf_counter() - started
-            outstanding.discard(a)
             _accumulate(stats, worker_stats)
 
-        retried = sorted(outstanding)
+        bundles, retried, state = self._run(
+            COLLECT, list(manifest.episodes), actor, behavior_version, bundle,
+            on_result, stats, timeout,
+        )  # fmt: skip
+        retried = sorted(retried)
         if retried:
             # A worker died or timed out. Retry its logical work here: the episodes
             # carry their own streams, so the retry is the same data.
-            local = ActorPolicy(
-                actor_spec, actor, temperature=self.cfg.temperature, device="cpu"
-            )
+            local = self._local_policy(state)
             for bundle_id in retried:
                 sub = Manifest(-1, tuple(bundles[bundle_id]), (), 0)
                 rollout, worker_stats = collect(
@@ -368,6 +423,91 @@ class ParallelCollector:
         stats.merge_seconds += time.perf_counter() - started
         return rollout, stats
 
+    def evaluate(
+        self,
+        manifest: Manifest,
+        actor,
+        version: int,
+        on_games: Callable[[int], None] | None = None,
+        timeout: float = 1800.0,
+        local_policy: ActorPolicy | None = None,
+        local_share: float = 0.0,
+    ) -> PanelResult:
+        """Play a DEV panel on the pool, optionally sharing it with the caller.
+
+        With `local_policy` (typically the coordinator's GPU actor), a fixed
+        `local_share` of the games -- every k-th episode, so each cell is covered --
+        is played in this process while the pool plays the rest. The split is
+        static, so a given configuration always plays the same games on the same
+        device. Every draw is keyed by episode and decision, so the games are those
+        of `uno.rl.eval.evaluate.play_panel` in one process; only float-level
+        differences between the CPU and GPU forward can separate them.
+        """
+        episodes = list(manifest.episodes)
+        local: list = []
+        if local_policy is not None and local_share > 0.0:
+            stride = max(1, round(1.0 / local_share))
+            local = episodes[::stride]
+            episodes = [e for i, e in enumerate(episodes) if i % stride]
+        bundle = self.bundle or max(
+            1, math.ceil(len(episodes) / (self.workers * TARGET_BUNDLES_PER_WORKER))
+        )
+        entries: list = []
+        behavior = Behavior()
+
+        def on_result(bundle_id, payload, _) -> None:
+            part_entries, part_behavior = payload
+            entries.extend(part_entries)
+            behavior.merge(part_behavior)
+            if on_games is not None:
+                on_games(len(part_entries))
+
+        pooled: dict = {}
+
+        def run_pool() -> None:
+            try:
+                pooled["run"] = self._run(
+                    EVAL, episodes, actor, version, bundle, on_result, None, timeout
+                )
+            except BaseException as exc:  # re-raised below
+                pooled["error"] = exc
+
+        thread = threading.Thread(target=run_pool, name="pool-evaluation", daemon=True)
+        thread.start()
+        local_result = None
+        if local:
+            local_result = play_episodes(
+                local, local_policy, league(NAMED[self.cfg.ruleset], self.cfg.league),
+                self.cfg.training_seed, self.cfg.live_games, on_games,
+            )  # fmt: skip
+        thread.join()
+        if "error" in pooled:
+            raise pooled["error"]
+        bundles, retried, state = pooled["run"]
+        if local_result is not None:
+            entries.extend(local_result[0])
+            behavior.merge(local_result[1])
+        if retried:
+            replica = self._local_policy(state)
+            opponents = league(NAMED[self.cfg.ruleset], self.cfg.league)
+            for bundle_id in sorted(retried):
+                on_result(
+                    bundle_id,
+                    play_episodes(
+                        bundles[bundle_id], replica, opponents,
+                        self.cfg.training_seed, self.cfg.live_games,
+                    ),
+                    None,
+                )  # fmt: skip
+        return panel_result(manifest, entries, behavior)
+
+
+def cpu_state(actor) -> dict:
+    """A detached CPU copy of an actor's weights (or an existing copy, as is)."""
+    if isinstance(actor, dict):
+        return actor
+    return {k: v.detach().cpu().clone() for k, v in actor.state_dict().items()}
+
 
 def _accumulate(total: Stats, part: Stats) -> None:
     total.games += part.games
@@ -387,4 +527,4 @@ def _accumulate(total: Stats, part: Stats) -> None:
         total.ends[k] = total.ends.get(k, 0) + v
 
 
-__all__ = ["BUNDLE", "ParallelCollector", "WorkerConfig"]
+__all__ = ["ParallelCollector", "WorkerConfig", "cpu_state"]

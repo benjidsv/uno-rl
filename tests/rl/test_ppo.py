@@ -604,3 +604,14 @@ def test_gae_does_not_cross_episode_boundaries():
 
     torch.testing.assert_close(adv.cpu(), expected)
     torch.testing.assert_close(targets.cpu(), expected)
+
+
+def test_a_non_finite_actor_kl_stops_the_update():
+    """KL early stopping compares `kl > target`, which is False for NaN; a NaN
+    policy must raise instead of training on."""
+    actor, critic, rollout, _, _ = setup()
+    with torch.no_grad():
+        next(actor.parameters()).fill_(float("nan"))
+    with pytest.raises(FloatingPointError, match="non-finite actor KL"):
+        ppo.update(actor, critic, torch.optim.Adam(actor.parameters()), torch.optim.Adam(critic.parameters()),
+                   rollout, Optim(actor_epochs=1, critic_epochs=1, n_minibatches=4), 0, 0)  # fmt: skip

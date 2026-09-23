@@ -33,6 +33,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from uno.rl.env.features import Features, Spec
@@ -144,7 +145,10 @@ class Encoder(nn.Module):
         ctx = torch.cat((means, maxes), dim=-1)  # (n, classes, 2w)
         return ctx[:, self.slot_class]  # (n, slots, 2w)
 
-    def forward(self, tok: torch.Tensor, col: torch.Tensor, glob: torch.Tensor):
+    def forward_reference(self, tok: torch.Tensor, col: torch.Tensor, glob: torch.Tensor):
+        """The literal concatenate-then-project encoder: the correctness oracle for
+        `forward`, which computes the same function without materializing the
+        broadcast concatenations."""
         n = tok.shape[0]
         c, s, wl, w = self.colors, self.slots, self.wilds, self.width
         grid_in = tok[:, : c * s].reshape(n, c, s, -1)
@@ -206,6 +210,81 @@ class Encoder(nn.Module):
         global_ctx = torch.cat((color_ctx.mean(1), color_ctx.amax(1), wild_ctx), dim=-1)
         return h, hw, color_ctx, global_ctx
 
+    def forward(self, tok: torch.Tensor, col: torch.Tensor, glob: torch.Tensor):
+        """`forward_reference` without the broadcast concatenations.
+
+        A linear layer on a concatenation is the sum of the column blocks applied to
+        each piece, and broadcasting commutes with a linear map. So each context is
+        projected at its own size -- per color, per slot, per row -- and only then
+        broadcast-added. Same parameters and function; only floating-point summation
+        order differs (`tests/rl/test_model.py` pins it to the reference).
+        """
+        n = tok.shape[0]
+        c, s, w = self.colors, self.slots, self.width
+        sp = self.spec
+        Wt, Wc, We, Wg = _weight_blocks(
+            self.proj, (sp.tok_width, sp.col_width, w, sp.glob_width)
+        )
+        tok_p = F.linear(tok, Wt)  # (n, tokens, w)
+        col_p = F.linear(col, Wc)  # (n, colors, w); a wild's color block is zero
+        glob_p = F.linear(glob, Wg, self.proj.bias)  # (n, w), bias added once
+        emb = self.embed.weight
+        grid_e = F.linear(emb[self.token_class], We)  # (slots, w)
+        wild_e = F.linear(emb[self.wild_class_ids], We)  # (wilds, w)
+        h = torch.relu(
+            tok_p[:, : c * s].reshape(n, c, s, w)
+            + col_p.unsqueeze(2)
+            + grid_e
+            + glob_p[:, None, None]
+        )
+        hw = torch.relu(tok_p[:, c * s :] + wild_e + glob_p.unsqueeze(1))
+
+        for grid_block, wild_block in zip(self.grid_blocks, self.wild_blocks):
+            color_ctx = _pool(h, 2)  # (n, colors, 2w)
+            rank_ctx = _pool(h, 1)  # (n, slots, 2w)
+            class_ctx = self._class_ctx(h)  # (n, slots, 2w)
+            wild_ctx = _pool(hw, 1)  # (n, 2w)
+            global_ctx = torch.cat(
+                (color_ctx.mean(1), color_ctx.amax(1), wild_ctx), dim=-1
+            )  # (n, 6w)
+            first, second = grid_block[0], grid_block[2]
+            Wh, Wcol, Wrank, Wcls, Wglob = _weight_blocks(
+                first, (w, 2 * w, 2 * w, 2 * w, 6 * w)
+            )
+            grid_hidden = (
+                F.linear(h, Wh)
+                + F.linear(color_ctx, Wcol).unsqueeze(2)
+                + (F.linear(rank_ctx, Wrank) + F.linear(class_ctx, Wcls)).unsqueeze(1)
+                + F.linear(global_ctx, Wglob, first.bias)[:, None, None]
+            )
+            grid_update = second(torch.relu(grid_hidden))
+            wfirst, wsecond = wild_block[0], wild_block[2]
+            Wwh, Wwg = _weight_blocks(wfirst, (w, 6 * w))
+            wild_update = wsecond(
+                torch.relu(
+                    F.linear(hw, Wwh) + F.linear(global_ctx, Wwg, wfirst.bias).unsqueeze(1)
+                )
+            )
+            h = h + grid_update
+            hw = hw + wild_update
+
+        color_ctx = _pool(h, 2)
+        wild_ctx = _pool(hw, 1)
+        global_ctx = torch.cat((color_ctx.mean(1), color_ctx.amax(1), wild_ctx), dim=-1)
+        return h, hw, color_ctx, global_ctx
+
+
+def _weight_blocks(linear: nn.Linear, widths: tuple[int, ...]) -> tuple[torch.Tensor, ...]:
+    """Column blocks of `linear.weight`, one per concatenated input piece.
+
+    Under autocast the whole weight is cast once and then split: casting each view
+    separately would launch one conversion kernel per block per call.
+    """
+    weight = linear.weight
+    if weight.is_cuda and torch.is_autocast_enabled("cuda"):
+        weight = weight.to(torch.get_autocast_dtype("cuda"))
+    return torch.split(weight, widths, dim=1)
+
 
 class Actor(nn.Module):
     """Encoder plus the shared action scorer. Outputs raw logits; masking is the
@@ -247,11 +326,12 @@ class Actor(nn.Module):
             "act_feat_bf16", act_feat.to(torch.bfloat16), persistent=False
         )
 
-    def forward(
+    def forward_reference(
         self, tok: torch.Tensor, col: torch.Tensor, glob: torch.Tensor
     ) -> torch.Tensor:
+        """The literal concatenate-then-score actor: the oracle for `forward`."""
         n = tok.shape[0]
-        h, hw, color_ctx, global_ctx = self.encoder(tok, col, glob)
+        h, hw, color_ctx, global_ctx = self.encoder.forward_reference(tok, col, glob)
         tokens = torch.cat(
             (h.reshape(n, -1, self.width), hw), dim=1
         )  # (n, n_tokens, w)
@@ -279,6 +359,41 @@ class Actor(nn.Module):
         )
         return self.score(x).squeeze(-1)
 
+    def forward(
+        self, tok: torch.Tensor, col: torch.Tensor, glob: torch.Tensor
+    ) -> torch.Tensor:
+        """`forward_reference` with the scorer's first layer split by input block.
+
+        Tokens are projected once (54 rows) and gathered per action (62 rows); the
+        color context once per color; the global context once per row; and the
+        static action features once per call, independent of the batch.
+        """
+        n = tok.shape[0]
+        w = self.width
+        h, hw, color_ctx, global_ctx = self.encoder(tok, col, glob)
+        tokens = torch.cat((h.reshape(n, -1, w), hw), dim=1)  # (n, n_tokens, w)
+        a = self.act_token.shape[0]
+        first, second = self.score[0], self.score[2]
+        Wt, Wc, Wg, Wf = _weight_blocks(
+            first, (w, 2 * w, 6 * w, self.act_feat.shape[1])
+        )
+        tok_s = F.linear(tokens, Wt)[:, self.act_token]  # (n, a, w)
+        col_s = F.linear(color_ctx, Wc)[:, self.act_color]  # (n, a, w)
+        if tok_s.dtype == torch.bfloat16:
+            act_has_token, act_has_color = self.act_has_token_bf16, self.act_has_color_bf16
+            act_feat = self.act_feat_bf16
+        else:
+            act_has_token = self.act_has_token.to(dtype=tok_s.dtype)
+            act_has_color = self.act_has_color.to(dtype=tok_s.dtype)
+            act_feat = self.act_feat.to(dtype=Wf.dtype)
+        hidden = (
+            tok_s * act_has_token.view(1, a, 1)
+            + col_s * act_has_color.view(1, a, 1)
+            + F.linear(global_ctx, Wg, first.bias).unsqueeze(1)
+            + F.linear(act_feat, Wf)
+        )
+        return second(torch.relu(hidden)).squeeze(-1)
+
 
 class Critic(nn.Module):
     """Separate structured invariant network with a scalar linear value head."""
@@ -293,6 +408,13 @@ class Critic(nn.Module):
         self, tok: torch.Tensor, col: torch.Tensor, glob: torch.Tensor
     ) -> torch.Tensor:
         _, _, _, global_ctx = self.encoder(tok, col, glob)
+        return self.head(global_ctx).squeeze(-1)
+
+    def forward_reference(
+        self, tok: torch.Tensor, col: torch.Tensor, glob: torch.Tensor
+    ) -> torch.Tensor:
+        """The critic on the reference encoder: the oracle for `forward`."""
+        _, _, _, global_ctx = self.encoder.forward_reference(tok, col, glob)
         return self.head(global_ctx).squeeze(-1)
 
 

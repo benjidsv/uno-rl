@@ -158,6 +158,7 @@ def main(argv=None) -> None:
         training.execution = {
             "collection_torch_threads": spec.execution.collection_threads,
             "update_torch_threads": spec.execution.update_threads,
+            "compile": spec.execution.compile,
         }
         training.execution = {k: v for k, v in training.execution.items() if v != 0}
         

@@ -12,6 +12,7 @@ dependencies = [
     "tiktoken>=0.14.0",
     "torch>=2.14.0",
     "tqdm>=4.70.1",
+    "triton-windows>=3.8.0.post28; sys_platform == 'win32'",  # Linux CUDA torch pulls in triton itself; none on macOS
 ]
 
 [project.scripts]

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 import numpy as np
 import torch
@@ -65,6 +65,16 @@ class Behavior:
     max_entropy_sum: float = 0.0
     normalized_entropy_sum: float = 0.0
     effective_actions_sum: float = 0.0
+
+    def merge(self, other: Behavior) -> None:
+        """Add another shard's counters: every field is a count or a sum."""
+        for f in fields(self):
+            mine, theirs = getattr(self, f.name), getattr(other, f.name)
+            if isinstance(mine, dict):
+                for k, v in theirs.items():
+                    mine[k] = mine.get(k, 0) + v
+            else:
+                setattr(self, f.name, mine + theirs)
 
     def as_dict(self) -> dict:
         n = max(self.games, 1)
@@ -235,11 +245,28 @@ def play_panel(
     on_games: Callable[[int], None] | None = None,
 ) -> PanelResult:
     """Play the panel with the stochastic policy, keeping scores and counters only."""
+    entries, behavior = play_episodes(
+        manifest.episodes, actor, opponents, training_seed, live_games, on_games
+    )
+    return panel_result(manifest, entries, behavior)
+
+
+def play_episodes(
+    episodes,
+    actor: ActorPolicy,
+    opponents: dict[str, Agent],
+    training_seed: int,
+    live_games: int = 64,
+    on_games: Callable[[int], None] | None = None,
+) -> tuple[list[tuple[str, int, int, float]], Behavior]:
+    """Play any subset of a panel's episodes: `(opponent, seat, deal, score)` per
+    game plus the behavior counters. Every draw is keyed by episode and decision,
+    so a panel split across workers plays the same games as one process."""
     rs: Ruleset = actor.rs
     spec = actor.spec
-    by_cell: dict[tuple[str, int], dict[int, float]] = {c: {} for c in manifest.cells}
+    entries: list[tuple[str, int, int, float]] = []
     behavior = Behavior()
-    queue = list(manifest.episodes)
+    queue = list(episodes)
     active: list[LiveGame] = []
     is_play = tuple(isinstance(a, Play) for a in rs.actions)
 
@@ -255,7 +282,7 @@ def play_panel(
             (done if game.terminal else ready).append(game)
         for game in done:
             value = float(returns(game.state)[game.seat])
-            by_cell[(game.episode.opponent, game.episode.seat)][game.episode.deal_seed] = (value + 1.0) / 2.0
+            entries.append((game.episode.opponent, game.episode.seat, game.episode.deal_seed, (value + 1.0) / 2.0))
             behavior.games += 1
             behavior.game_draws += value == 0.0
             behavior.cap_games += game.state.end == "cap"
@@ -281,7 +308,21 @@ def play_panel(
                 behavior, rs, obs_l1[i], legal, a, float(entropies[i]), is_play
             )
             game.apply(a)
+    return entries, behavior
 
+
+def panel_result(
+    manifest: Manifest,
+    entries: list[tuple[str, int, int, float]],
+    behavior: Behavior,
+) -> PanelResult:
+    """Assemble per-game entries into the panel's cell x deal score table."""
+    by_cell: dict[tuple[str, int], dict[int, float]] = {c: {} for c in manifest.cells}
+    for opponent, seat, deal, score in entries:
+        cell = by_cell[(opponent, seat)]
+        if deal in cell:
+            raise ValueError(f"panel game {(opponent, seat, deal)} was played twice")
+        cell[deal] = score
     deals = np.asarray(sorted({e.deal_seed for e in manifest.episodes}), dtype=np.int64)
     scores = {c: np.asarray([by_cell[c][d] for d in deals], dtype=np.float64) for c in manifest.cells}
     return PanelResult(manifest.cells, scores, deals, behavior)
@@ -365,4 +406,4 @@ def exact_value(rs: Ruleset, learner: Agent, opponent: Agent, seat: int) -> floa
     return (evaluate(tree, a, b)[seat] + 1.0) / 2.0
 
 
-__all__ = ["Behavior", "PanelResult", "Paired", "baseline_panel", "exact_value", "paired", "play_panel", "select"]
+__all__ = ["Behavior", "PanelResult", "Paired", "baseline_panel", "exact_value", "paired", "panel_result", "play_episodes", "play_panel", "select"]

@@ -17,7 +17,7 @@ import torch
 from tests.rl.helpers import decision_states, small_actor, small_critic
 from uno.game.keys import l1_key
 from uno.game.observe import Level, observe
-from uno.game.rules import MID_25, TOY, TOY2_SKIP
+from uno.game.rules import MID_25, NAMED, TOY, TOY2_SKIP
 from uno.game.symmetry import Symmetry
 from uno.rl.env import features as F
 from uno.rl.env.evidence import Evidence
@@ -198,3 +198,59 @@ def test_arm_a_and_b_share_the_position_encoder_shape_and_differ_only_in_width()
     assert (a.tokens, a.colors, a.slots, a.wilds) == (b.tokens, b.colors, b.slots, b.wilds)
     assert a.actor_params < b.actor_params  # reported, not claimed equal
     assert a.critic_params == b.critic_params
+
+
+def _real_inputs(rs, sp, n: int = 48):
+    """Features of sampled decision states, at the level the spec declares."""
+    states = decision_states(rs, range(10))[:n]
+    level = Level.L2 if sp.has_opponent else Level.L1
+    obs = [observe(s, s.player, level) for s in states]
+    ev = [Evidence.from_public(rs, s.public, s.player ^ 1) for s in states]
+    return to_tensors(F.extract(sp, obs, ev if sp.has_evidence else None))
+
+
+@pytest.mark.parametrize("rs", (TOY, MID_25, NAMED["FULL_UNO"]))
+@pytest.mark.parametrize("arm", (F.ARM_A, F.ARM_B, F.ARM_C, F.ARM_CRITIC))
+def test_factorized_forward_equals_the_concatenation_reference(rs, arm):
+    """`forward` regroups `forward_reference`'s linear layers by input block. In
+    float64 the two agree to roundoff, and gradients agree too, so any mis-sliced
+    weight block (which random weights would expose) fails here."""
+    net = small_critic(rs, seed=7) if arm == F.ARM_CRITIC else small_actor(rs, arm, seed=7)
+    x = [t.double() for t in _real_inputs(rs, F.spec(rs, arm))]
+    net = net.double()
+    fast, ref = net(*x), net.forward_reference(*x)
+    assert fast.shape == ref.shape
+    assert torch.allclose(fast, ref, rtol=0, atol=1e-12)
+    fast.square().sum().backward()
+    grads = [p.grad.clone() for p in net.parameters()]
+    net.zero_grad()
+    ref.square().sum().backward()
+    for g, p in zip(grads, net.parameters()):
+        assert torch.allclose(g, p.grad, rtol=1e-9, atol=1e-12)
+
+
+def test_factorized_forward_matches_the_reference_in_float32():
+    rs = NAMED["FULL_UNO"]
+    actor = small_actor(rs, F.ARM_B, seed=8)
+    x = _real_inputs(rs, F.spec(rs, F.ARM_B))
+    with torch.no_grad():
+        assert torch.allclose(actor(*x), actor.forward_reference(*x), rtol=0, atol=1e-5)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_factorized_forward_under_bf16_autocast_stays_near_the_float64_value():
+    """BF16 rounds each block's partial product separately, so the factorized
+    error is a little larger than the reference's; bound both against float64."""
+    rs = NAMED["FULL_UNO"]
+    actor = small_actor(rs, F.ARM_B, seed=9)
+    x = _real_inputs(rs, F.spec(rs, F.ARM_B))
+    with torch.no_grad():
+        truth = actor.double()(*[t.double() for t in x])
+        actor = actor.float().cuda()
+        xc = [t.cuda() for t in x]
+        with torch.autocast("cuda", torch.bfloat16):
+            fast, ref = actor(*xc).float().cpu(), actor.forward_reference(*xc).float().cpu()
+    scale = truth.abs().max()
+    ref_err = (ref.double() - truth).abs().max() / scale
+    fast_err = (fast.double() - truth).abs().max() / scale
+    assert ref_err < 0.05 and fast_err < 0.05

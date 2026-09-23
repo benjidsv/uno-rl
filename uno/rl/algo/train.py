@@ -21,6 +21,15 @@ evaluation and saving; an overrun by the final complete iteration is logged rath
 than hidden. The first Ctrl-C requests a graceful stop: finish the current
 iteration, evaluate, save and close tracking. A second Ctrl-C is an immediate hard
 interrupt. This loop never records a truncation as a terminal result.
+
+**Overlap.** With a worker pool, step 7's "publish actor `k+1`" happens as soon as
+the actor epochs end: collection `k+1` starts in the workers while the coordinator
+finishes update `k` (final-policy diagnostics and the critic epochs). Collection
+reads only the actor, so the data, the models and every stream are the same as
+the sequential order. The prefetched manifest's deal-schedule position is
+committed only when its rollout is consumed; a prefetch discarded at a stop, a cap
+or an evaluation boundary therefore changes nothing a checkpoint records.
+Scheduled evaluation plays the panel on the same pool.
 """
 
 from __future__ import annotations
@@ -28,6 +37,7 @@ from __future__ import annotations
 import json
 import shutil
 import signal
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -47,10 +57,16 @@ from uno.rl.env.features import spec
 from uno.rl.model import make_actor, make_critic, shapes
 from uno.rl.eval.opponents import league, league_hash
 from uno.rl.algo.policy import ActorPolicy
+from uno.rl.algo.parallel import cpu_state
 from uno.rl.core.streams import INIT, STREAM_VERSION, torch_seed
 from uno.rl.core.track import Tracker, provenance
 
 CHECKPOINT_INTERVAL_S = 120.0  # at most two minutes between boundary saves
+# Share of a pooled DEV evaluation the coordinator plays itself on its accelerator
+# while the CPU workers play the rest. Measured on an 8-core Ryzen 7700X + RTX 4070
+# Ti with 12 workers: 0 -> 46.8s, 0.2 -> 38.9s, 0.34 -> 42.2s for 8192 games
+# (single-process CUDA: 70.9s). Hardware-dependent; an execution setting only.
+EVAL_LOCAL_SHARE = 0.2
 
 
 _TRAIN_MLFLOW_PATHS = {
@@ -118,7 +134,8 @@ _TRAIN_MLFLOW_PATHS = {
     "rollout_learner_length_p90": "rollout/learner_length_p90",
     "rollout_learner_length_max": "rollout/learner_length_max",
     # End-to-end and stage performance.
-    "collect_s": "timing/collection_total_seconds",
+    "collect_s": "timing/collection_total_seconds",  # wall time of the collection itself
+    "collect_wait_s": "timing/collection_wait_seconds",  # coordinator time blocked on it
     "update_s": "timing/update_total_seconds",
     "iteration_s": "timing/iteration_seconds",
     "worker_s": "timing/collection_worker_sum_seconds",
@@ -148,6 +165,7 @@ _TRAIN_MLFLOW_PATHS = {
     "inference_batch_p90": "collection/inference_batch_p90",
     "inference_batch_max": "collection/inference_batch_max",
     "retried_bundles": "collection/retried_bundles",
+    "prefetched": "collection/prefetched",  # 1 when collected during the previous update
     "rollout_bytes": "resources/rollout_bytes",
     "transfer_bytes": "resources/transfer_bytes",
     "collection_torch_threads": "resources/collection_torch_threads",
@@ -229,6 +247,7 @@ class Run:
     eval_history: list[tuple[int, float]] = field(default_factory=list)
     lineage: dict = field(default_factory=dict)
     execution: dict = field(default_factory=dict)
+    prefetch: "_Prefetch | None" = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         cfg = self.config
@@ -272,6 +291,39 @@ class Run:
             self.config.optim.temperature,
             self.config.device,
         )
+
+
+def compile_models(run: Run) -> None:
+    """`torch.compile` the actor and critic forwards: an execution setting only.
+
+    Parameters, state dicts, checkpoints and the CPU worker replicas are unchanged;
+    only the coordinator's forwards run as Inductor kernels. Measured on the
+    factorized FULL_UNO model (width 256, BF16, 4070 Ti): actor update 1.12s ->
+    0.47s, critic update 0.96s -> 0.38s per 128 minibatch steps, after a one-time
+    compile of roughly a minute (cached on disk afterwards).
+
+    ``emulate_precision_casts`` is required, not a tuning knob: without it
+    Inductor's BF16 backward produced NaN gradients for this model (torch 2.14,
+    triton-windows 3.8); with it gradients match eager BF16.
+    ``dynamic=True`` avoids a recompile for every new rollout size but, on
+    Windows, needs MSVC's ``cl`` on PATH (run from a vcvars64 prompt); without it
+    this falls back to automatic dynamic shapes, which is slower.
+    """
+    import torch._inductor.config as inductor
+
+    inductor.emulate_precision_casts = True
+    dynamic = True
+    if sys.platform == "win32" and shutil.which("cl") is None:
+        print(
+            "WARNING: compile requested but MSVC `cl` is not on PATH; using automatic "
+            "dynamic shapes (slower). Launch from a vcvars64 environment for dynamic=True.",
+            flush=True,
+        )
+        dynamic = None
+    for model in (run.actor, run.critic):
+        if not getattr(model, "_uno_compiled", False):
+            model.forward = torch.compile(model.forward, dynamic=dynamic)
+            model._uno_compiled = True
 
 
 def start_tracker(
@@ -347,8 +399,14 @@ def iteration(
     collector=None,
     collection_threads: int | None = None,
     update_threads: int | None = None,
+    *,
+    continue_after=None,
 ) -> tuple[ppo.UpdateStats, dict]:
-    """One iteration with optional runtime-only CPU thread budgets."""
+    """One iteration with optional runtime-only CPU thread budgets.
+
+    `continue_after(learner_decisions)`, when given with a worker pool, says
+    whether another iteration will follow this one; if so, its collection starts
+    as soon as this iteration's actor is final (see the module docstring)."""
     if collection_threads is None:
         collection_threads = run.execution.get("collection_torch_threads")
     if update_threads is None:
@@ -357,7 +415,7 @@ def iteration(
     try:
         if collection_threads is not None:
             torch.set_num_threads(collection_threads)
-        return _iteration(run, collector, update_threads)
+        return _iteration(run, collector, update_threads, continue_after)
     finally:
         if torch.get_num_threads() != previous_threads:
             torch.set_num_threads(previous_threads)
@@ -366,23 +424,89 @@ def iteration(
 from uno.rl.core.device import synchronize_device as _synchronize_device
 
 
+class _Prefetch:
+    """Collection of the next iteration, running in the worker pool.
+
+    Holds the manifest, the episode counter after it and a *copy* of the deal
+    schedule advanced past it; `_iteration` commits them only when it consumes
+    the rollout. A background thread drives the pool so the coordinator's main
+    thread stays free for the device work of the current update.
+    """
+
+    def __init__(self, run: Run, collector, critic_spec, next_episode_id: int) -> None:
+        """Called mid-iteration, before the run's counters advance: `next_episode_id`
+        is the current manifest's successor, and the run's schedule already sits
+        past the current manifest."""
+        cfg = run.config
+        self.version = run.progress.update + 1
+        self.schedule = mf.DealSchedule.from_state(cfg.training_seed, run.schedule.state)
+        self.manifest, self.next_id = mf.build(
+            self.version,
+            list(run.opponents),
+            self.schedule,
+            cfg.collection.games_per_cell,
+            next_episode_id,
+        )
+        weights = cpu_state(run.actor)  # snapshot actor k+1 on the main thread
+        self._result = self._error = None
+
+        def work() -> None:
+            started = time.perf_counter()
+            try:
+                rollout, cstats = collector.collect(
+                    self.manifest, weights, critic_spec, self.version
+                )
+                self._result = (rollout, cstats, time.perf_counter() - started)
+            except BaseException as exc:  # re-raised on the main thread
+                self._error = exc
+
+        self._thread = threading.Thread(target=work, name="prefetch-collection", daemon=True)
+        self._thread.start()
+
+    def result(self):
+        self._thread.join()
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
+def _discard_prefetch(run: Run) -> None:
+    """Let an unneeded prefetch finish (the pool must be idle) and drop it."""
+    if run.prefetch is not None:
+        prefetch, run.prefetch = run.prefetch, None
+        try:
+            prefetch.result()
+        except Exception:
+            pass  # its data is discarded either way; nothing was committed
+
+
 def _iteration(
-    run: Run, collector, update_threads: int | None
+    run: Run, collector, update_threads: int | None, continue_after=None
 ) -> tuple[ppo.UpdateStats, dict]:
-    """One complete synchronous iteration. Returns its update stats and timings."""
+    """One complete iteration. Returns its update stats and timings."""
     cfg = run.config
     rs = cfg.rs
     critic_spec = spec(rs, "CRITIC")
     t0 = time.perf_counter()
 
-    manifest, next_id = mf.build(
-        run.progress.update,
-        list(run.opponents),
-        run.schedule,
-        cfg.collection.games_per_cell,
-        run.progress.next_episode_id,
-    )
-    if collector is None:
+    prefetch, run.prefetch = run.prefetch, None
+    if prefetch is not None:
+        if prefetch.version != run.progress.update:
+            raise RuntimeError("a prefetched collection is out of step with the run")
+        rollout, cstats, collect_seconds = prefetch.result()
+        manifest, next_id = prefetch.manifest, prefetch.next_id
+        run.schedule = prefetch.schedule  # commit the deals it consumed
+    else:
+        manifest, next_id = mf.build(
+            run.progress.update,
+            list(run.opponents),
+            run.schedule,
+            cfg.collection.games_per_cell,
+            run.progress.next_episode_id,
+        )
+    if prefetch is not None:
+        pass  # collected while the previous update's critic trained
+    elif collector is None:
         # Collection is deliberately CPU-local even when the coordinator updates
         # on MPS/CUDA.  Do not let ActorPolicy move the optimizer's model back to
         # CPU: that makes the subsequent device update invalid.  The parallel
@@ -412,12 +536,15 @@ def _iteration(
         )
     _synchronize_device(cfg.device)
     collected = time.perf_counter()
+    collect_wait = collected - t0
+    if prefetch is None:
+        collect_seconds = collect_wait
 
     collection_threads_used = torch.get_num_threads()
     if update_threads is not None:
         torch.set_num_threads(update_threads)
     update_threads_used = torch.get_num_threads()
-    stats = ppo.update(
+    pending = ppo.update_actor(
         run.actor,
         run.critic,
         run.actor_opt,
@@ -428,6 +555,14 @@ def _iteration(
         run.progress.update,
         cfg.device,
     )
+    if (
+        collector is not None
+        and continue_after is not None
+        and continue_after(run.progress.learner_decisions + rollout.n_decisions)
+    ):
+        # Actor k+1 is final: publish it and collect k+1 while the critic trains.
+        run.prefetch = _Prefetch(run, collector, critic_spec, next_id)
+    stats = ppo.update_critic(pending)
     _synchronize_device(cfg.device)
     updated = time.perf_counter()
 
@@ -463,7 +598,8 @@ def _iteration(
     actor_presentations = stats.actor_presentations
     critic_presentations = stats.critic_presentations
     timings = {
-        "collect_s": collected - t0, "update_s": update_seconds, "iteration_s": iteration_seconds,
+        "collect_s": collect_seconds, "collect_wait_s": collect_wait, "prefetched": int(prefetch is not None),
+        "update_s": update_seconds, "iteration_s": iteration_seconds,
         "iteration_fresh_decisions_per_s": rollout.n_decisions / iteration_seconds if iteration_seconds else 0.0,
         "update_fresh_decisions_per_s": rollout.n_decisions / update_seconds if update_seconds else 0.0,
         "actor_presentations": actor_presentations, "critic_presentations": critic_presentations,
@@ -559,8 +695,19 @@ def _rollout_metrics(rollout) -> dict:
     }
 
 
-def evaluate_now(run: Run) -> ev.PanelResult:
-    """Synchronous scheduled DEV evaluation of the current actor on the fixed panel."""
+def evaluate_now(run: Run, collector=None) -> ev.PanelResult:
+    """Synchronous scheduled DEV evaluation of the current actor on the fixed panel.
+
+    With a worker pool the panel is played there, on CPU replicas of the actor;
+    without one it is played in this process on the run's device."""
+    if collector is not None:
+        _discard_prefetch(run)  # the pool runs one kind of work at a time
+        with bar(total=len(run.panel), desc="DEV evaluation", unit="games") as progress:
+            local = None if run.config.device == "cpu" else run.policy
+            return collector.evaluate(
+                run.panel, run.actor, run.progress.update, on_games=progress.update,
+                local_policy=local, local_share=EVAL_LOCAL_SHARE,
+            )  # fmt: skip
     previous_threads = torch.get_num_threads()
     evaluation_threads = run.execution.get("collection_torch_threads")
     try:
@@ -613,8 +760,13 @@ def train(
     run: Run, tracker: Tracker | None = None, collector=None, verbose: bool = True
 ) -> dict:
     """Run to a cap; the first Ctrl-C saves and exits at a complete boundary."""
+    if run.execution.get("compile"):
+        compile_models(run)
     with _BoundaryStop() as stop:
-        return _train(run, tracker, collector, verbose, stop)
+        try:
+            return _train(run, tracker, collector, verbose, stop)
+        finally:
+            _discard_prefetch(run)  # e.g. after an exception: leave the pool idle
 
 
 def _train(
@@ -634,7 +786,7 @@ def _train(
     last_dev_score = None
     if run.progress.next_eval_at == 0:
         run.progress.next_eval_at = eval_every
-        first = evaluate_now(run)  # the initial policy is a scheduled evaluation point
+        first = evaluate_now(run, collector)  # the initial policy is a scheduled evaluation point
         _record_evaluation(run, tracker, first, 0, time.perf_counter() - started)
         last_evaluation, last_evaluation_step = first, 0
         last_dev_score = first.mean
@@ -651,6 +803,20 @@ def _train(
         else None
     )
 
+    def continue_after(decisions: int) -> bool:
+        """Whether the loop will start another iteration after one ending at
+        `decisions`. A wrong guess only costs speed: a needless prefetch is
+        discarded, a missing one is collected synchronously."""
+        if stop.requested or decisions >= cfg.data_cap:
+            return False
+        if decisions >= run.progress.next_eval_at:
+            return False  # the evaluation needs the pool first
+        if cfg.time_cap_s is not None and iterations:
+            budget = float(np.mean(iterations[-3:]))
+            if time.perf_counter() - started + 2 * budget > cfg.time_cap_s:
+                return False
+        return True
+
     while run.progress.learner_decisions < cfg.data_cap:
         if stop.requested:
             stop_reason = "interrupt"
@@ -663,7 +829,7 @@ def _train(
                 break
         t0 = time.perf_counter()
         decisions_before = run.progress.learner_decisions
-        stats, extra = iteration(run, collector)
+        stats, extra = iteration(run, collector, continue_after=continue_after)
         iteration_decisions = run.progress.learner_decisions - decisions_before
         iterations.append(time.perf_counter() - t0)
         run.progress.active_seconds += iterations[-1]
@@ -700,7 +866,7 @@ def _train(
             )
 
         if run.progress.learner_decisions >= run.progress.next_eval_at:
-            result = evaluate_now(run)
+            result = evaluate_now(run, collector)
             last_evaluation = result
             last_evaluation_step = run.progress.learner_decisions
             last_dev_score = result.mean
@@ -740,7 +906,7 @@ def _train(
     if final_evaluation_reused:
         final = last_evaluation
     else:
-        final = evaluate_now(run)
+        final = evaluate_now(run, collector)
         _record_evaluation(
             run,
             tracker,
@@ -952,6 +1118,8 @@ def _carry_best_artifacts(
 
 __all__ = [
     "CHECKPOINT_INTERVAL_S",
+    "EVAL_LOCAL_SHARE",
+    "compile_models",
     "Run",
     "evaluate_now",
     "iteration",

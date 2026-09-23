@@ -854,6 +854,25 @@ def _minibatches(rng, n: int, n_batches: int) -> list[np.ndarray]:
     return np.array_split(perm, n_batches)
 
 
+def _device_minibatches(
+    rng, n: int, n_batches: int, device: str
+) -> list[tuple[np.ndarray, torch.Tensor]]:
+    """`_minibatches` paired with device row indices from one upload per epoch.
+
+    The partitions are consecutive slices of one permutation, so the whole
+    permutation crosses to the device once and each minibatch is a view of it.
+    """
+    batches = _minibatches(rng, n, n_batches)
+    if not batches:
+        return []
+    perm = torch.from_numpy(np.concatenate(batches).astype(np.int64)).to(device)
+    out, start = [], 0
+    for index in batches:
+        out.append((index, perm[start : start + len(index)]))
+        start += len(index)
+    return out
+
+
 def _configured_n_minibatches(optim: Optim, n: int) -> int:
     """Resolve the configured number of balanced minibatches for this rollout."""
     configured = int(optim.n_minibatches)
@@ -899,11 +918,58 @@ def update(
     computed for every minibatch and checked once per completed actor epoch.
     With ``target_kl=None`` the exact same KL work and epoch diagnostics remain;
     only the early-stop control decision is disabled.
+
+    This is `update_actor` followed immediately by `update_critic`. The split lets
+    a coordinator publish the new actor between the phases and collect the next
+    rollout while the critic trains; the device work and its order are unchanged.
     """
+    pending = update_actor(
+        actor, critic, actor_opt, critic_opt, rollout, optim, training_seed, update_index, device
+    )
+    return update_critic(pending)
+
+
+@dataclass
+class PendingUpdate:
+    """An update whose actor epochs are done and whose critic phase is not.
+
+    The actor is final for this update; the critic still holds `V_old`, which the
+    frozen advantages already used.
+    """
+
+    actor: Actor
+    critic: Critic
+    critic_opt: torch.optim.Optimizer
+    optim: Optim
+    training_seed: int
+    update_index: int
+    device: str
+    stats: UpdateStats
+    prepared: _PreparedRollout | None = None
+    mc_returns: torch.Tensor | None = None
+    actor_grad_total: torch.Tensor | None = None
+    actor_clipped_total: torch.Tensor | None = None
+
+
+def update_actor(
+    actor: Actor,
+    critic: Critic,
+    actor_opt: torch.optim.Optimizer,
+    critic_opt: torch.optim.Optimizer,
+    rollout: Rollout,
+    optim: Optim,
+    training_seed: int,
+    update_index: int,
+    device: str = "cpu",
+) -> PendingUpdate:
+    """Freeze `V_old`, build the advantages, and run the actor epochs."""
     stats = UpdateStats()
+    pending = PendingUpdate(
+        actor, critic, critic_opt, optim, training_seed, update_index, device, stats
+    )
     t = rollout.n_decisions
     if t == 0:
-        return stats
+        return pending
 
     precision = _precision(optim)
     _validate_precision(device, precision)
@@ -974,8 +1040,7 @@ def update(
         epoch_kl_total = torch.zeros((), device=device)
         epoch_rows = 0
 
-        for index in _minibatches(rng, t, n_minibatches):
-            rows = torch.from_numpy(index.astype(np.int64)).to(device)
+        for index, rows in _device_minibatches(rng, t, n_minibatches, device):
             loss, minibatch_diag = _prepared_actor_loss(
                 actor, prepared, index, rows, optim
             )
@@ -1004,6 +1069,12 @@ def update(
                 epoch_kl
             )  # one host sync per epoch, not per minibatch
             stats.kl_per_epoch.append(epoch_kl_value)
+            if not math.isfinite(epoch_kl_value):
+                # A NaN compares False against target_kl, so it would otherwise
+                # train on silently; this is the one check that is already synced.
+                raise FloatingPointError(
+                    f"non-finite actor KL {epoch_kl_value} in update {update_index}, epoch {epoch}"
+                )
             if (
                 target_kl is not None
                 and math.isfinite(float(target_kl))
@@ -1011,8 +1082,33 @@ def update(
             ):
                 stats.early_stopped = True
                 break
+    actor.eval()
+    _synchronize_device(device)
+    stats.actor_update_seconds = time.perf_counter() - started
+    pending.prepared = prepared
+    pending.mc_returns = mc_returns
+    pending.actor_grad_total = actor_grad_total
+    pending.actor_clipped_total = actor_clipped_total
+    return pending
+
+
+def update_critic(pending: PendingUpdate) -> UpdateStats:
+    """Final-policy actor diagnostics, the critic epochs and the post-fit EV."""
+    stats = pending.stats
+    prepared = pending.prepared
+    if prepared is None:
+        return stats
+    actor, critic, critic_opt = pending.actor, pending.critic, pending.critic_opt
+    optim, device = pending.optim, pending.device
+    training_seed, update_index = pending.training_seed, pending.update_index
+    mc_returns, value_targets = pending.mc_returns, prepared.value_targets
+    actor_grad_total, actor_clipped_total = pending.actor_grad_total, pending.actor_clipped_total
+    precision = _precision(optim)
+    t = len(prepared.actor_tok)
+    n_minibatches = _configured_n_minibatches(optim, t)
 
     # Coherent final-policy diagnostics, using the already-staged rollout.
+    started = time.perf_counter()
     diagnostic = _prepared_actor_diagnostics(actor, prepared, optim)
     stats.surrogate = diagnostic["surrogate"]
     stats.entropy = diagnostic["entropy"]
@@ -1037,7 +1133,7 @@ def update(
         stats.actor_grad_norm = grad_mean
         stats.actor_clipped_fraction = clipped_frac
     _synchronize_device(device)
-    stats.actor_update_seconds = time.perf_counter() - started
+    stats.actor_update_seconds += time.perf_counter() - started
 
     # Critic ----------------------------------------------------------------
     started = time.perf_counter()
@@ -1051,8 +1147,7 @@ def update(
         rng = generator(training_seed, MINIBATCH, "critic", update_index, epoch)
         total = torch.zeros((), device=device)
         seen = 0
-        for index in _minibatches(rng, t, n_minibatches):
-            rows = torch.from_numpy(index.astype(np.int64)).to(device)
+        for index, rows in _device_minibatches(rng, t, n_minibatches, device):
             with _autocast_context(device, precision):
                 pred = critic(
                     prepared.critic_tok[rows],
@@ -1099,7 +1194,7 @@ def update(
     critic.eval()
     with torch.no_grad():
         post_chunks = []
-        tok, col, glob = critic_tensor_data
+        tok, col, glob = prepared.critic_tok, prepared.critic_col, prepared.critic_glob
         for i in range(0, len(tok), FORWARD_CHUNK):
             with _autocast_context(device, precision):
                 post_value = critic(
@@ -1123,11 +1218,12 @@ def update(
 
     actor.eval()
     critic.eval()
+    pending.prepared = None  # release the staged rollout
     return stats
 
 
 __all__ = [
-    "UpdateStats", "actor_loss", "advantages", "critic_loss", "critic_values", "normalize_advantages",
+    "PendingUpdate", "UpdateStats", "actor_loss", "advantages", "critic_loss", "critic_values", "normalize_advantages",
     "discounted_returns", "new_log_probs",
-    "rollout_actor_diagnostics", "rollout_kl", "surrogate", "update", "weighted_gradient",
+    "rollout_actor_diagnostics", "rollout_kl", "surrogate", "update", "update_actor", "update_critic", "weighted_gradient",
 ]  # fmt: skip
