@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import time
 from collections import deque
 from pathlib import Path
@@ -531,12 +532,22 @@ def predict(model, data: Data, name: str, rows: np.ndarray, device, game_bs: int
 
 
 def fit(model, data: Data, name: str, train: np.ndarray, val: np.ndarray, device, epochs: int,
-        lr: float, patience: int, seed: int, game_bs: int = 64) -> dict:
+        lr, patience: int, seed: int, game_bs: int = 64, warm: bool = False) -> dict:
+    """Adam with early stopping on validation. `lr` is a rate or a list of param groups.
+
+    A warm-started model is scored before any update and that score is the first
+    'best', so it can only end at or below its starting point on validation.
+    """
     if not any(p.requires_grad for p in model.parameters()):
         return {"epochs": 0}
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    opt = torch.optim.Adam(lr) if isinstance(lr, list) else torch.optim.Adam(model.parameters(), lr=lr)
     rng = np.random.default_rng(seed)
     best, best_state, bad, history = math.inf, None, 0, []
+    start_val = None
+    if warm:
+        start_val = best = float(predict(model, data, name, val, device, game_bs)[0].mean())
+        best_state = {k: t.detach().clone() for k, t in model.state_dict().items()}
+        print(f"    warm start: val {best:.5f} nats/card", flush=True)
     for epoch in range(epochs):
         model.train()
         started = time.time()
@@ -557,7 +568,8 @@ def fit(model, data: Data, name: str, train: np.ndarray, val: np.ndarray, device
             if bad >= patience:
                 break
     model.load_state_dict(best_state)
-    return {"epochs": len(history), "val_history": history, "best_val": best}
+    return {"epochs": len(history), "val_history": history, "best_val": best, "start_val": start_val,
+            "best_epoch": (int(np.argmin(history)) + 1) if history and min(history) <= best else 0}
 
 
 def color_r2(data: Data, rows: np.ndarray, logp: np.ndarray, colors: int) -> tuple[float, float]:
@@ -607,7 +619,7 @@ def run_fit(args) -> None:
     names = args.models.split(",")
     fractions = [float(f) for f in args.fractions.split(",")]
     results, test_nll = {}, {}
-    stamp = int(time.time())
+    stamp = f"{int(time.time())}_{os.getpid()}"  # parallel fits share the data directory
 
     def save() -> None:
         """Written after every model, so a stopped run keeps everything it finished."""
@@ -617,6 +629,9 @@ def run_fit(args) -> None:
              "results": results, "paired": comparisons}, indent=2, default=float))
 
     comparisons = {}
+    rel_c_states: dict[float, dict] = {}  # trained rel-C weights by training fraction
+    if args.init_rel:
+        rel_c_states = {f: torch.load(args.init_rel, map_location="cpu") for f in fractions}
     for name in names:
         for fraction in (fractions if name != "prior" else [1.0]):
             label = name if fraction == 1.0 else f"{name}@{fraction:g}"
@@ -626,8 +641,21 @@ def run_fit(args) -> None:
             model = build(name, rs, args.width, args.blocks).to(device)
             started = time.time()
             lr = args.seq_lr if name in SEQUENCE else args.lr
+            warm = isinstance(model, Hybrid)
+            if warm:
+                # Both hybrid and control start at the trained rel-C (the sequence head is
+                # zero), so what they add over it is measured from the same point.
+                if fraction not in rel_c_states:
+                    raise ValueError(f"{name} warm-starts from rel-C: list rel-C before it "
+                                     f"(same fractions) or pass --init-rel")
+                model.rel.load_state_dict(rel_c_states[fraction])
+                lr = [{"params": model.rel.parameters(), "lr": args.lr * args.rel_lr_scale},
+                      {"params": model.seq.parameters(), "lr": args.seq_lr}]
             info = fit(model, source, name, train, source.rows(1), device, args.epochs, lr, args.patience,
-                       args.seed, args.game_batch)
+                       args.seed, args.game_batch, warm)
+            if name == "rel-C":
+                rel_c_states[fraction] = {k: t.detach().cpu().clone() for k, t in model.state_dict().items()}
+                torch.save(rel_c_states[fraction], Path(args.data) / f"rel-C_{stamp}_{fraction:g}.pt")
             nll, logp = predict(model, data, name, test, device, args.game_batch)
             r2c, r2w = color_r2(data, test, logp, rs.colors)
             info.update(test_nll=float(nll.mean()), color_r2=r2c, wild_r2=r2w, train_rows=len(train),
@@ -644,6 +672,14 @@ def run_fit(args) -> None:
         gain = "" if base is None else "%+.5f +- %.5f" % clustered(base - nll, deal)
         r = results[label]
         print(f"{label:14s} {nll.mean():10.5f} {gain:>16s} {r['color_r2']:9.3f} {r['wild_r2']:8.3f}")
+    # Primary: each warm-started hybrid against the no-history control at the same fraction.
+    for label in [x for x in test_nll if "+" in x and not x.startswith("rel-C+none")]:
+        control = "rel-C+none" + (label[label.index("@"):] if "@" in label else "")
+        if control in test_nll:
+            m, se = clustered(test_nll[control] - test_nll[label], deal)
+            comparisons[f"{label} - {control}"] = (m, se)
+            print(f"PRIMARY {label} vs {control}: {m:+.5f} +- {se:.5f} nats/card better "
+                  f"(information in the raw history beyond arm C's features)")
     for seq in [x for x in test_nll if uses_games(x.split("@")[0])]:
         for feat in [x for x in test_nll if x.startswith("rel-") and "@" not in x and "+" not in x]:
             m, se = clustered(test_nll[feat] - test_nll[seq], deal)
@@ -680,6 +716,8 @@ def main(argv=None) -> None:
     f.add_argument("--seq-lr", type=float, default=5e-4)
     f.add_argument("--width", type=int, default=128)
     f.add_argument("--blocks", type=int, default=2)
+    f.add_argument("--init-rel", help="rel-C weights (rel-C_*.pt from an earlier fit) to warm-start hybrids")
+    f.add_argument("--rel-lr-scale", type=float, default=0.1, help="lr multiplier for a warm-started rel-C part")
     f.add_argument("--seed", type=int, default=0)
     f.add_argument("--game-batch", type=int, default=64, help="games per batch for sequence and hybrid models")
     f.add_argument("--in-memory", action="store_true", help="load features into RAM instead of memory-mapping")
