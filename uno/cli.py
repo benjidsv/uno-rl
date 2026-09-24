@@ -29,6 +29,10 @@ def main(argv: list[str] | None = None) -> None:
         import uno.rl.cli
         uno.rl.cli.main(argv[1:])
         return
+    if argv[0] == "play":
+        import uno.play.server
+        uno.play.server.main(argv[1:])
+        return
 
     if argv[0] not in names:
         raise SystemExit(f"unknown experiment {argv[0]!r}; `uno list` shows them")

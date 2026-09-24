@@ -24,3 +24,7 @@ rl-throughput.xml
 
 # MacOS
 .DS_Store
+
+# play demo card art (Mattel artwork, local only)
+uno/play/static/spritesheet.png
+uno/play/static/cards/

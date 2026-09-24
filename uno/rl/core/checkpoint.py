@@ -38,7 +38,7 @@ import numpy as np
 import torch
 
 from uno.rl.core.config import Config, algorithm_hash
-from uno.rl.env.features import spec
+from uno.rl.env.features import ARM_C, spec
 import torch.nn as nn
 from uno.rl.eval.opponents import league_hash
 from uno.rl.core.streams import STREAM_VERSION
@@ -235,8 +235,10 @@ def load_actor(path: str | Path, rs=None, device:str = "cpu"):
         raise ValueError(f"export is for another ruleset: {payload['ruleset_repr']}")
     candidates = [spec(rs, payload["arm"])]
     # Schema 2 is retained as an explicit, read-only evaluator for the diagnostic
-    # launched under it. Unknown and schema-1 exports remain rejected.
-    candidates.append(spec(rs, payload["arm"], version=2))
+    # launched under it. Unknown and schema-1 exports remain rejected. Arm C has no
+    # schema-2 form, and asking `spec` for one raises.
+    if payload["arm"] != ARM_C:
+        candidates.append(spec(rs, payload["arm"], version=2))
     sp = next(
         (candidate for candidate in candidates if payload.get("actor_schema") == candidate.hash),
         None,

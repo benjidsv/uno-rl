@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UNO Table</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;800;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --red: #ed1c24; --yellow: #ffde16; --green: #50aa44; --blue: #0072bc; --purple: #8e44ad; --orange: #e67e22;
+  --felt: #145c3a; --felt-dark: #0b3a24; --ink: #f4f1e8; --muted: #a9c7b6; --panel: rgba(0,0,0,.28);
+  --cw0: clamp(48px, min(6.6vw, 11vh), 100px); --cw: var(--cw0); --ch: calc(var(--cw) * 1.55);
+  --fly: 420ms;
+  font-family: "Nunito", ui-rounded, system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: radial-gradient(ellipse at 50% 45%, #1d7a4d 0%, var(--felt) 45%, var(--felt-dark) 100%);
+  color: var(--ink); overflow: hidden; user-select: none;
+}
+button, select, input { font: inherit; }
+button {
+  background: #f4f1e8; color: #16301f; border: 0; border-radius: 999px; padding: 7px 16px; font-weight: 800;
+  cursor: pointer; box-shadow: 0 2px 0 rgba(0,0,0,.35); transition: transform .12s, opacity .2s;
+}
+button:hover { transform: translateY(-1px); }
+button:disabled { opacity: .4; cursor: default; transform: none; }
+button.ghost { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 2px rgba(255,255,255,.35); }
+select, input[type=text] {
+  background: rgba(0,0,0,.35); color: var(--ink); border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 6px 10px;
+}
+select option, select optgroup { background: #123; color: var(--ink); }
+
+/* -- top bar */
+#bar { position: fixed; inset: 0 0 auto 0; display: flex; gap: 10px; align-items: center; padding: 10px 16px; z-index: 20; flex-wrap: wrap; }
+#bar .title { font-weight: 900; font-size: 22px; letter-spacing: .5px; margin-right: 8px; }
+#bar .title b { color: var(--yellow); }
+#bar .spacer { flex: 1; }
+#score { font-weight: 800; color: var(--muted); }
+#score b { color: var(--ink); }
+#loadbox { display: none; gap: 6px; align-items: center; }
+#loadbox.open { display: flex; }
+#loadbox input { width: min(44vw, 520px); }
+
+/* -- table zones */
+#table { position: absolute; inset: 0; }
+.zone-label { position: absolute; left: 50%; transform: translateX(-50%); font-weight: 800; color: var(--muted); display: flex; gap: 8px; align-items: center; white-space: nowrap; transition: color .3s; }
+.zone-label.active { color: var(--ink); }
+.zone-label .dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,.2); transition: background .3s, box-shadow .3s; }
+.zone-label.active .dot { background: var(--yellow); box-shadow: 0 0 12px var(--yellow); }
+.thinking::after { content: ""; display: inline-block; width: 1.4em; text-align: left; animation: dots 1s steps(4) infinite; }
+@keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+#oppLabel { top: calc(58px + var(--ch) * .8 + 16px); }
+#oppLabel small { color: var(--muted); font-weight: 600; }
+
+#opp { position: absolute; top: 58px; left: 50%; width: min(80vw, 900px); height: calc(var(--ch) * .8); transform: translateX(-50%); }
+#opp .slot { --cw: calc(var(--cw0) * .8); --ch: calc(var(--cw) * 1.55); }
+#hand { position: absolute; bottom: 4px; left: 50%; width: min(94vw, 1200px); height: calc(var(--ch) + 40px); transform: translateX(-50%); }
+
+#center { position: absolute; left: 50%; top: calc((58px + var(--ch) * .8 + 40px + 100% - var(--ch) - 90px) / 2); transform: translate(-50%, -50%); display: flex; gap: calc(var(--cw) * .9); align-items: center; }
+#deck, #discard { position: relative; width: var(--cw); height: var(--ch); }
+#deck .card { position: absolute; left: 0; top: 0; }
+#deck .card:nth-child(1) { transform: translate(-4px, 4px); }
+#deck .card:nth-child(2) { transform: translate(-2px, 2px); }
+#deck.can { cursor: pointer; }
+#deck.can .card:nth-last-child(2) { box-shadow: 0 0 0 3px var(--yellow), 0 0 22px var(--yellow); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 3px var(--yellow), 0 0 6px var(--yellow); } }
+#deckCount { position: absolute; bottom: -26px; width: 100%; text-align: center; font-weight: 800; color: var(--muted); font-size: 14px; }
+#discard .card { position: absolute; left: 0; top: 0; }
+#ring { position: absolute; inset: calc(var(--cw) * -.28); border-radius: 50%; border: 4px solid var(--glow, transparent);
+        box-shadow: 0 0 30px var(--glow, transparent), inset 0 0 30px var(--glow, transparent); opacity: .85; transition: border-color .4s, box-shadow .4s; pointer-events: none; }
+#colorName { position: absolute; bottom: calc(var(--cw) * -.28 - 24px); width: 100%; text-align: center; font-weight: 800; font-size: 14px; color: var(--glow); text-transform: capitalize; transition: color .4s; }
+
+#controls { position: absolute; left: 50%; bottom: calc(var(--ch) + 48px); transform: translateX(-50%); display: flex; gap: 12px; align-items: center; min-height: 36px; }
+#status { font-weight: 800; font-size: 18px; white-space: nowrap; }
+#youLabel { position: static; transform: none; }
+
+#log { position: absolute; right: 14px; top: 64px; width: 230px; max-height: calc(100% - 100px); overflow: hidden; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 3px;
+       mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+#log div { padding: 3px 8px; border-radius: 6px; background: var(--panel); animation: slidein .3s ease-out; }
+#log div b { color: var(--ink); }
+#log .you { border-left: 3px solid var(--yellow); }
+#log .bot { border-left: 3px solid #9ad; }
+@keyframes slidein { from { opacity: 0; transform: translateY(-6px); } }
+@media (max-width: 900px) { #log { display: none; } }
+
+#toast { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%) scale(.9); background: rgba(0,0,0,.7); padding: 10px 20px; border-radius: 999px; font-weight: 800; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; z-index: 40; }
+#toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+
+/* -- cards */
+.card { width: var(--cw); height: var(--ch); border-radius: calc(var(--cw) * .1); position: relative; box-shadow: 0 3px 8px rgba(0,0,0,.35); }
+.face, .back { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; backface-visibility: hidden; }
+.face.css { background: #fff; padding: calc(var(--cw) * .06); }
+.face.css .in { position: relative; width: 100%; height: 100%; border-radius: calc(var(--cw) * .07); background: var(--c); overflow: hidden; }
+.face.css .oval { position: absolute; left: 50%; top: 50%; width: 82%; height: 64%; border-radius: 50%; background: #fff; transform: translate(-50%, -50%) rotate(-28deg); }
+.face.css.wild .in { background: #1c1c1c; }
+.face.css.wild .oval { background: conic-gradient(var(--red) 0 25%, var(--blue) 0 50%, var(--green) 0 75%, var(--yellow) 0); }
+.face.css .mid { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 900; font-size: calc(var(--cw) * .5); color: var(--c);
+                 text-shadow: 2px 2px 0 #1c1c1c, -1px -1px 0 #1c1c1c, 1px -1px 0 #1c1c1c, -1px 1px 0 #1c1c1c; font-style: italic; }
+.face.css.wild .mid { color: #fff; }
+.face.css .corner { position: absolute; font-weight: 900; color: #fff; font-size: calc(var(--cw) * .18); text-shadow: 1px 1px 0 #1c1c1c; line-height: 1; font-style: italic; }
+.face.css .tl { left: 7%; top: 5%; } .face.css .br { right: 7%; bottom: 5%; transform: rotate(180deg); }
+.face.css .mid.sym { font-size: calc(var(--cw) * .42); }
+.face.img, .back.img { background-size: 100% 100%; background-position: center; }
+.card:has(> .img) { border-radius: calc(var(--cw) * .08); }
+.back.css { background: #fff; padding: calc(var(--cw) * .06); }
+.back.css .in { width: 100%; height: 100%; border-radius: calc(var(--cw) * .07); background: #1c1c1c; position: relative; overflow: hidden; }
+.back.css .oval { position: absolute; left: 50%; top: 50%; width: 82%; height: 64%; border-radius: 50%; background: var(--red); transform: translate(-50%, -50%) rotate(-28deg); }
+.back.css .logo { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 900; font-style: italic; color: var(--yellow); font-size: calc(var(--cw) * .3);
+                  text-shadow: 2px 2px 0 #1c1c1c; transform: rotate(-28deg); }
+.card.showback .face { display: none; }
+.card:not(.showback) .back { display: none; }
+
+/* hand / opponent cards: positioned by CSS variables so moves transition smoothly */
+.slot { position: absolute; left: 0; top: 0; --lift: 0px; transform: translate(var(--x), calc(var(--y) + var(--lift))) rotate(var(--r));
+        transition: transform var(--fly) cubic-bezier(.2,.8,.2,1), filter .25s, opacity .25s; will-change: transform; }
+#hand .slot.dim { filter: brightness(.55) saturate(.6); }
+#hand .slot.playable { cursor: pointer; }
+#hand .slot.playable:hover { --lift: -26px; }
+#hand .slot.drawn { --lift: -30px; }
+#hand .slot.drawn .card { box-shadow: 0 0 0 3px var(--yellow), 0 0 22px var(--yellow); }
+.slot.hidden { opacity: 0; transition: none; }
+
+/* flying cards */
+#fx { position: fixed; inset: 0; pointer-events: none; z-index: 30; }
+.flyer { position: fixed; left: 0; top: 0; perspective: 900px; }
+.flyer .flipper { width: 100%; height: 100%; transform-style: preserve-3d; }
+.flyer .flipper > .card { position: absolute; inset: 0; }
+.flyer .flipper > .back-side { transform: rotateY(180deg); }
+
+/* wild colour picker */
+#picker { position: fixed; z-index: 50; display: none; gap: 10px; padding: 10px; background: rgba(0,0,0,.72); border-radius: 999px; transform: translate(-50%, -100%); }
+#picker.open { display: flex; animation: pop .18s ease-out; }
+#picker button { width: 38px; height: 38px; padding: 0; border-radius: 50%; box-shadow: inset 0 0 0 3px rgba(255,255,255,.8); }
+@keyframes pop { from { transform: translate(-50%, -90%) scale(.7); opacity: 0; } }
+
+/* game over */
+#over { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.35); z-index: 45; opacity: 0; pointer-events: none; transition: opacity .35s; }
+#over.show { opacity: 1; pointer-events: auto; }
+#over .box { background: #0f2e20; border: 2px solid rgba(255,255,255,.15); border-radius: 18px; padding: 24px 34px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,.5); transform: translateY(10px); transition: transform .35s; }
+#over.show .box { transform: none; }
+#over h1 { margin: 0 0 6px; font-size: 40px; font-weight: 900; }
+#over p { margin: 0 0 18px; color: var(--muted); }
+#over.win h1 { color: var(--yellow); }
+
+#splash { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--muted); font-weight: 800; }
+#splash h2 { color: var(--ink); font-size: 34px; margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <div class="title"><b>UNO</b> table</div>
+  <select id="opponent" title="Opponent"></select>
+  <select id="seat" title="Who moves first">
+    <option value="random">random seat</option>
+    <option value="0">you go first</option>
+    <option value="1">bot goes first</option>
+  </select>
+  <button id="newBtn">New game</button>
+  <button class="ghost" id="loadToggle" title="Load an actor export">+ checkpoint</button>
+  <span id="loadbox"><input type="text" id="ckptPath" placeholder="logs/…/checkpoints/best_actor.pt"><input type="text" id="ckptLabel" placeholder="label (optional)" style="width:140px"><button id="loadBtn">Load</button></span>
+  <span class="spacer"></span>
+  <span id="score"></span>
+  <select id="speed" title="Animation speed">
+    <option value="1.6">slow</option><option value="1" selected>normal</option><option value="0.5">fast</option>
+  </select>
+</div>
+
+<div id="table">
+  <div id="opp"></div>
+  <div class="zone-label" id="oppLabel"><span class="dot"></span><span id="oppName">opponent</span></div>
+  <div id="center">
+    <div id="deck"><div id="deckCount"></div></div>
+    <div id="discard"><div id="ring"></div><div id="colorName"></div></div>
+  </div>
+  <div id="controls"><div class="zone-label" id="youLabel"><span class="dot"></span><span id="status">you</span></div><button id="keepBtn" style="display:none">Keep card</button></div>
+  <div id="hand"></div>
+  <div id="log"></div>
+  <div id="toast"></div>
+  <div id="splash"><h2>Pick an opponent</h2>then press New game</div>
+</div>
+<div id="fx"></div>
+<div id="picker"></div>
+<div id="over"><div class="box"><h1 id="overTitle"></h1><p id="overText"></p><button id="againBtn">Play again</button></div></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const COLORS = { red: "var(--red)", yellow: "var(--yellow)", green: "var(--green)", blue: "var(--blue)", purple: "var(--purple)", orange: "var(--orange)" };
+
+let CFG = null;          // /api/config
+let game = null;         // {game, seat, opponent, oppId}
+let view = null;         // latest server view
+let busy = false;
+let hand = [];           // [{key, card, el}] in server order
+let oppEls = [];         // face-down slot elements
+let keySeq = 0, pendingKey = null, drawnKey = null, scored = false;
+let speed = 1;
+
+const T = { fly: () => 420 * speed, think: () => 650 * speed, stagger: () => 110 * speed };
+
+// ---------------------------------------------------------------- storage
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+// ---------------------------------------------------------------- api
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+// ---------------------------------------------------------------- cards
+function cardInfo(id) { return CFG.cards[id]; }
+function colorName(c) { return CFG.colors[c]; }
+function cardLabel(id, chosen) {
+  const c = cardInfo(id);
+  const base = { number: String(c.rank), skip: "Skip", reverse: "Reverse", draw2: "+2", wild: "Wild", wild4: "Wild +4" }[c.kind];
+  if (c.color === null) return chosen == null ? base : `${base} → ${colorName(chosen)}`;
+  return `${colorName(c.color)} ${base}`;
+}
+
+function faceEl(id, chosen = null) {
+  const c = cardInfo(id);
+  const f = document.createElement("div");
+  const url = (c.color === null && chosen != null && CFG.sprites[`${c.sprite}_${colorName(chosen)}`]) || CFG.sprites[c.sprite];
+  if (url) { f.className = "face img"; f.style.backgroundImage = `url("${url}")`; return f; }
+  const wild = c.color === null;
+  const sym = { number: String(c.rank), skip: "⊘", reverse: "⇄", draw2: "+2", wild: "W", wild4: "+4" }[c.kind];
+  const corner = { number: String(c.rank), skip: "⊘", reverse: "⇄", draw2: "+2", wild: "W", wild4: "+4" }[c.kind];
+  f.className = "face css" + (wild ? " wild" : "");
+  f.style.setProperty("--c", wild ? "#fff" : COLORS[colorName(c.color)]);
+  f.innerHTML = `<div class="in"><div class="oval"></div><div class="mid${c.kind === "number" ? "" : " sym"}">${sym}</div>` +
+                `<div class="corner tl">${corner}</div><div class="corner br">${corner}</div></div>`;
+  return f;
+}
+function backEl() {
+  const b = document.createElement("div");
+  if (CFG.sprites.back) { b.className = "back img"; b.style.backgroundImage = `url("${CFG.sprites.back}")`; }
+  else { b.className = "back css"; b.innerHTML = `<div class="in"><div class="oval"></div><div class="logo">UNO</div></div>`; }
+  return b;
+}
+function cardEl(id, faceDown = false, chosen = null) {
+  const el = document.createElement("div");
+  el.className = "card" + (faceDown || id == null ? " showback" : "");
+  if (id != null) el.appendChild(faceEl(id, chosen));
+  el.appendChild(backEl());
+  return el;
+}
+
+// ---------------------------------------------------------------- layout
+// Slots are top-left corners (px, relative to the zone) plus a rotation around the card centre.
+function cardSize() { const probe = $("#deck").getBoundingClientRect(); return { w: probe.width, h: probe.height }; }
+
+function fanSlots(n, width, cw, spread, arc, maxStep) {
+  const step = n > 1 ? Math.min(maxStep, (width - cw) / (n - 1)) : 0;
+  const x0 = (width - (cw + step * (n - 1))) / 2;
+  const tilt = Math.min(spread, n * 2.2);
+  return Array.from({ length: n }, (_, i) => {
+    const t = n > 1 ? i / (n - 1) - 0.5 : 0;
+    return { x: x0 + i * step, y: arc * 4 * t * t, r: t * tilt };
+  });
+}
+function handSlots(n) { const { w } = cardSize(); return fanSlots(n, $("#hand").clientWidth, w, 22, 12, w * 0.78).map((s) => ({ ...s, y: s.y + 22 })); }
+function oppSlots(n) { const { w } = cardSize(); return fanSlots(n, $("#opp").clientWidth, w * 0.8, 16, -10, w * 0.5).map((s) => ({ ...s, y: s.y + 10, r: -s.r })); }
+
+function place(el, s) { el.style.setProperty("--x", s.x + "px"); el.style.setProperty("--y", s.y + "px"); el.style.setProperty("--r", s.r + "deg"); }
+// A flyer is always a full-size card scaled about its centre, so a smaller target is matched by its centre.
+function toPage(zone, s, scale = 1) {
+  const r = zone.getBoundingClientRect(), { w, h } = cardSize();
+  return { x: r.left + s.x + (scale - 1) * w / 2, y: r.top + s.y + (scale - 1) * h / 2, r: s.r, s: scale };
+}
+
+function layoutHand() {
+  const slots = handSlots(hand.length);
+  hand.forEach((it, i) => { place(it.el, slots[i]); it.el.style.zIndex = i + 1; });
+}
+function layoutOpp() {
+  const slots = oppSlots(oppEls.length);
+  oppEls.forEach((el, i) => { place(el, slots[i]); el.style.zIndex = i + 1; });
+}
+
+function newHandItem(card, hidden) {
+  const el = document.createElement("div");
+  el.className = "slot" + (hidden ? " hidden" : "");
+  el.appendChild(cardEl(card));
+  const it = { key: ++keySeq, card, el };
+  el.addEventListener("click", () => onCardClick(it));
+  $("#hand").appendChild(el);
+  return it;
+}
+function insertSorted(it) {
+  let i = hand.findIndex((h) => h.card > it.card);
+  if (i < 0) i = hand.length;
+  hand.splice(i, 0, it);
+  return i;
+}
+function addOpp(hidden) {
+  const el = document.createElement("div");
+  el.className = "slot" + (hidden ? " hidden" : "");
+  el.appendChild(cardEl(null, true));
+  $("#opp").appendChild(el);
+  oppEls.push(el);
+  return el;
+}
+function setOppCount(n) {
+  while (oppEls.length > n) oppEls.pop().remove();
+  while (oppEls.length < n) addOpp(false);
+  layoutOpp();
+}
+
+// Keep existing card elements where the server's hand still has them, so nothing jumps.
+function reconcileHand(cards) {
+  const pool = [...hand];
+  const next = [];
+  for (const c of cards) {
+    const i = pool.findIndex((h) => h.card === c);
+    next.push(i >= 0 ? pool.splice(i, 1)[0] : newHandItem(c, false));
+  }
+  pool.forEach((h) => h.el.remove());
+  hand = next;
+  layoutHand();
+}
+
+// ---------------------------------------------------------------- discard / deck
+let discardCards = [];
+function discardSlot() { return { x: 0, y: 0, r: (Math.random() - 0.5) * 26 }; }
+function pushDiscard(card, r, chosen = null) {
+  const el = cardEl(card, false, chosen);
+  el.style.transform = `rotate(${r}deg)`;
+  $("#discard").insertBefore(el, $("#ring"));
+  discardCards.push({ card, el });
+  while (discardCards.length > 6) discardCards.shift().el.remove();
+}
+function setColor(c) {
+  const name = colorName(c);
+  $("#discard").style.setProperty("--glow", COLORS[name]);
+  $("#colorName").textContent = name;
+}
+function setDeckCount(n) {
+  const deck = $("#deck");
+  const cards = deck.querySelectorAll(".card");
+  const want = n <= 0 ? 0 : Math.min(3, Math.ceil(n / 12) + 1);
+  for (let i = cards.length; i < want; i++) deck.insertBefore(cardEl(null, true), $("#deckCount"));
+  for (let i = want; i < cards.length; i++) cards[i].remove();
+  $("#deckCount").textContent = `${n} left`;
+  deck.dataset.n = n;
+}
+function deckPos() { return toPage($("#deck"), { x: 0, y: 0, r: 0 }); }
+
+// ---------------------------------------------------------------- flying cards
+function fly(card, from, to, { flip = false, duration = T.fly(), faceDown = false } = {}) {
+  const { w, h } = cardSize();
+  const outer = document.createElement("div");
+  outer.className = "flyer";
+  outer.style.width = w + "px"; outer.style.height = h + "px";
+  const flipper = document.createElement("div");
+  flipper.className = "flipper";
+  if (flip) {
+    const front = cardEl(card); const back = cardEl(null, true); back.classList.add("back-side");
+    flipper.append(front, back);
+  } else flipper.appendChild(cardEl(card, faceDown));
+  outer.appendChild(flipper);
+  $("#fx").appendChild(outer);
+  const tf = (p) => `translate(${p.x}px, ${p.y}px) rotate(${p.r}deg) scale(${p.s ?? 1})`;
+  const mid = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 - 30, r: (from.r + to.r) / 2, s: Math.max(from.s ?? 1, to.s ?? 1) * 1.08 };
+  const easing = "cubic-bezier(.25,.8,.25,1)";
+  const a = outer.animate([{ transform: tf(from) }, { transform: tf(mid), offset: 0.5 }, { transform: tf(to) }], { duration, easing, fill: "forwards" });
+  if (flip) flipper.animate([{ transform: "rotateY(180deg)" }, { transform: "rotateY(0deg)" }], { duration, easing, fill: "forwards" });
+  return a.finished.then(() => outer.remove());
+}
+
+// ---------------------------------------------------------------- events
+async function animatePlay(ev) {
+  const r = discardSlot().r;
+  const to = toPage($("#discard"), { x: 0, y: 0, r });
+  let from, flip;
+  if (ev.who === "you") {
+    let i = hand.findIndex((h) => h.key === pendingKey && h.card === ev.card);
+    if (i < 0) i = hand.findIndex((h) => h.card === ev.card);
+    const it = hand.splice(i, 1)[0];
+    const s = handSlots(hand.length + 1)[i];
+    from = toPage($("#hand"), s);
+    it.el.remove();
+    flip = false;
+  } else {
+    const slots = oppSlots(oppEls.length);
+    from = toPage($("#opp"), slots[slots.length - 1], 0.8);
+    oppEls.pop()?.remove();
+    flip = true;
+  }
+  layoutHand(); layoutOpp();
+  await fly(ev.card, from, to, { flip });
+  pushDiscard(ev.card, r, ev.color);
+  setColor(ev.color);
+}
+
+async function animateDraw(ev) {
+  const flights = [];
+  for (let k = 0; k < ev.n; k++) {
+    setDeckCount(Math.max(0, +$("#deck").dataset.n - 1));
+    if (ev.who === "you") {
+      const card = ev.cards[k];
+      const it = newHandItem(card, true);
+      insertSorted(it);
+      layoutHand();
+      const i = hand.indexOf(it);
+      const to = toPage($("#hand"), handSlots(hand.length)[i]);
+      drawnKey = it.key;
+      flights.push(fly(card, deckPos(), to, { flip: true }).then(() => it.el.classList.remove("hidden")));
+    } else {
+      const el = addOpp(true);
+      layoutOpp();
+      const slots = oppSlots(oppEls.length);
+      const to = toPage($("#opp"), slots[slots.length - 1], 0.8);
+      flights.push(fly(null, deckPos(), to, { faceDown: true }).then(() => el.classList.remove("hidden")));
+    }
+    await sleep(T.stagger());
+  }
+  await Promise.all(flights);
+}
+
+async function animateReshuffle() {
+  toast("Reshuffling the discard pile");
+  const keep = discardCards.pop();
+  const from = discardCards.map((d) => d.el);
+  discardCards = keep ? [keep] : [];
+  await Promise.all(from.map((el, i) => el.animate([{ opacity: 1 }, { opacity: 0, transform: `translateX(${-cardSize().w * 1.9}px) rotate(0deg)` }],
+    { duration: T.fly(), delay: i * 40, easing: "ease-in", fill: "forwards" }).finished.then(() => el.remove())));
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1400 * Math.max(speed, 0.7));
+}
+
+function log(step) {
+  const who = step.who === "you" ? "You" : "Bot";
+  const parts = [];
+  for (const ev of step.events) {
+    if (ev.type === "play" && ev.who === step.who) parts.push(`played <b>${cardLabel(ev.card, ev.color)}</b>`);
+    else if (ev.type === "draw" && ev.who === step.who) parts.push(ev.n === 1 ? "drew a card" : `drew ${ev.n}`);
+    else if (ev.type === "draw") parts.push(`${ev.who === "you" ? "you" : "bot"} +${ev.n}`);
+    else if (ev.type === "pass") parts.push("kept the drawn card");
+    else if (ev.type === "reshuffle") parts.push("reshuffle");
+  }
+  if (!parts.length) return;
+  const d = document.createElement("div");
+  d.className = step.who;
+  const p = step.prob != null ? ` <span title="probability the policy gave this action">(${Math.round(step.prob * 100)}%)</span>` : "";
+  d.innerHTML = `<b>${who}</b> ${parts.join(", ")}${p}`;
+  const box = $("#log");
+  box.prepend(d);
+  while (box.children.length > 40) box.lastChild.remove();
+}
+
+async function playSteps(steps) {
+  for (const st of steps) {
+    if (st.who === "bot") {
+      setTurn("bot", true);
+      await sleep(T.think());
+    }
+    for (const ev of st.events) {
+      if (ev.type === "play") await animatePlay(ev);
+      else if (ev.type === "draw") await animateDraw(ev);
+      else if (ev.type === "reshuffle") await animateReshuffle();
+      else if (ev.type === "pass" && ev.who === "bot") toast("Bot keeps the drawn card");
+    }
+    log(st);
+    applyView(st.view, false);
+  }
+}
+
+// ---------------------------------------------------------------- view
+function setTurn(who, thinking = false) {
+  $("#oppLabel").classList.toggle("active", who === "bot");
+  $("#youLabel").classList.toggle("active", who === "you");
+  $("#oppName").classList.toggle("thinking", thinking);
+}
+
+function applyView(v, final = true) {
+  view = v;
+  reconcileHand(v.hand);
+  if (!v.over) setOppCount(v.opp_count);
+  setDeckCount(v.pile);
+  if (!discardCards.length || discardCards[discardCards.length - 1].card !== v.top) pushDiscard(v.top, discardSlot().r, v.color);
+  setColor(v.color);
+  setTurn(v.over ? null : v.to_move);
+  if (!v.after_draw) drawnKey = null;
+  if (final) refreshControls();
+  if (v.over && final) showOver(v);
+}
+
+function refreshControls() {
+  const v = view;
+  const mine = v && !v.over && v.to_move === "you" && !busy;
+  for (const it of hand) {
+    let ok = mine && v.plays.some((p) => p.card === it.card);
+    if (v?.after_draw) ok = ok && it.key === drawnKey;
+    it.el.classList.toggle("playable", ok);
+    it.el.classList.toggle("dim", !!mine && !ok);
+    it.el.classList.toggle("drawn", !!v?.after_draw && it.key === drawnKey && !busy);
+  }
+  $("#deck").classList.toggle("can", mine && v.draw_action != null);
+  $("#keepBtn").style.display = mine && v.pass_action != null ? "" : "none";
+  let s = "";
+  if (!v) s = "";
+  else if (v.over) s = "";
+  else if (v.to_move === "bot") s = "";
+  else if (busy) s = "";
+  else if (v.after_draw) s = "Play the card you drew, or keep it";
+  else if (v.plays.length) s = "Your turn";
+  else s = "Nothing plays — draw a card";
+  $("#status").textContent = s || "you";
+}
+
+// ---------------------------------------------------------------- actions
+async function send(action, key = null) {
+  if (busy || !game) return;
+  busy = true; pendingKey = key; closePicker(); refreshControls();
+  try {
+    const res = await api("/api/act", { game: game.game, action });
+    await playSteps(res.steps);
+    busy = false;
+    applyView(res.view);
+  } catch (e) {
+    busy = false; toast(e.message); refreshControls();
+  }
+}
+
+function onCardClick(it) {
+  if (busy || !it.el.classList.contains("playable")) return;
+  const opts = view.plays.filter((p) => p.card === it.card);
+  if (!opts.length) return;
+  if (opts[0].color === null) return send(opts[0].action, it.key);
+  openPicker(it, opts);
+}
+
+function openPicker(it, opts) {
+  const pk = $("#picker");
+  pk.innerHTML = "";
+  for (const o of opts) {
+    const b = document.createElement("button");
+    b.style.background = COLORS[colorName(o.color)];
+    b.title = colorName(o.color);
+    b.addEventListener("click", (e) => { e.stopPropagation(); send(o.action, it.key); });
+    pk.appendChild(b);
+  }
+  const r = it.el.getBoundingClientRect();
+  pk.style.left = r.left + r.width / 2 + "px";
+  pk.style.top = r.top - 36 + "px";
+  pk.classList.add("open");
+}
+function closePicker() { $("#picker").classList.remove("open"); }
+document.addEventListener("click", (e) => { if (!e.target.closest("#picker") && !e.target.closest("#hand")) closePicker(); });
+
+$("#deck").addEventListener("click", () => { if ($("#deck").classList.contains("can")) send(view.draw_action); });
+$("#keepBtn").addEventListener("click", () => send(view.pass_action));
+
+// ---------------------------------------------------------------- game lifecycle
+function clearTable() {
+  hand.forEach((h) => h.el.remove()); hand = [];
+  oppEls.forEach((el) => el.remove()); oppEls = [];
+  discardCards.forEach((d) => d.el.remove()); discardCards = [];
+  $("#log").innerHTML = "";
+  $("#over").classList.remove("show", "win");
+  $("#splash").style.display = "none";
+  drawnKey = null; scored = false;
+}
+
+async function newGame() {
+  if (busy) return;
+  const oppId = $("#opponent").value;
+  busy = true;
+  try {
+    const res = await api("/api/new", { opponent: oppId, seat: $("#seat").value });
+    game = { ...res, oppId };
+    clearTable();
+    const label = $("#opponent").selectedOptions[0];
+    $("#oppName").textContent = res.opponent;
+    $("#oppName").title = label?.title || "";
+    updateScore();
+    const v = res.view;
+    view = null;
+    // deal
+    setDeckCount(v.pile + v.hand.length + v.opp_count + 1);
+    setColor(v.color);
+    const flights = [];
+    for (let k = 0; k < Math.max(v.hand.length, v.opp_count); k++) {
+      if (k < v.opp_count) {
+        setDeckCount(+$("#deck").dataset.n - 1);
+        const el = addOpp(true); layoutOpp();
+        const slots = oppSlots(oppEls.length);
+        flights.push(fly(null, deckPos(), toPage($("#opp"), slots[slots.length - 1], 0.8), { faceDown: true, duration: T.fly() * 0.8 }).then(() => el.classList.remove("hidden")));
+        await sleep(T.stagger() * 0.6);
+      }
+      if (k < v.hand.length) {
+        setDeckCount(+$("#deck").dataset.n - 1);
+        const it = newHandItem(v.hand[k], true); insertSorted(it); layoutHand();
+        const to = toPage($("#hand"), handSlots(hand.length)[hand.indexOf(it)]);
+        flights.push(fly(v.hand[k], deckPos(), to, { flip: true, duration: T.fly() * 0.8 }).then(() => it.el.classList.remove("hidden")));
+        await sleep(T.stagger() * 0.6);
+      }
+    }
+    await Promise.all(flights);
+    setDeckCount(v.pile);
+    const r = discardSlot().r;
+    await fly(v.top, deckPos(), toPage($("#discard"), { x: 0, y: 0, r }), { flip: true });
+    pushDiscard(v.top, r);
+    applyView(v, false);
+    await sleep(200 * speed);
+    await playSteps(res.steps);
+    busy = false;
+    applyView(res.steps.length ? res.steps[res.steps.length - 1].view : v);
+  } catch (e) {
+    busy = false; toast(e.message); refreshControls();
+  }
+}
+
+function showOver(v) {
+  // reveal the bot's hand
+  oppEls.forEach((el) => el.remove()); oppEls = [];
+  for (const c of v.opp_hand || []) {
+    const el = document.createElement("div"); el.className = "slot"; el.appendChild(cardEl(c)); $("#opp").appendChild(el); oppEls.push(el);
+  }
+  layoutOpp();
+  const win = v.winner === "you";
+  const why = { win: "", exhaustion: "The deck ran out: fewer cards wins.", cap: "Turn cap reached." }[v.end] ?? "";
+  $("#overTitle").textContent = v.winner === null ? "Draw" : win ? "You win!" : "Bot wins";
+  $("#overText").textContent = `${why} ${v.turn} turns vs ${game.opponent}.`.trim();
+  $("#over").classList.toggle("win", win);
+  if (!scored) {
+    scored = true;
+    const all = store.get("uno-score", {});
+    const s = all[game.opponent] || { w: 0, l: 0, d: 0 };
+    s[v.winner === null ? "d" : win ? "w" : "l"]++;
+    all[game.opponent] = s; store.set("uno-score", all);
+    updateScore();
+  }
+  setTimeout(() => $("#over").classList.add("show"), 500 * speed);
+}
+
+function updateScore() {
+  const label = $("#opponent").selectedOptions[0]?.textContent;
+  const s = store.get("uno-score", {})[label];
+  $("#score").innerHTML = s ? `vs ${label}: <b>${s.w}</b>W · <b>${s.l}</b>L${s.d ? ` · ${s.d}D` : ""}` : "";
+}
+
+function fillOpponents(list, select) {
+  const sel = $("#opponent");
+  const prev = select || sel.value || store.get("uno-opponent", null);
+  sel.innerHTML = "";
+  for (const [kind, title] of [["checkpoint", "Checkpoints"], ["rulebot", "Rulebots"]]) {
+    const items = list.filter((o) => o.kind === kind);
+    if (!items.length) continue;
+    const g = document.createElement("optgroup"); g.label = title;
+    for (const o of items) { const op = document.createElement("option"); op.value = o.id; op.textContent = o.label; op.title = o.detail; g.appendChild(op); }
+    sel.appendChild(g);
+  }
+  if (prev && list.some((o) => o.id === prev)) sel.value = prev;
+  updateScore();
+}
+
+$("#newBtn").addEventListener("click", newGame);
+$("#againBtn").addEventListener("click", () => { $("#over").classList.remove("show"); newGame(); });
+$("#opponent").addEventListener("change", () => { store.set("uno-opponent", $("#opponent").value); updateScore(); });
+$("#speed").addEventListener("change", () => { speed = +$("#speed").value; document.documentElement.style.setProperty("--fly", 420 * speed + "ms"); store.set("uno-speed", speed); });
+$("#loadToggle").addEventListener("click", () => $("#loadbox").classList.toggle("open"));
+$("#loadBtn").addEventListener("click", async () => {
+  const path = $("#ckptPath").value.trim();
+  if (!path) return;
+  try {
+    const res = await api("/api/load", { path, label: $("#ckptLabel").value.trim() });
+    fillOpponents(res.opponents, res.loaded);
+    store.set("uno-opponent", res.loaded);
+    $("#loadbox").classList.remove("open");
+    toast("Checkpoint loaded");
+  } catch (e) { toast(e.message); }
+});
+window.addEventListener("resize", () => { layoutHand(); layoutOpp(); });
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT") return;
+  if (e.key === "n") newGame();
+  if (e.key === "d" && $("#deck").classList.contains("can")) send(view.draw_action);
+  if (e.key === "k" && view?.pass_action != null && !busy) send(view.pass_action);
+  if (e.key === "Escape") closePicker();
+});
+
+(async () => {
+  CFG = await api("/api/config");
+  speed = store.get("uno-speed", 1);
+  $("#speed").value = String(speed);
+  document.documentElement.style.setProperty("--fly", 420 * speed + "ms");
+  fillOpponents(CFG.opponents);
+  setDeckCount(0);
+})();
+</script>
+</body>
+</html>
