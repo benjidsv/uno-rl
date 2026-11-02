@@ -1,0 +1,9 @@
+{
+  "study_id": "overnight-experiment",
+  "arm": "CRITIC",
+  "phase": "diagnostic",
+  "seed": 0,
+  "machine": "PC-BE796DS",
+  "kind": "overnight-data",
+  "league": "rulebot"
+}

@@ -1,0 +1,68 @@
+{
+  "ruleset": "FULL_UNO",
+  "arm": "CRITIC",
+  "model": {
+    "kind": "relational",
+    "width": 128,
+    "blocks": 2
+  },
+  "training_seed": 0,
+  "device": "cuda",
+  "data_cap": 5000000,
+  "time_cap_s": 60000,
+  "optim": {
+    "gamma": 1.0,
+    "gae_lambda": 0.95,
+    "actor_lr": 5e-05,
+    "critic_lr": 0.0003,
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "eps": 1e-08,
+    "weight_decay": 0.0,
+    "clip": 0.2,
+    "actor_epochs": 4,
+    "critic_epochs": 4,
+    "n_minibatches": 32,
+    "precision": "bf16",
+    "normalize_advantages": true,
+    "entropy_coef": 0.01,
+    "actor_grad_norm": 0.5,
+    "critic_grad_norm": 2.0,
+    "target_kl": 0.02,
+    "temperature": 1.0,
+    "value_clip": null
+  },
+  "collection": {
+    "games_per_cell": 64,
+    "live_games_per_worker": 64,
+    "workers": 16,
+    "target_decisions": null
+  },
+  "evaluation": {
+    "deals_per_cell": 1024,
+    "every_fraction": 0.05,
+    "panel_start": 800000
+  },
+  "schema_version": 3,
+  "version": 2,
+  "config_hash": "00536fdf06900bc2",
+  "algorithm_hash": "3594de8404b69360",
+  "stream_version": 1,
+  "league_hash": "8a40507446809b59",
+  "actor_schema": "1f1e8f986039baa1",
+  "critic_schema": "1f1e8f986039baa1",
+  "shapes": "arm CRITIC model relational: 54 tokens (4 x 13 + 2), channels 25/31/35, 62 actions, actor 900,097 params, critic 751,745 params",
+  "mlflow": "3.16.1",
+  "base_commit": "796fac6cc9d914c2bd30e1c2cb0825dfb5ef1d10",
+  "dirty": false,
+  "python": "3.14.2",
+  "numpy": "2.5.3",
+  "torch": "2.14.0+cu132",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "machine": "PC-BE796DS",
+  "cpu_count": 16,
+  "execution_collection_torch_threads": 1,
+  "execution_update_torch_threads": 1
+}

@@ -1,0 +1,9 @@
+{
+  "study_id": "experiment",
+  "arm": "C",
+  "phase": "diagnostic",
+  "seed": 0,
+  "machine": "PC-BE796DS",
+  "kind": "untracked-data",
+  "league": "rulebot"
+}

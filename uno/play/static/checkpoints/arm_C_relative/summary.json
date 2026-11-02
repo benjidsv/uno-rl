@@ -1,0 +1,57 @@
+{
+  "stop_reason": "data_cap",
+  "overrun_s": 0.0,
+  "updates": 967,
+  "learner_decisions": 10006463,
+  "games": 495104,
+  "engine_decisions": 20158001,
+  "active_seconds": 1777.7327959999966,
+  "wall_seconds": 2073.1308036000046,
+  "evaluation_points": 21,
+  "final_evaluation_reused": true,
+  "selected_update": 879,
+  "selected_decisions": 9009810,
+  "selected_checkpoint": "checkpoints/best.pt",
+  "selected_checkpoint_available": true,
+  "selected_score": 0.6832275390625,
+  "final_score": 0.676513671875,
+  "final_ci95": [
+    0.6654762130712212,
+    0.6875511306787788
+  ],
+  "behavior": {
+    "game_draw_rate": 0.0,
+    "action_cap_rate": 0.0,
+    "mean_game_length": 44.385986328125,
+    "forced_draw_rate": 0.16656130262933663,
+    "optional_draw_opportunity_rate": 0.7391388001693154,
+    "optional_draw_rate": 0.1317680133277801,
+    "keep_rate": 0.022142939601668965,
+    "wild_play_rate": 0.05505500002748627,
+    "action_card_rate": 0.15774370701834434,
+    "entropy": 0.30418888506428765,
+    "legal_actions": 4.052872590141225,
+    "max_entropy": 1.1590072762192583,
+    "normalized_entropy": 0.20524950201485065,
+    "effective_actions": 1.4969879358048863,
+    "action_choice_play_rate": 0.5528406289377089,
+    "action_only_draw_rate": 0.04533211941883843,
+    "wild_choice_play_rate": 0.03517230044376267,
+    "wild_only_draw_rate": 0.26342231230324725
+  },
+  "execution": {
+    "collection_torch_threads": 1,
+    "update_torch_threads": 1,
+    "compile": true
+  },
+  "cells": {
+    "heuristic_memory_s0": 0.6689453125,
+    "heuristic_memory_s1": 0.638671875,
+    "rulebot_transfer_toy_v1_s0": 0.6943359375,
+    "rulebot_transfer_toy_v1_s1": 0.6875,
+    "rulebot_full_dev_v1_s0": 0.7001953125,
+    "rulebot_full_dev_v1_s1": 0.65234375,
+    "rulebot_unpredictable_t0.15_m0.2_d0.02_k0.04_kw0.1_s0": 0.69921875,
+    "rulebot_unpredictable_t0.15_m0.2_d0.02_k0.04_kw0.1_s1": 0.6708984375
+  }
+}

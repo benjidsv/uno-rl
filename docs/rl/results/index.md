@@ -36,6 +36,11 @@ semantic experiment file containing configuration and provenance.
 
 ## Diagnostics
 
+- [Critic calibration as a win probability](critic-calibration.md) — rel-C's and B's
+  critics are miscalibrated as `(v + 1) / 2` against each league bot (worst bin gap
+  0.105-0.218, late game worst); per-opponent Platt fails on held-out data, so the
+  play demo uses rollout values.
+
 - [Stage 5 exact-toy study](stage5-toy-gates.md) — all four raw-gradient checks
   passed, including the PPO/score-function identity. The retained tabular gate
   passed 5/5 seeds against Heuristic but only 3/5 against PlayFirstRandom because

@@ -1,0 +1,8 @@
+{
+  "run_name": "omniscient-chillguy_CRITIC-seed0",
+  "mlflow": true,
+  "pending_uploads": 0,
+  "unavailable_reason": null,
+  "metrics_file": "logs\\rl\\FULL_UNO_CRITIC_seed0_nmb32_bf16_cuda_1790108179\\tracking\\metrics.csv",
+  "status": "FINISHED"
+}

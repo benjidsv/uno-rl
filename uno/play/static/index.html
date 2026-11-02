@@ -10,7 +10,9 @@
 :root {
   --red: #ed1c24; --yellow: #ffde16; --green: #50aa44; --blue: #0072bc; --purple: #8e44ad; --orange: #e67e22;
   --felt: #145c3a; --felt-dark: #0b3a24; --ink: #f4f1e8; --muted: #a9c7b6; --panel: rgba(0,0,0,.28);
-  --cw0: clamp(48px, min(6.6vw, 11vh), 100px); --cw: var(--cw0); --ch: calc(var(--cw) * 1.55);
+  /* card size follows the table (the space left by the side panel), not the viewport: cq units
+     resolve against #table at each use site; flyers outside it get px values in fly() */
+  --cw0: clamp(52px, min(10cqw, 13.5cqh), 130px); --cw: var(--cw0); --ch: calc(var(--cw) * 1.55);
   --fly: 420ms;
   font-family: "Nunito", ui-rounded, system-ui, sans-serif;
 }
@@ -45,7 +47,7 @@ select option, select optgroup { background: #123; color: var(--ink); }
 #loadbox input { width: min(44vw, 520px); }
 
 /* -- table zones */
-#table { position: absolute; inset: 0; }
+#table { position: absolute; inset: 0; container-type: size; }
 .zone-label { position: absolute; left: 50%; transform: translateX(-50%); font-weight: 800; color: var(--muted); display: flex; gap: 8px; align-items: center; white-space: nowrap; transition: color .3s; }
 .zone-label.active { color: var(--ink); }
 .zone-label .dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,.2); transition: background .3s, box-shadow .3s; }
@@ -55,9 +57,9 @@ select option, select optgroup { background: #123; color: var(--ink); }
 #oppLabel { top: calc(58px + var(--ch) * .8 + 16px); }
 #oppLabel small { color: var(--muted); font-weight: 600; }
 
-#opp { position: absolute; top: 58px; left: 50%; width: min(80vw, 900px); height: calc(var(--ch) * .8); transform: translateX(-50%); }
+#opp { position: absolute; top: 58px; left: 50%; width: min(80%, 1000px); height: calc(var(--ch) * .8); transform: translateX(-50%); }
 #opp .slot { --cw: calc(var(--cw0) * .8); --ch: calc(var(--cw) * 1.55); }
-#hand { position: absolute; bottom: 4px; left: 50%; width: min(94vw, 1200px); height: calc(var(--ch) + 40px); transform: translateX(-50%); }
+#hand { position: absolute; bottom: 4px; left: 50%; width: min(94%, 1300px); height: calc(var(--ch) + 40px); transform: translateX(-50%); }
 
 #center { position: absolute; left: 50%; top: calc((58px + var(--ch) * .8 + 40px + 100% - var(--ch) - 90px) / 2); transform: translate(-50%, -50%); display: flex; gap: calc(var(--cw) * .9); align-items: center; }
 #deck, #discard { position: relative; width: var(--cw); height: var(--ch); }
@@ -147,6 +149,102 @@ select option, select optgroup { background: #123; color: var(--ink); }
 
 #splash { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--muted); font-weight: 800; }
 #splash h2 { color: var(--ink); font-size: 34px; margin: 0 0 8px; }
+
+/* -- analysis: coaches, side panel, network grid, value curve */
+:root {
+  --coach-1: #9085e9; --coach-2: #d95926; --coach-3: #3987e5;     /* validated vs the badge surface */
+  --div-neg: #3987e5; --div-mid: #383835; --div-pos: #e66767;       /* diverging pair, gray midpoint */
+  --badge: #14171a; --hair: rgba(255,255,255,.12); --sideW: clamp(340px, 40vw, 680px);
+}
+label.tog { display: flex; gap: 5px; align-items: center; font-weight: 800; color: var(--muted); cursor: pointer; }
+label.tog input { accent-color: var(--yellow); }
+label.tog:has(input:checked) { color: var(--ink); }
+.chips { position: absolute; left: 50%; top: -12px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 2px; padding: 3px 4px;
+         background: var(--badge); border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.5); z-index: 5; pointer-events: auto; }
+.chips i { display: flex; align-items: center; gap: 3px; font-style: normal; font-size: 9px; font-weight: 800; color: #c3c2b7; line-height: 1; }
+.chips i b { display: block; width: 30px; height: 5px; border-radius: 3px; background: var(--hair); position: relative; overflow: hidden; }
+.chips i b::after { content: ""; position: absolute; inset: 0 auto 0 0; width: calc(var(--p) * 100%); background: var(--c); border-radius: 3px; }
+.chips i.top b { box-shadow: 0 0 0 1px #fff; }
+#deck .chips { top: auto; bottom: -46px; }
+#keepBtn .chips { position: static; transform: none; display: inline-flex; margin-left: 8px; vertical-align: middle; }
+body:not(.coach) .chips { display: none; }
+.verdict { color: #e8c4b4; } .agree { color: #a9d8b0; } .l2note { color: #f0a47c; }
+#log div.sel { box-shadow: 0 0 0 2px var(--yellow); }
+#log div[data-inspect] { cursor: pointer; }
+
+#table { transition: left .3s; }
+body.side-open #table { left: var(--sideW); }
+#side { position: fixed; left: 0; top: 56px; bottom: 0; width: var(--sideW); padding: 10px 22px 24px 22px; overflow-y: auto; display: none; z-index: 15;
+        background: linear-gradient(90deg, rgba(0,0,0,.34), rgba(0,0,0,.22)); font-size: 15px; line-height: 1.45; }
+body.side-open #side { display: block; }
+#side h3 { margin: 22px 0 10px; font-size: 14px; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
+#side h3 small { text-transform: none; letter-spacing: 0; font-weight: 600; }
+#side .note { color: var(--muted); margin: 10px 0; line-height: 1.5; }
+#side .row { display: flex; gap: 14px; align-items: center; margin-top: 12px; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.tabs button { padding: 5px 12px; font-size: 14px; background: rgba(255,255,255,.08); color: var(--ink); box-shadow: none; }
+.tabs button.on { background: var(--ink); color: #16301f; }
+.pbar { display: grid; grid-template-columns: 1fr 60px; gap: 10px; align-items: center; margin: 5px 0; }
+.pbar .lab { position: relative; padding: 4px 10px; border-radius: 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pbar .lab::before { content: ""; position: absolute; inset: 0 auto 0 0; width: calc(var(--p) * 100%); background: rgba(244,241,232,.2); border-radius: 0 4px 4px 0; z-index: -1; }
+.pbar .lab { z-index: 0; }
+.pbar .num { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pbar.played .lab { box-shadow: inset 0 0 0 2px var(--yellow); }
+.pbar.played .lab::before { background: rgba(255,222,22,.35); }
+#contBtn kbd { font: inherit; font-size: 11px; opacity: .6; margin-left: 4px; }
+#contBtn.wait { animation: pulseb 1.2s ease-in-out infinite; }
+@keyframes pulseb { 50% { box-shadow: 0 0 0 4px rgba(255,222,22,.45); } }
+
+.cgrid { display: grid; gap: 3px; margin: 12px 0; }
+.cgrid .h { font-size: 13px; font-weight: 800; color: var(--muted); text-align: center; align-self: end; }
+.cgrid .rh { width: 14px; height: 14px; border-radius: 50%; align-self: center; justify-self: center; }
+.cgrid .c { aspect-ratio: 1 / 1.25; border-radius: 5px; background: var(--div-mid); position: relative; }
+.cgrid .c.hand { box-shadow: inset 0 0 0 2px rgba(255,255,255,.95); }
+.cgrid .c.top { box-shadow: inset 0 0 0 2px var(--yellow); }
+.cgrid .c.chosen::after, .cgrid .c.runner::after { content: ""; position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; transform: translate(-50%, -50%); border-radius: 50%; }
+.cgrid .c.chosen::after { background: #fff; box-shadow: 0 0 0 1px #000; }
+.cgrid .c.runner::after { border: 1.5px solid #fff; box-shadow: 0 0 0 1px #000; background: transparent; }
+.cgrid .gap { width: 6px; }
+.legend { display: flex; gap: 8px 16px; flex-wrap: wrap; color: var(--muted); font-size: 13.5px; margin: 6px 0 8px; }
+.legend span { display: inline-flex; gap: 4px; align-items: center; }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.ramp { height: 12px; border-radius: 6px; margin: 6px 0 4px; background: linear-gradient(90deg, var(--div-neg), var(--div-mid), var(--div-pos)); }
+.rampLab { display: flex; justify-content: space-between; font-size: 13.5px; color: var(--muted); }
+#decomp svg { display: block; width: 100%; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.pair .cgrid .h { font-size: 10px; } .pair .cgrid .rh { width: 9px; height: 9px; } .pair .cgrid { gap: 2px; }
+.gtitle { font-weight: 800; font-size: 13.5px; margin: 14px 0 2px; }
+.gtitle small { color: var(--muted); font-weight: 600; }
+.cgrid .c .n { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; font-weight: 900; color: #16301f; }
+.seqRamp { height: 12px; border-radius: 6px; margin: 6px 0 4px; background: linear-gradient(90deg, #333638, #7cb4ff); }
+.rank { list-style: none; padding: 0; margin: 10px 0; }
+.rank li { display: grid; grid-template-columns: 14px 1fr auto; gap: 10px; align-items: center; padding: 5px 8px; border-radius: 6px; background: rgba(0,0,0,.18); margin: 4px 0; }
+.rank li .sw { width: 12px; height: 12px; border-radius: 3px; }
+.rank li .tag { color: var(--muted); font-size: 13px; }
+.rank li .v { font-variant-numeric: tabular-nums; font-weight: 800; }
+select.chan { width: 100%; margin: 6px 0; }
+#decomp text { fill: #c3c2b7; font-size: 13px; font-family: inherit; font-weight: 700; }
+
+#tip { position: fixed; z-index: 60; pointer-events: none; background: #0b1510; color: var(--ink); border: 1px solid var(--hair); border-radius: 8px; padding: 6px 9px;
+       font-size: 12px; line-height: 1.35; max-width: 280px; opacity: 0; transition: opacity .12s; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+#tip.show { opacity: 1; }
+#tip .m { color: var(--muted); }
+
+#valueBox { position: absolute; right: 14px; bottom: calc(var(--ch) + 64px); width: 250px; background: var(--panel); border-radius: 10px; padding: 8px 10px 6px; font-size: 12px; z-index: 12; }
+#valueBox .vh { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-weight: 800; }
+#valueBox .vh button { padding: 2px 10px; font-size: 12px; }
+#valueBox .sub { color: var(--muted); font-size: 11px; margin: 2px 0 4px; }
+#valueSvg { display: block; width: 100%; height: 118px; overflow: visible; }
+#valueSvg .grid line { stroke: var(--hair); stroke-width: 1; }
+#valueSvg .grid line.mid { stroke: rgba(255,255,255,.28); }
+#valueSvg text { fill: var(--muted); font-size: 10px; font-family: inherit; font-weight: 700; }
+#valueSvg .band { fill: rgba(244,241,232,.14); }
+#valueSvg .line { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+#valueSvg .dot { fill: var(--ink); stroke: #123a28; stroke-width: 2; }
+#valueSvg .dot.bot { fill: #123a28; stroke: var(--ink); stroke-width: 1.5; }
+#valueSvg .cross { stroke: rgba(255,255,255,.45); stroke-width: 1; }
+#log { max-height: calc(100% - var(--ch) - 260px); }
+@media (max-width: 900px) { #valueBox, #side { display: none !important; } body.side-open #table { left: 0; } }
 </style>
 </head>
 <body>
@@ -161,6 +259,9 @@ select option, select optgroup { background: #123; color: var(--ink); }
   <button id="newBtn">New game</button>
   <button class="ghost" id="loadToggle" title="Load an actor export">+ checkpoint</button>
   <span id="loadbox"><input type="text" id="ckptPath" placeholder="logs/…/checkpoints/best_actor.pt"><input type="text" id="ckptLabel" placeholder="label (optional)" style="width:140px"><button id="loadBtn">Load</button></span>
+  <label class="tog" title="Show the bot's hand and its analysis; the bot's inputs are unchanged (r)"><input type="checkbox" id="revealTog"> reveal</label>
+  <label class="tog" title="Coach chips on your cards (c)"><input type="checkbox" id="coachTog"> coach</label>
+  <button class="ghost" id="sideToggle" title="Analysis panel">analysis</button>
   <span class="spacer"></span>
   <span id="score"></span>
   <select id="speed" title="Animation speed">
@@ -178,9 +279,27 @@ select option, select optgroup { background: #123; color: var(--ink); }
   <div id="controls"><div class="zone-label" id="youLabel"><span class="dot"></span><span id="status">you</span></div><button id="keepBtn" style="display:none">Keep card</button></div>
   <div id="hand"></div>
   <div id="log"></div>
+  <div id="valueBox">
+    <div class="vh"><span>Win chance</span><button class="ghost" id="valueBtn" title="Rollout values (v)">compute</button></div>
+    <div class="sub" id="valueSub">if the model played your seat from here (rollouts)</div>
+    <svg id="valueSvg" role="img" aria-label="Win chance over the game"></svg>
+  </div>
   <div id="toast"></div>
   <div id="splash"><h2>Pick an opponent</h2>then press New game</div>
 </div>
+<aside id="side">
+  <h3>Bot decision <small id="botInfo"></small></h3>
+  <div id="botBody"><p class="note">Turn on <b>reveal</b> to see the bot's hand, its full policy and its network before each of its moves.</p></div>
+  <div class="row" id="contRow" style="display:none"><button id="contBtn" disabled>Continue<kbd>space</kbd></button>
+    <label class="tog" title="Play the bot's moves at the normal pace (a)"><input type="checkbox" id="autoTog"> auto-advance</label></div>
+  <h3>Network <small id="netWho"></small></h3>
+  <div class="tabs" id="netWhoTabs"></div>
+  <div class="tabs" id="netModes"></div>
+  <div class="tabs" id="netLayers"></div>
+  <div id="netBody"></div>
+  <p class="note" id="netNote">At your turn this shows the coach's network on your decision; in reveal mode, the bot's on its own.</p>
+</aside>
+<div id="tip"></div>
 <div id="fx"></div>
 <div id="picker"></div>
 <div id="over"><div class="box"><h1 id="overTitle"></h1><p id="overText"></p><button id="againBtn">Play again</button></div></div>
@@ -199,6 +318,14 @@ let hand = [];           // [{key, card, el}] in server order
 let oppEls = [];         // face-down slot elements
 let keySeq = 0, pendingKey = null, drawnKey = null, scored = false;
 let speed = 1;
+let oppCards = [];       // face-up cards of the opponent row in reveal mode (null = face down)
+let coachOn = true, autoOn = false, sideOpen = true;
+let netTarget = null, netData = null, netMode = "moved", netLayer = null, netSeq = 0, netChannel = "playable";
+let beliefSide = "bot", lastBot = null;  // "bot": the bot's belief about your hand; "coach": the coach's about the bot's
+const netCache = new Map();
+let continueResolve = null;
+let valuesOn = false, valuePts = [], valueDecisions = 0, valueTimer = null;
+const turnOf = {};       // decision -> turn, for the value curve
 
 const T = { fly: () => 420 * speed, think: () => 650 * speed, stagger: () => 110 * speed };
 
@@ -306,12 +433,28 @@ function addOpp(hidden) {
   el.className = "slot" + (hidden ? " hidden" : "");
   el.appendChild(cardEl(null, true));
   $("#opp").appendChild(el);
-  oppEls.push(el);
+  oppEls.push(el); oppCards.push(null);
   return el;
 }
 function setOppCount(n) {
+  if (oppCards.some((c) => c != null)) { oppEls.forEach((el) => el.remove()); oppEls = []; }
   while (oppEls.length > n) oppEls.pop().remove();
   while (oppEls.length < n) addOpp(false);
+  oppCards = oppEls.map(() => null);
+  layoutOpp();
+}
+// Reveal mode: the bot's hand face up, keeping the elements of cards it still holds.
+function setOppHand(cards) {
+  const pool = oppEls.map((el, i) => ({ el, card: oppCards[i] }));
+  const els = [], next = [];
+  for (const c of [...cards].sort((a, b) => a - b)) {
+    const i = pool.findIndex((p) => p.card === c);
+    if (i >= 0) { els.push(pool.splice(i, 1)[0].el); }
+    else { const el = document.createElement("div"); el.className = "slot"; el.appendChild(cardEl(c)); $("#opp").appendChild(el); els.push(el); }
+    next.push(c);
+  }
+  pool.forEach((p) => p.el.remove());
+  oppEls = els; oppCards = next;
   layoutOpp();
 }
 
@@ -360,6 +503,7 @@ function fly(card, from, to, { flip = false, duration = T.fly(), faceDown = fals
   const outer = document.createElement("div");
   outer.className = "flyer";
   outer.style.width = w + "px"; outer.style.height = h + "px";
+  outer.style.setProperty("--cw", w + "px"); outer.style.setProperty("--ch", h + "px");
   const flipper = document.createElement("div");
   flipper.className = "flipper";
   if (flip) {
@@ -391,9 +535,11 @@ async function animatePlay(ev) {
     flip = false;
   } else {
     const slots = oppSlots(oppEls.length);
-    from = toPage($("#opp"), slots[slots.length - 1], 0.8);
-    oppEls.pop()?.remove();
-    flip = true;
+    let i = oppCards.indexOf(ev.card);
+    flip = i < 0;
+    if (i < 0) i = oppEls.length - 1;
+    from = toPage($("#opp"), slots[i], 0.8);
+    oppEls.splice(i, 1)[0]?.remove(); oppCards.splice(i, 1);
   }
   layoutHand(); layoutOpp();
   await fly(ev.card, from, to, { flip });
@@ -456,8 +602,13 @@ function log(step) {
   if (!parts.length) return;
   const d = document.createElement("div");
   d.className = step.who;
+  d.dataset.decision = step.decision;
   const p = step.prob != null ? ` <span title="probability the policy gave this action">(${Math.round(step.prob * 100)}%)</span>` : "";
-  d.innerHTML = `<b>${who}</b> ${parts.join(", ")}${p}`;
+  d.innerHTML = `<b>${who}</b> ${parts.join(", ")}${p}${step.note ? `<br>${step.note}` : ""}`;
+  if (step.who === "bot" && step.policy) {
+    d.dataset.inspect = "1"; d.title = "inspect this decision";
+    d.addEventListener("click", () => { showBotStep(step, false); setNetTarget({ decision: step.decision, who: "bot", chosen: step.action }); });
+  }
   const box = $("#log");
   box.prepend(d);
   while (box.children.length > 40) box.lastChild.remove();
@@ -465,9 +616,16 @@ function log(step) {
 
 async function playSteps(steps) {
   for (const st of steps) {
+    turnOf[st.decision] = st.view.turn;
+    if (st.who === "bot") lastBot = { decision: st.decision, turn: st.view.turn };
     if (st.who === "bot") {
       setTurn("bot", true);
-      await sleep(T.think());
+      if (st.policy) {  // reveal mode: the bot's analysis first, its move on Continue
+        showBotStep(st, true);
+        setNetTarget({ decision: st.decision, who: "bot", chosen: st.action });
+        if (autoOn) await sleep(T.think() * 1.6); else await waitContinue();
+        showBotStep(st, false);
+      } else await sleep(T.think());
     }
     for (const ev of st.events) {
       if (ev.type === "play") await animatePlay(ev);
@@ -490,13 +648,15 @@ function setTurn(who, thinking = false) {
 function applyView(v, final = true) {
   view = v;
   reconcileHand(v.hand);
-  if (!v.over) setOppCount(v.opp_count);
+  if (!v.over) { if (v.opp_hand) setOppHand(v.opp_hand); else setOppCount(v.opp_count); }
   setDeckCount(v.pile);
   if (!discardCards.length || discardCards[discardCards.length - 1].card !== v.top) pushDiscard(v.top, discardSlot().r, v.color);
   setColor(v.color);
   setTurn(v.over ? null : v.to_move);
   if (!v.after_draw) drawnKey = null;
+  if (v.analysis) turnOf[v.analysis.decision] = v.turn;
   if (final) refreshControls();
+  if (final && v.analysis && game?.coaches?.length) setNetTarget({ decision: v.analysis.decision, who: coachFor(netTarget?.who) });
   if (v.over && final) showOver(v);
 }
 
@@ -521,6 +681,7 @@ function refreshControls() {
   else if (v.plays.length) s = "Your turn";
   else s = "Nothing plays — draw a card";
   $("#status").textContent = s || "you";
+  renderCoach();
 }
 
 // ---------------------------------------------------------------- actions
@@ -528,10 +689,14 @@ async function send(action, key = null) {
   if (busy || !game) return;
   busy = true; pendingKey = key; closePicker(); refreshControls();
   try {
+    const before = view?.analysis;
     const res = await api("/api/act", { game: game.game, action });
+    if (res.steps.length) res.steps[0].note = verdict(action, before);
     await playSteps(res.steps);
     busy = false;
     applyView(res.view);
+    if (!!res.view.opp_hand !== !!game.reveal && !res.view.over) syncReveal();
+    if (valuesOn) pollValues();
   } catch (e) {
     busy = false; toast(e.message); refreshControls();
   }
@@ -566,6 +731,425 @@ document.addEventListener("click", (e) => { if (!e.target.closest("#picker") && 
 $("#deck").addEventListener("click", () => { if ($("#deck").classList.contains("can")) send(view.draw_action); });
 $("#keepBtn").addEventListener("click", () => send(view.pass_action));
 
+// ---------------------------------------------------------------- analysis: shared
+const pct = (p) => `${Math.round(p * 100)}%`;
+const argmax = (d) => +Object.keys(d).reduce((a, b) => (d[a] >= d[b] ? a : b));
+function actionLabel(a) {
+  const x = CFG.actions[a];
+  if (x.kind === "draw") return "draw";
+  if (x.kind === "keep") return "keep the drawn card";
+  return cardLabel(x.card, x.color);
+}
+function coachColor(i) { return `var(--coach-${Math.min(i, 2) + 1})`; }
+function coachFor(who) {  // keep the selected coach across decisions; default to the first
+  const cs = game?.coaches || [];
+  return cs.some((c) => c.label === who) ? who : cs[0]?.label;
+}
+function tip(e, html) {
+  const t = $("#tip");
+  if (!html) { t.classList.remove("show"); return; }
+  t.innerHTML = html; t.classList.add("show");
+  const r = t.getBoundingClientRect();
+  t.style.left = Math.min(e.clientX + 14, innerWidth - r.width - 8) + "px";
+  t.style.top = Math.min(e.clientY + 14, innerHeight - r.height - 8) + "px";
+}
+const esc = (x) => String(x).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+
+// ---------------------------------------------------------------- coach chips
+function coachRows(filter) {
+  // per coach: summed probability of the actions `filter` accepts, and the split by colour
+  const an = view?.analysis;
+  return (game?.coaches || []).map((c, i) => {
+    const d = an.coach[c.label] || {};
+    let p = 0; const parts = [];
+    for (const [a, q] of Object.entries(d)) if (filter(CFG.actions[+a])) { p += q; parts.push([+a, q]); }
+    const top = Object.keys(d).length ? argmax(d) : null;
+    return { c, i, p, parts, top: top != null && filter(CFG.actions[top]) };
+  });
+}
+function chipEl(rows) {
+  const box = document.createElement("div");
+  box.className = "chips";
+  box.innerHTML = rows.map((r) => `<i class="${r.top ? "top" : ""}"><b style="--p:${r.p};--c:${coachColor(r.i)}"></b>${r.c.level}</i>`).join("");
+  const lines = rows.map((r) => {
+    const split = r.parts.length > 1 ? ` <span class="m">(${r.parts.map(([a, q]) => `${colorName(CFG.actions[a].color)} ${pct(q)}`).join(", ")})</span>` : "";
+    return `<span style="color:${coachColor(r.i)}">■</span> ${esc(r.c.label)} <span class="m">${r.c.level === "L2" ? "peeks" : "L1"}</span>: <b>${pct(r.p)}</b>${r.top ? " ★" : ""}${split}`;
+  }).join("<br>");
+  box.addEventListener("mousemove", (e) => tip(e, lines));
+  box.addEventListener("mouseleave", () => tip(null));
+  return box;
+}
+function renderCoach() {
+  document.querySelectorAll(".chips").forEach((el) => el.remove());
+  const v = view;
+  if (!v?.analysis || v.over || v.to_move !== "you" || busy || !game?.coaches?.length) return;
+  const seen = new Set();
+  for (const it of hand) {
+    if (seen.has(it.card)) continue;
+    const rows = coachRows((x) => x.card === it.card);
+    if (!rows.some((r) => r.parts.length)) continue;
+    seen.add(it.card);
+    it.el.appendChild(chipEl(rows));
+  }
+  if (v.draw_action != null) $("#deck").appendChild(chipEl(coachRows((x) => x.kind === "draw")));
+  if (v.pass_action != null) $("#keepBtn").appendChild(chipEl(coachRows((x) => x.kind === "keep")));
+}
+function verdict(action, an) {
+  if (!an || !game?.coaches?.length) return "";
+  const out = [];
+  const l1 = game.coaches.find((c) => c.level === "L1"), l2 = game.coaches.find((c) => c.level === "L2");
+  const t1 = l1 ? argmax(an.coach[l1.label]) : null;
+  if (l1) {
+    const d = an.coach[l1.label];
+    out.push(t1 === action ? `<span class="agree">✓ coach's pick (${pct(d[action] ?? 0)})</span>`
+      : `<span class="verdict">coach: <b>${actionLabel(t1)}</b> ${pct(d[t1])}, yours ${pct(d[action] ?? 0)}</span>`);
+  }
+  if (l2) {
+    const d = an.coach[l2.label], t2 = argmax(d);
+    if (l1 ? t2 !== t1 : t2 !== action) out.push(`<span class="l2note">L2 (peeking) disagrees: <b>${actionLabel(t2)}</b> ${pct(d[t2])}</span>`);
+  }
+  return out.join(" · ");
+}
+
+// ---------------------------------------------------------------- bot decision panel
+function showBotStep(st, pending) {
+  const probs = Object.entries(st.policy).map(([a, p]) => [+a, p]).sort((a, b) => b[1] - a[1]);
+  $("#botInfo").textContent = `turn ${st.view.turn - (pending ? 0 : 0)} · ${probs.length} legal`;
+  $("#botBody").innerHTML = probs.map(([a, p]) =>
+    `<div class="pbar${!pending && a === st.action ? " played" : ""}" style="--p:${p}"><span class="lab">${actionLabel(a)}</span><span class="num">${(p * 100).toFixed(p < 0.1 ? 1 : 0)}%</span></div>`).join("")
+    + (pending ? "" : `<p class="note">played <b>${actionLabel(st.action)}</b></p>`);
+  $("#contRow").style.display = "";
+  $("#contBtn").disabled = !pending || autoOn;
+  $("#contBtn").classList.toggle("wait", pending && !autoOn);
+}
+function waitContinue() { return new Promise((r) => { continueResolve = r; }); }
+function doContinue() { if (continueResolve) { const r = continueResolve; continueResolve = null; $("#contBtn").disabled = true; $("#contBtn").classList.remove("wait"); r(); } }
+
+// ---------------------------------------------------------------- network view
+function setNetTarget(t) {
+  if (!t || !t.who) return;
+  if (netTarget && netTarget.decision === t.decision && netTarget.who === t.who) return;
+  netTarget = t;
+  loadNet();
+}
+async function loadNet() {
+  const t = netTarget, seq = ++netSeq;
+  renderNetTabs();
+  if (!t || !sideOpen || !game) { renderNet(); return; }
+  $("#netNote").textContent = "tracing…";
+  try { netData = await inspectOf(t.decision, t.who); }
+  catch (e) { if (seq === netSeq) { netData = null; renderNet(e.message); } return; }
+  if (seq !== netSeq) return;
+  renderNet();
+}
+function inspectOf(decision, who) {  // cached promise per (game, decision, network)
+  const key = `${game.game}:${decision}:${who}`;
+  if (!netCache.has(key)) {
+    const pr = api("/api/inspect", { game: game.game, decision, who });
+    pr.catch(() => netCache.delete(key));
+    netCache.set(key, pr);
+  }
+  return netCache.get(key);
+}
+function renderNetTabs() {
+  const who = $("#netWhoTabs"); who.innerHTML = "";
+  const opts = (game?.coaches || []).map((c, i) => [c.label, `${c.label} · ${c.level === "L2" ? "peeks" : "L1"}`, i]);
+  const cur = netTarget?.who;
+  if (cur === "bot") opts.push(["bot", "bot", -1]);
+  for (const [w, lab, i] of opts) {
+    const b = document.createElement("button");
+    b.textContent = lab; b.className = w === cur ? "on" : "";
+    if (i >= 0) b.style.boxShadow = `inset 3px 0 0 ${coachColor(i)}`;
+    b.addEventListener("click", () => {
+      if (w === "bot") return;
+      const d = view?.analysis?.decision;
+      if (d == null) { toast("Coaches analyse your own decisions"); return; }
+      netTarget = null; setNetTarget({ decision: d, who: w });
+    });
+    who.appendChild(b);
+  }
+  $("#netWho").textContent = netTarget ? (netTarget.who === "bot" ? "the bot's decision" : "your decision, coach's network") : "";
+}
+function tabs(el, items, cur, onPick) {
+  el.innerHTML = "";
+  for (const [k, lab] of items) {
+    const b = document.createElement("button");
+    b.textContent = lab; b.className = k === cur ? "on" : "";
+    b.addEventListener("click", () => onPick(k));
+    el.appendChild(b);
+  }
+}
+const SYM = { skip: "⊘", reverse: "⇄", draw2: "+2", wild: "W", wild4: "+4" };
+function cardSym(id) { const c = cardInfo(id); return c.kind === "number" ? String(c.rank) : SYM[c.kind]; }
+const mixRGB = (a, b, t) => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(",")})`;
+function divColor(x) {  // x in [-1, 1]: blue <- gray -> red (the validated diverging pair)
+  return x >= 0 ? mixRGB([0x38, 0x38, 0x35], [0xe6, 0x67, 0x67], Math.min(1, x)) : mixRGB([0x38, 0x38, 0x35], [0x39, 0x87, 0xe5], Math.min(1, -x));
+}
+function seqColor(x) { return mixRGB([0x33, 0x36, 0x38], [0x7c, 0xb4, 0xff], Math.max(0, Math.min(1, x))); }  // one hue, dark -> light
+
+// One deck-shaped grid: colour rows x slots, a gap, then the wilds. `cell(t)` -> {bg, n?, cls?}; `tipOf(t)` -> html.
+function gridEl(d, cell, tipOf, { rings = true } = {}) {
+  const C = d.colors, S = d.slots, W = d.wilds;
+  const el = document.createElement("div");
+  el.className = "cgrid";
+  el.style.gridTemplateColumns = `18px repeat(${S}, 1fr) 10px repeat(${W}, 1fr)`;
+  const hand = d.features.map((f) => f[1] > 0), top = d.features.map((f) => f[3] > 0);
+  const chosenCard = CFG.actions[d.chosen]?.card, runnerCard = d.runner_up != null ? CFG.actions[d.runner_up]?.card : undefined;
+  let html = `<span></span>`;
+  for (let j = 0; j < S; j++) html += `<span class="h">${cardSym(d.tokens[j])}</span>`;
+  html += `<span></span>`;
+  for (let w = 0; w < W; w++) html += `<span class="h">${cardSym(d.tokens[C * S + w])}</span>`;
+  const one = (t) => {
+    const c = cell(t);
+    const cls = ["c", c.cls || "", rings && hand[t] ? "hand" : "", rings && top[t] ? "top" : "",
+                 rings && d.tokens[t] === chosenCard ? "chosen" : "", rings && d.tokens[t] === runnerCard ? "runner" : ""].join(" ");
+    return `<span class="${cls}" data-t="${t}" style="background:${c.bg}">${c.n ? `<span class="n">${c.n}</span>` : ""}</span>`;
+  };
+  for (let c = 0; c < C; c++) {
+    html += `<span class="rh" style="background:${COLORS[colorName(c)]}"></span>`;
+    for (let j = 0; j < S; j++) html += one(c * S + j);
+    html += `<span></span>`;
+    for (let w = 0; w < W; w++) html += c === 0 ? one(C * S + w) : `<span></span>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll(".c").forEach((c) => {
+    const t = +c.dataset.t;
+    c.addEventListener("mousemove", (e) => tip(e, `<b>${esc(cardLabel(d.tokens[t]))}</b><br>${tipOf(t)}`));
+    c.addEventListener("mouseleave", () => tip(null));
+  });
+  return el;
+}
+function cardTags(d, t) {  // what the input says about this card, in words
+  const f = d.features[t], out = [];
+  if (f[1] > 0) out.push(f[0] > 0.6 ? "in your hand ×2" : "in hand");
+  if (f[3] > 0) out.push("top card");
+  if (f[5] > 0) out.push("playable");
+  if (f[2] > 0) out.push("in the discard");
+  return out.join(", ");
+}
+function rawChannels(d, t) {
+  const f = d.features[t].map((v, i) => [d.channels[i], v]).filter(([, v]) => v !== 0);
+  return `<span class="m">${f.length ? f.map(([n, v]) => `${esc(n)} ${+v.toFixed(3)}`).join("<br>") : "all input channels zero"}</span>`;
+}
+const RINGS = `<p class="note"><span class="m">white ring: in hand · yellow ring: top card · ● chosen move's card · ○ runner-up's card</span></p>`;
+
+function renderNet(error) {
+  const d = netData, body = $("#netBody");
+  if (!d || error) {
+    body.innerHTML = ""; $("#netModes").innerHTML = ""; $("#netLayers").innerHTML = "";
+    $("#netNote").textContent = error || "At your turn this shows the coach's network on your decision; in reveal mode, the bot's on its own.";
+    return;
+  }
+  tabs($("#netModes"), [["moved", "what moved it"], ["sees", "what it sees"], ["believes", "what it believes"], ["pca", "PCA"]], netMode,
+       (k) => { netMode = k; store.set("uno-netmode", k); renderNet(); });
+  $("#netLayers").innerHTML = "";
+  body.innerHTML = "";
+  $("#netNote").innerHTML = "";
+  ({ moved: renderMoved, sees: renderSees, believes: renderBelieves, pca: renderPCA })[netMode](d, body);
+}
+
+function renderSees(d, body) {
+  const sel = document.createElement("select");
+  sel.className = "chan";
+  const used = d.channels.map((n, i) => [n, i, d.features.some((f) => f[i] !== 0)]);
+  if (!d.channels.includes(netChannel)) netChannel = "playable";
+  sel.innerHTML = used.map(([n, , any]) => `<option value="${esc(n)}"${n === netChannel ? " selected" : ""}>${esc(n)}${any ? "" : "  (all zero now)"}</option>`).join("");
+  sel.addEventListener("change", () => { netChannel = sel.value; renderNet(); });
+  const i = d.channels.indexOf(netChannel);
+  const vals = d.features.map((f) => f[i]);
+  const hi = Math.max(1, ...vals);
+  body.insertAdjacentHTML("beforeend", `<p class="note" style="margin-top:2px">One input channel, exactly as the network receives it: every card is a token, and each token carries ${d.channels.length} numbers like this one.</p>`);
+  body.appendChild(sel);
+  body.insertAdjacentHTML("beforeend", `<div class="seqRamp"></div><div class="rampLab"><span>0</span><span>${+hi.toFixed(2)}</span></div>`);
+  body.appendChild(gridEl(d, (t) => ({ bg: seqColor(vals[t] / hi) }), (t) => `${esc(netChannel)}: <b>${+vals[t].toFixed(3)}</b><br>${rawChannels(d, t)}`));
+  body.insertAdjacentHTML("beforeend", RINGS);
+}
+
+function renderBelieves(d, body) {
+  tabs($("#netLayers"), [["bot", "bot → your hand"], ["coach", "coach → bot's hand"]], beliefSide,
+       (k) => { beliefSide = k; store.set("uno-belief-side", k); renderNet(); });
+  const box = document.createElement("div");
+  body.appendChild(box);
+  if (beliefSide === "coach") {
+    if (netTarget?.who === "bot") { box.innerHTML = `<p class="note">The coach analyses your decisions: pick a coach above, at your turn.</p>`; return; }
+    return beliefGrids(d, box, {
+      title: `What <b>${esc(netTarget.who)}</b>, sitting in your seat, believes the bot holds`,
+      sub: "its network on your current decision, reading only what you can see",
+      truthTitle: "Bot's real hand", noTruth: "Turn on <b>reveal</b> to compare with the bot's real hand.",
+    });
+  }
+  // the bot's belief about your hand, at its latest move
+  if (!lastBot) { box.innerHTML = `<p class="note">The bot hasn't moved yet in this game.</p>`; return; }
+  if (!game.reveal && !view?.over) {
+    box.innerHTML = `<p class="note">Turn on <b>reveal</b> (r) to see what the bot believes about your hand. It is bot-side analysis:
+      its guesses depend on its own cards (holding both blue 5s, it knows you have none), so they would leak its hand.</p>`;
+    return;
+  }
+  const key = `${lastBot.decision}`;
+  box.innerHTML = `<p class="note">tracing the bot's last move…</p>`;
+  inspectOf(lastBot.decision, "bot").then((bd) => {
+    if (netMode !== "believes" || beliefSide !== "bot" || `${lastBot?.decision}` !== key) return;
+    box.innerHTML = "";
+    beliefGrids(bd, box, {
+      title: "What the bot believes <b>you</b> hold",
+      sub: `its network at its last move (turn ${lastBot.turn}); your cards since then are not in it yet`,
+      truthTitle: "Your real hand", noTruth: "",
+    });
+  }, (e) => { box.innerHTML = `<p class="note">${esc(/no network inputs/.test(e.message) ? "This bot is a rulebot: it has no network to read a belief from." : e.message)}</p>`; });
+}
+
+function beliefGrids(d, box, { title, sub, truthTitle, noTruth }) {
+  const layers = Object.keys(d.belief), m = d.belief_metrics;
+  if (!layers.includes(netLayer)) netLayer = layers[layers.length - 1];
+  const lt = document.createElement("div");
+  lt.className = "tabs";
+  tabs(lt, layers.map((k) => [k, `${k} · AUROC ${m.layers[k].auroc.toFixed(2)}`]), netLayer, (k) => { netLayer = k; renderNet(); });
+  const p = d.belief[netLayer], base = d.baselines, truth = d.truth;
+  const hi = Math.max(0.3, ...p, ...(base ? base.voids : []));
+  const tipOf = (t) => [`network (${esc(netLayer)}): <b>${pct(p[t])}</b>`,
+    base ? `voids rule: ${pct(base.voids[t])} · uniform prior: ${pct(base.prior[t])}` : "",
+    truth ? `really held: <b>${truth[t]}</b>` : ""].filter(Boolean).join("<br>");
+  box.insertAdjacentHTML("beforeend", `<div class="gtitle" style="font-size:15px">${title}</div>
+    <p class="note" style="margin:2px 0 6px">${sub}. Each cell: the chance of holding at least one of that card, read out of the layer by a linear probe.
+    ${d.peeks ? "<b>This network is given the opponent's hand</b>, so the probe is trivially exact." : ""}</p>`);
+  box.appendChild(lt);
+  box.insertAdjacentHTML("beforeend", `<div class="seqRamp"></div><div class="rampLab"><span>0%</span><span>${pct(hi)}</span></div>`);
+  box.appendChild(gridEl(d, (t) => ({ bg: seqColor(p[t] / hi) }), tipOf, { rings: false }));
+  const pair = document.createElement("div");
+  pair.className = "pair";
+  const left = document.createElement("div"), right = document.createElement("div");
+  left.innerHTML = `<div class="gtitle">Baseline <small>voids rule, same information</small></div>`;
+  if (base) left.appendChild(gridEl(d, (t) => ({ bg: seqColor(base.voids[t] / hi) }), tipOf, { rings: false }));
+  right.innerHTML = `<div class="gtitle">${truthTitle}</div>`;
+  if (truth) right.appendChild(gridEl(d, (t) => ({ bg: truth[t] ? "#f4f1e8" : "#333638", n: truth[t] > 1 ? truth[t] : "" }), tipOf, { rings: false }));
+  else right.insertAdjacentHTML("beforeend", `<p class="note">${noTruth}</p>`);
+  pair.append(left, right);
+  box.appendChild(pair);
+  const sub2 = m.subsample[netLayer];
+  box.insertAdjacentHTML("beforeend", `<p class="note">
+    <b>How good is this readout?</b> On held-out games, AUROC (the chance a held card is ranked above one not held; 0.5 = guessing):
+    network ${esc(netLayer)} <b>${sub2.auroc.toFixed(3)}</b> · voids <b>${m.voids.auroc.toFixed(3)}</b> · uniform prior <b>${m.prior.auroc.toFixed(3)}</b>
+    <span class="m">(${m.prior.decisions} held-out decisions of this network against the league bots)</span><br>
+    <span class="m">voids assumes a play-first opponent that plays a playable drawn card at once, which you may not be. A probe shows what can be read out of a layer, not what the policy uses.</span></p>`);
+}
+
+function renderMoved(d, body) {
+  const att = d.attribution;
+  if (d.runner_up == null) { body.innerHTML = `<p class="note">Only one legal move here: nothing to explain.</p>`; return; }
+  const a = esc(actionLabel(d.chosen)), b = esc(actionLabel(d.runner_up));
+  body.insertAdjacentHTML("beforeend", `<p class="note" style="margin-top:2px">
+    It chose <b>${a}</b> (${pct(d.probs[d.chosen])}) over <b>${b}</b> (${pct(d.probs[d.runner_up])}).
+    For each card, we replace what the network knows about it with an average card and re-run it: the change in <b>${a}</b>'s lead is that card's effect.</p>`);
+  if (!att.shown) {
+    body.insertAdjacentHTML("beforeend", `<p class="note">For this decision two ways of measuring it (card replacement and integrated gradients) disagree (r = ${att.agreement.toFixed(2)}), so no card ranking is shown.</p>`);
+  } else {
+    const occ = att.occlusion, top = occ.map((v, t) => [t, v]).sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])).slice(0, 6);
+    const m = Math.max(1e-9, ...occ.map(Math.abs));
+    body.insertAdjacentHTML("beforeend", `<ul class="rank">${top.map(([t, v]) =>
+      `<li><span class="sw" style="background:${divColor(Math.sign(v) * Math.sqrt(Math.abs(v) / m))}"></span>
+       <span><b>${esc(cardLabel(d.tokens[t]))}</b> <span class="tag">${cardTags(d, t)}</span></span>
+       <span class="v">${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)} <span class="tag">for ${v >= 0 ? a : b}</span></span></li>`).join("")}</ul>`);
+    body.insertAdjacentHTML("beforeend", `<div class="ramp"></div><div class="rampLab"><span>→ ${b}</span><span>→ ${a}</span></div>`);
+    body.appendChild(gridEl(d, (t) => ({ bg: divColor(Math.sign(occ[t]) * Math.sqrt(Math.abs(occ[t]) / m)) }),
+      (t) => `effect: <b>${occ[t] >= 0 ? "+" : "−"}${Math.abs(occ[t]).toFixed(3)}</b> toward ${occ[t] >= 0 ? a : b}<br><span class="m">integrated gradients ${att.ig[t].toFixed(3)} · ${cardTags(d, t) || "not in the input"}</span>`));
+    body.insertAdjacentHTML("beforeend", `<p class="note"><span class="m">Units: logit (log-odds) difference; colours on a √ scale. Cross-check with integrated gradients: r = ${att.agreement.toFixed(2)}. This says which cards moved the decision, not why.</span></p>` + RINGS);
+  }
+  renderDecomp(d, body);
+}
+
+function renderPCA(d, body) {
+  if (!d.order.includes(netLayer)) netLayer = d.order[d.order.length - (d.order.includes("memory") ? 2 : 1)];
+  tabs($("#netLayers"), d.order.map((k) => [k, k]), netLayer, (k) => { netLayer = k; renderNet(); });
+  const L = d.layers[netLayer], ev = L.explained.map((x) => Math.round(x * 100));
+  body.insertAdjacentHTML("beforeend", `<p class="note" style="margin-top:2px">Colour = the top 3 PCA directions of the <b>${esc(netLayer)}</b> token states mapped to R/G/B
+    (${ev.join(" / ")}% of variance); one fit for all games. The directions have no names: similar colours mean similar states, nothing more.</p>`);
+  body.appendChild(gridEl(d, (t) => { const [r, g, b] = L.rgb[t]; return { bg: `rgb(${r * 255 | 0},${g * 255 | 0},${b * 255 | 0})` }; },
+    (t) => `${cardTags(d, t) || "not in the input"}<br>${rawChannels(d, t)}`));
+  body.insertAdjacentHTML("beforeend", RINGS);
+}
+
+function renderDecomp(d, body) {
+  if (!d.decomposition) return;
+  const dec = d.decomposition, names = Object.keys(dec.blocks);
+  const words = { "own card": "the card itself", colour: "its colour's summary", global: "whole-table summary", action: "kind of move", bias: "constant" };
+  const cols = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"];
+  const total = names.reduce((a, k) => a + Math.abs(dec.blocks[k]), 0) || 1;
+  const Wd = 600, x0 = Wd / 2, scale = (Wd / 2 - 4) / Math.max(total / 1.3, ...names.map((k) => Math.abs(dec.blocks[k])), 1e-9);
+  let pos = x0, neg = x0, rects = "";
+  names.forEach((k, i) => {
+    const v = dec.blocks[k], w = Math.abs(v) * scale;
+    if (w < 0.5) return;
+    const x = v >= 0 ? pos : neg - w;
+    if (v >= 0) pos += w + 2; else neg -= w + 2;
+    rects += `<rect x="${x}" y="24" width="${Math.max(w, 1)}" height="16" rx="3" fill="${cols[i]}"><title>${words[k] || k}: ${v.toFixed(2)}</title></rect>`;
+  });
+  const box = document.createElement("div");
+  box.id = "decomp";
+  box.innerHTML = `<h3 style="margin:22px 0 6px">Where the lead comes from <small>exact</small></h3>
+    <p class="note" style="margin:0">The last layer scores a move by adding four summaries. The lead of <b>${esc(actionLabel(d.chosen))}</b> over <b>${esc(actionLabel(d.runner_up))}</b>
+    (<b>${dec.total.toFixed(2)}</b> log-odds) splits exactly between them.</p>
+    <svg viewBox="0 0 ${Wd} 46" height="46"><line x1="${x0}" x2="${x0}" y1="18" y2="44" stroke="rgba(255,255,255,.5)"/>
+      <text x="4" y="13">← favours runner-up</text><text x="${Wd - 4}" y="13" text-anchor="end">favours chosen →</text>${rects}</svg>
+    <div class="legend">${names.map((k, i) => `<span><i style="background:${cols[i]}"></i>${words[k] || k} ${dec.blocks[k] >= 0 ? "+" : ""}${dec.blocks[k].toFixed(2)}</span>`).join("")}</div>`;
+  body.appendChild(box);
+}
+
+// ---------------------------------------------------------------- value curve
+async function setValues(on) {
+  valuesOn = on; store.set("uno-values", on);
+  $("#valueBtn").textContent = on ? "stop" : "compute";
+  if (!game) { renderValues(); return; }
+  try { applyValues(await api("/api/values", { game: game.game, on })); } catch (e) { toast(e.message); }
+  schedulePoll();
+}
+async function pollValues() {
+  if (!game || !valuesOn) return;
+  try { applyValues(await api("/api/values", { game: game.game })); } catch {}
+  schedulePoll();
+}
+function schedulePoll() {
+  clearTimeout(valueTimer);
+  if (valuesOn && game && valuePts.length < valueDecisions) valueTimer = setTimeout(pollValues, 1200);
+}
+function applyValues(r) {
+  valuePts = r.points.filter((p) => Number.isFinite(p.value)); valueDecisions = r.decisions;
+  $("#valueSub").textContent = `if ${r.seat_model} played your seat from here · ${r.n} rollouts a point · band ±1 SE`;
+  renderValues();
+}
+function renderValues() {
+  const svg = $("#valueSvg");
+  const Wd = 230, H = 118, L = 26, R = 6, Tp = 6, B = 16;
+  const pts = [...valuePts].sort((a, b) => a.decision - b.decision);
+  const maxT = Math.max(10, ...pts.map((p) => p.turn), view?.turn || 0);
+  const X = (t) => L + (t / maxT) * (Wd - L - R), Y = (v) => Tp + (1 - v) * (H - Tp - B);
+  let g = `<g class="grid">`;
+  for (const v of [0, 0.25, 0.5, 0.75, 1]) g += `<line class="${v === 0.5 ? "mid" : ""}" x1="${L}" x2="${Wd - R}" y1="${Y(v)}" y2="${Y(v)}"/>`;
+  g += `</g><text x="${L - 4}" y="${Y(1) + 3}" text-anchor="end">100%</text><text x="${L - 4}" y="${Y(0.5) + 3}" text-anchor="end">50%</text><text x="${L - 4}" y="${Y(0) + 3}" text-anchor="end">0%</text>`;
+  g += `<text x="${Wd - R}" y="${H - 2}" text-anchor="end">turn ${maxT}</text><text x="${L}" y="${H - 2}">0</text>`;
+  if (!pts.length) {
+    g += `<text x="${(L + Wd) / 2}" y="${Y(0.5) - 8}" text-anchor="middle">${valuesOn ? (game ? "rolling out…" : "") : "press compute"}</text>`;
+  } else {
+    const up = pts.map((p) => `${X(p.turn)},${Y(Math.min(1, p.value + p.se))}`), dn = pts.map((p) => `${X(p.turn)},${Y(Math.max(0, p.value - p.se))}`).reverse();
+    g += `<polygon class="band" points="${up.concat(dn).join(" ")}"/>`;
+    g += `<polyline class="line" points="${pts.map((p) => `${X(p.turn)},${Y(p.value)}`).join(" ")}"/>`;
+    for (const p of pts) g += `<circle class="dot${p.who === "bot" ? " bot" : ""}" cx="${X(p.turn)}" cy="${Y(p.value)}" r="3.5"/>`;
+    g += `<line class="cross" id="vcross" x1="0" x2="0" y1="${Tp}" y2="${H - B}" style="display:none"/><rect x="${L}" y="0" width="${Wd - L - R}" height="${H}" fill="transparent" id="vhit"/>`;
+  }
+  svg.setAttribute("viewBox", `0 0 ${Wd} ${H}`);
+  svg.innerHTML = g;
+  const hit = svg.querySelector("#vhit");
+  if (!hit) return;
+  hit.addEventListener("mousemove", (e) => {
+    const r = svg.getBoundingClientRect(), x = (e.clientX - r.left) * (Wd / r.width);
+    const p = pts.reduce((a, b) => (Math.abs(X(b.turn) - x) < Math.abs(X(a.turn) - x) ? b : a));
+    const cross = svg.querySelector("#vcross"); cross.style.display = ""; cross.setAttribute("x1", X(p.turn)); cross.setAttribute("x2", X(p.turn));
+    tip(e, `<b>${pct(p.value)}</b> ± ${pct(p.se)} <span class="m">(1 SE)</span><br>turn ${p.turn} · ${p.who === "you" ? "your move" : "bot to move"}`);
+    document.querySelectorAll("#log div.sel").forEach((el) => el.classList.remove("sel"));
+    document.querySelector(`#log div[data-decision="${p.decision}"]`)?.classList.add("sel");
+  });
+  hit.addEventListener("mouseleave", () => { tip(null); svg.querySelector("#vcross").style.display = "none"; document.querySelectorAll("#log div.sel").forEach((el) => el.classList.remove("sel")); });
+}
+
 // ---------------------------------------------------------------- game lifecycle
 function clearTable() {
   hand.forEach((h) => h.el.remove()); hand = [];
@@ -574,7 +1158,13 @@ function clearTable() {
   $("#log").innerHTML = "";
   $("#over").classList.remove("show", "win");
   $("#splash").style.display = "none";
+  oppCards = []; lastBot = null;
   drawnKey = null; scored = false;
+  netCache.clear(); netTarget = null; netData = null; renderNet();
+  valuePts = []; valueDecisions = 0; renderValues();
+  for (const k in turnOf) delete turnOf[k];
+  $("#botBody").innerHTML = `<p class="note">${$("#revealTog").checked ? "The bot's policy appears here before each of its moves." : "Turn on <b>reveal</b> to see the bot's hand, its full policy and its network before each of its moves."}</p>`;
+  $("#botInfo").textContent = ""; $("#contRow").style.display = "none";
 }
 
 async function newGame() {
@@ -582,7 +1172,7 @@ async function newGame() {
   const oppId = $("#opponent").value;
   busy = true;
   try {
-    const res = await api("/api/new", { opponent: oppId, seat: $("#seat").value });
+    const res = await api("/api/new", { opponent: oppId, seat: $("#seat").value, reveal: $("#revealTog").checked });
     game = { ...res, oppId };
     clearTable();
     const label = $("#opponent").selectedOptions[0];
@@ -618,9 +1208,12 @@ async function newGame() {
     pushDiscard(v.top, r);
     applyView(v, false);
     await sleep(200 * speed);
+    if (valuesOn) setValues(true);
     await playSteps(res.steps);
     busy = false;
-    applyView(res.steps.length ? res.steps[res.steps.length - 1].view : v);
+    const last = res.steps.length ? res.steps[res.steps.length - 1].view : v;
+    applyView(last);
+    if (!!last.opp_hand !== !!game.reveal && !last.over) syncReveal();
   } catch (e) {
     busy = false; toast(e.message); refreshControls();
   }
@@ -687,12 +1280,40 @@ $("#loadBtn").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
 });
 window.addEventListener("resize", () => { layoutHand(); layoutOpp(); });
+function setCoach(on) { coachOn = on; $("#coachTog").checked = on; document.body.classList.toggle("coach", on); store.set("uno-coach", on); }
+function setSide(on) { sideOpen = on; document.body.classList.toggle("side-open", on); store.set("uno-side", on); setTimeout(() => { layoutHand(); layoutOpp(); }, 320); if (on) loadNet(); }
+async function setReveal(on) {
+  $("#revealTog").checked = on; store.set("uno-reveal", on);
+  if (!game || view?.over) return;
+  try {
+    await api("/api/reveal", { game: game.game, reveal: on });
+    game.reveal = on;
+    syncReveal();
+  } catch (e) { toast(e.message); }
+}
+// Views replayed from an earlier response predate a toggle: fetch the current one once idle.
+async function syncReveal() {
+  if (!game || busy || view?.over) return;
+  const res = await api("/api/reveal", { game: game.game, reveal: game.reveal });
+  if (!busy) applyView(res.view);
+}
+$("#coachTog").addEventListener("change", () => setCoach($("#coachTog").checked));
+$("#revealTog").addEventListener("change", () => setReveal($("#revealTog").checked));
+$("#sideToggle").addEventListener("click", () => setSide(!sideOpen));
+$("#autoTog").addEventListener("change", () => { autoOn = $("#autoTog").checked; store.set("uno-auto", autoOn); if (autoOn) doContinue(); });
+$("#contBtn").addEventListener("click", doContinue);
+$("#valueBtn").addEventListener("click", () => setValues(!valuesOn));
 document.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT") return;
+  if (e.target.tagName === "INPUT" && e.target.type === "text") return;
   if (e.key === "n") newGame();
   if (e.key === "d" && $("#deck").classList.contains("can")) send(view.draw_action);
   if (e.key === "k" && view?.pass_action != null && !busy) send(view.pass_action);
   if (e.key === "Escape") closePicker();
+  if (e.key === " ") { e.preventDefault(); doContinue(); }
+  if (e.key === "c") setCoach(!coachOn);
+  if (e.key === "r") setReveal(!$("#revealTog").checked);
+  if (e.key === "a") { $("#autoTog").checked = !autoOn; $("#autoTog").dispatchEvent(new Event("change")); }
+  if (e.key === "v") setValues(!valuesOn);
 });
 
 (async () => {
@@ -702,6 +1323,15 @@ document.addEventListener("keydown", (e) => {
   document.documentElement.style.setProperty("--fly", 420 * speed + "ms");
   fillOpponents(CFG.opponents);
   setDeckCount(0);
+  setCoach(store.get("uno-coach", true));
+  $("#revealTog").checked = store.get("uno-reveal", false);
+  autoOn = store.get("uno-auto", false); $("#autoTog").checked = autoOn;
+  valuesOn = store.get("uno-values", false); $("#valueBtn").textContent = valuesOn ? "stop" : "compute";
+  netMode = store.get("uno-netmode", "moved");
+  beliefSide = store.get("uno-belief-side", "bot") === "coach" ? "coach" : "bot";
+  if (!["moved", "sees", "believes", "pca"].includes(netMode)) netMode = "moved";
+  setSide(store.get("uno-side", true));
+  renderValues();
 })();
 </script>
 </body>

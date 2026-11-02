@@ -1,0 +1,140 @@
+{
+  "config": {
+    "ruleset": "FULL_UNO",
+    "arm": "C",
+    "model": {
+      "kind": "relational",
+      "width": 128,
+      "blocks": 2
+    },
+    "training_seed": 0,
+    "device": "cuda",
+    "data_cap": 10000000,
+    "time_cap_s": 60000,
+    "optim": {
+      "gamma": 1.0,
+      "gae_lambda": 0.95,
+      "actor_lr": 5e-05,
+      "critic_lr": 0.0003,
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "eps": 1e-08,
+      "weight_decay": 0.0,
+      "clip": 0.2,
+      "actor_epochs": 4,
+      "critic_epochs": 4,
+      "n_minibatches": 32,
+      "precision": "bf16",
+      "normalize_advantages": true,
+      "entropy_coef": 0.01,
+      "actor_grad_norm": 0.5,
+      "critic_grad_norm": 2.0,
+      "target_kl": 0.02,
+      "temperature": 1.0,
+      "value_clip": null
+    },
+    "collection": {
+      "games_per_cell": 64,
+      "live_games_per_worker": 64,
+      "workers": 12,
+      "target_decisions": null
+    },
+    "evaluation": {
+      "deals_per_cell": 1024,
+      "every_fraction": 0.05,
+      "panel_start": 800000
+    },
+    "schema_version": 3,
+    "version": 2
+  },
+  "config_hash": "c7b38711e1595b46",
+  "algorithm_hash": "7095a42744dd206b",
+  "stream_version": 1,
+  "league": "rulebot",
+  "league_members": [
+    "heuristic_memory",
+    "rulebot_transfer_toy_v1",
+    "rulebot_full_dev_v1",
+    "rulebot_unpredictable_t0.15_m0.2_d0.02_k0.04_kw0.1"
+  ],
+  "league_hash": "8a40507446809b59",
+  "partitions": {
+    "train": [
+      0,
+      800000
+    ],
+    "panel": [
+      800000,
+      900000
+    ],
+    "diagnostic": [
+      900000,
+      1000000
+    ]
+  },
+  "panel": {
+    "cells": [
+      [
+        "heuristic_memory",
+        0
+      ],
+      [
+        "heuristic_memory",
+        1
+      ],
+      [
+        "rulebot_transfer_toy_v1",
+        0
+      ],
+      [
+        "rulebot_transfer_toy_v1",
+        1
+      ],
+      [
+        "rulebot_full_dev_v1",
+        0
+      ],
+      [
+        "rulebot_full_dev_v1",
+        1
+      ],
+      [
+        "rulebot_unpredictable_t0.15_m0.2_d0.02_k0.04_kw0.1",
+        0
+      ],
+      [
+        "rulebot_unpredictable_t0.15_m0.2_d0.02_k0.04_kw0.1",
+        1
+      ]
+    ],
+    "deals_per_cell": 1024,
+    "first_deal": 800000,
+    "last_deal": 801023
+  },
+  "deal_schedule": {
+    "position": 0,
+    "cycle": 0,
+    "pool_start": 0,
+    "pool_stop": 800000
+  },
+  "lineage": {},
+  "execution": {
+    "collection_torch_threads": 1,
+    "update_torch_threads": 1,
+    "compile": true
+  },
+  "provenance": {
+    "mlflow": "3.16.1",
+    "base_commit": "c58865c3718318e8e7f21e04388e3933715ea1c9",
+    "dirty": false,
+    "config_hash": "c7b38711e1595b46",
+    "python": "3.14.2",
+    "numpy": "2.5.3",
+    "torch": "2.14.0+cu132",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "PC-BE796DS",
+    "cpu_count": 16
+  }
+}

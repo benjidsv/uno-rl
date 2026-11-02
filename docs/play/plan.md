@@ -1,6 +1,30 @@
 # Play demo: analysis and network-visualization plan
 
-Status 2026-09-24: planned, not started. The play demo in `uno/play/` works; this plan
+Status 2026-09-24: phases 0-2 implemented; phase 3 blocked (no trained recurrent C).
+
+- Phase 0 done: both critics (rel-C, B) fail the declared rule, Platt included, so the
+  value curve is rollout values ([result](../rl/results/critic-calibration.md)).
+- Phase 1 done: `--coach` (L1/L2), coach chips, verdicts, reveal mode with per-step
+  Continue, bot policy bars, rollout value curve (`uno/play/analysis.py`, a background
+  thread, opt-in "compute" button). No `--critic` flag, per phase 0.
+- Phase 2 done: `uno/play/inspect.py` (trace, per-layer PCA cached in `.cache/play/`,
+  exact scorer split, IG + occlusion) and the network panel. Works for recurrent
+  actors too (memory layer), untested on a trained one.
+- Phase 2 revised after use: PCA colours were unreadable outside the input and last
+  block, so the panel now leads with named single quantities -- "what moved it"
+  (occlusion ranking, IG as a silent check, the exact split in words), "what it sees"
+  (one input channel), "what it believes" (a linear opponent-hand probe per layer, fitted
+  on 300 games, held-out AUROC against the uniform prior and `voids`) -- with PCA kept as
+  a tab. Held-out AUROC at block 2: rel-C 0.743, B 0.747; `voids` 0.740 / 0.752 on each
+  model's own games (not paired). `uv run python -m uno.play.inspect ACTOR` prints it.
+- Phase 3 not started: `arm_C_relative` is rel-C (`model.kind = "relational"`); the
+  probe needs a `configs/rl/rec_c.toml` run.
+
+Run: `uv run uno play --ckpt uno/play/static/checkpoints/arm_C_relative/checkpoints/best_actor.pt=rel-C
+--coach uno/play/static/checkpoints/critic_relative/checkpoints/best_actor.pt="L2 critic-arm"`.
+Tests: `uv run pytest tests/play`.
+
+Original plan below. The play demo in `uno/play/` works; this plan
 turns it from "play against a bot" into "play against the model while watching it think". It is a demo, not an
 RL result: nothing here changes training, and any measurement worth keeping for RL
 research (the critic calibration in phase 0 may be) gets written up under

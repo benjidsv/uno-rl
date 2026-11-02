@@ -1,0 +1,8 @@
+{
+  "run_name": "cookiechris_C-seed0",
+  "mlflow": true,
+  "pending_uploads": 0,
+  "unavailable_reason": null,
+  "metrics_file": "logs\\rl\\FULL_UNO_C_seed0_nmb32_bf16_cuda_1790128723\\tracking\\metrics.csv",
+  "status": "FINISHED"
+}

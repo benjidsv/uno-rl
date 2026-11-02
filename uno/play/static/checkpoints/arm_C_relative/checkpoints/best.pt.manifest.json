@@ -1,0 +1,33 @@
+{
+  "file": "best.pt",
+  "bytes": 19892187,
+  "checksum": "d95c91a8bcd2911415197ba1d2fb8852",
+  "format_version": 1,
+  "config_hash": "c7b38711e1595b46",
+  "algorithm_hash": "7095a42744dd206b",
+  "progress": {
+    "update": 879,
+    "next_episode_id": 450048,
+    "learner_decisions": 9009810,
+    "engine_decisions": 18145770,
+    "games": 450048,
+    "optimizer_steps": 224960,
+    "active_seconds": 1615.301643600069,
+    "next_eval_at": 9500000,
+    "best_score": 0.6832275390625,
+    "best_checkpoint": "checkpoints/best.pt",
+    "best_update": 879,
+    "best_decisions": 9009810,
+    "deal_schedule": {
+      "position": 450048,
+      "cycle": 0,
+      "pool_start": 0,
+      "pool_stop": 800000
+    }
+  },
+  "lineage": {
+    "league": "rulebot",
+    "label": "best",
+    "run_id": "1b115b9cec5c40e4ab63934c369a752b"
+  }
+}
