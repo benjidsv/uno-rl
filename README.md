@@ -46,6 +46,28 @@ over four league bots on the DEV seed partition, for training seed 0. Every
 measurement, its configuration and its caveats are in
 [`docs/rl/results/`](docs/rl/results/index.md).
 
+## Why a custom engine
+
+This is my fifth attempt at RL for 1v1 UNO. The first four used
+[RLCard](https://github.com/datamllab/rlcard) with PPO, and PPO never measurably
+beat a tuned rule bot. Looking back, two things stood in the way: RLCard's rules
+disagreed with its own legal-move function, and my evaluations used far too few
+games to detect a few points of improvement in a game this luck-heavy. It didn't 
+support tree based approaches like the exact solvers I used.
+
+So v5 starts from its own engine, with no RL library underneath:
+
+- **Written spec, tested against it.** Rules, information levels and edge cases
+  are specified in [`docs/foundations/spec.md`](docs/foundations/spec.md) and
+  covered by scenario and property-based (Hypothesis) tests.
+- **Immutable and deterministic.** A game is a pure function of the deal, a seed
+  and the action sequence, so any state can be cloned, replayed or branched. Best
+  responses, search and variance reduction all depend on that.
+- **Parameterized rules.** The same engine runs full UNO and the reduced decks
+  that are small enough to solve exactly.
+- **Batched RL layer.** `uno/rl/env/` turns positions into token features, and
+  the collector steps many live games at once instead of wrapping a Gym API.
+
 ## How it works
 
 **1. Architectures validated against exact answers.** UNO is an imperfect-information game, so before

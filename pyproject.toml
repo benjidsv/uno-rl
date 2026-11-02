@@ -1,7 +1,7 @@
 [project]
-name = "uno-v5"
+name = "uno-rl"
 version = "0.1.0"
-description = "UNO engine, exact solvers and evaluators: measure skill vs luck before RL"
+description = "UNO engine, exact solvers and an RL agent with an interpretability UI"
 readme = "README.md"
 requires-python = ">=3.14"
 
